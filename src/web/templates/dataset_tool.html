@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据集工具 - 深度学习训练平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: #2c3e50;
+            color: white;
+        }
+
+        .sidebar-header h2 {
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+
+        .project-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .project-item {
+            padding: 15px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .project-item:hover {
+            background: #e9ecef;
+        }
+
+        .project-item.active {
+            background: #3498db;
+            color: white;
+        }
+
+        .project-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .project-stats {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            color: #2c3e50;
+        }
+
+        .content {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+
+        .datasets-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        /* 预览遮罩样式 */
+        #imagePreviewOverlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        #imagePreviewOverlay.show { display: flex; }
+
+        .dataset-card {
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .dataset-card:hover {
+            border-color: #3498db;
+        }
+
+        .dataset-card.selected {
+            border-color: #3498db;
+            background: #f8f9fa;
+        }
+
+        .dataset-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .dataset-name {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .dataset-status {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-trainable {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-annotatable {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .dataset-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #3498db;
+            transition: width 0.3s ease;
+        }
+
+        .model-selector {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .model-option {
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .model-option:hover {
+            border-color: #3498db;
+        }
+
+        .model-option.selected {
+            border-color: #3498db;
+            background: #f8f9fa;
+        }
+
+        .training-panel {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 20px;
+        }
+
+        .training-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .training-progress {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .training-progress-fill {
+            height: 100%;
+            background: white;
+            transition: width 0.3s ease;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #f39c12;
+            color: white;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* 预览弹窗 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .modal-content {
+            background: #fff;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 90vw;
+            max-height: 90vh;
+        }
+
+        .modal-content img {
+            max-width: 86vw;
+            max-height: 86vh;
+            display: block;
+        }
+        .annot-controls {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-bottom: 8px;
+        }
+        #annotImageWrap {
+            position: relative;
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>🎯 数据集工具</h2>
+                <p>深度学习训练平台</p>
+            </div>
+            <div class="project-list" id="projectList"></div>
+        </div>
+
+        <div class="main-content">
+            <div class="header">
+                <h1 id="pageTitle">选择一个项目开始</h1>
+            </div>
+
+            <div class="content">
+                <div id="projectDetails" class="hidden">
+                    <div class="section">
+                        <div class="section-title">🚀 可训练数据集</div>
+                        <div class="datasets-grid" id="trainableDatasets"></div>
+                    </div>
+                    <div id="datasetDetail" class="section hidden">
+                        <div id="datasetDetailHeader" style="font-weight:600; margin-bottom:8px;"></div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+                            <label>分割</label>
+                            <select id="datasetSplit" onchange="onSplitChange()" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;">
+                                <option value="train">train</option>
+                                <option value="val">val</option>
+                                <option value="test">test</option>
+                            </select>
+                            <label style="margin-left:12px;">类别筛选</label>
+                            <select id="classFilter" multiple size="1" style="min-width:220px; padding:6px; border:1px solid #e0e0e0; border-radius:6px;" title="按类别筛选（可多选）"></select>
+                            <select id="classFilterMode" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;">
+                                <option value="include">包含所选类别</option>
+                                <option value="exclude">排除所选类别</option>
+                            </select>
+                            <button class="btn btn-outline-primary" onclick="applyClassFilter()">应用筛选</button>
+                            <button class="btn" onclick="prevPreviewPage()">上一页</button>
+                            <button class="btn" onclick="nextPreviewPage()">下一页</button>
+                            <label>页码</label>
+                            <input type="number" id="pageInput" min="1" value="1" style="width:80px; padding:6px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                            <button class="btn" onclick="goToPage()">跳转</button>
+                            <span id="pageInfo" style="font-size:12px; color:#6c757d;"></span>
+                        </div>
+                        <div id="datasetPreviewContainer" style="overflow-x:auto; display:flex; align-items:center;">
+                            <div id="datasetPreview" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;"></div>
+                        </div>
+                        <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <label>上传到 train</label>
+                            <input type="file" id="uploadInput" multiple accept="image/*"/>
+                            <button class="btn" onclick="uploadImages(currentDatasetName)">上传</button>
+                            <button class="btn" onclick="openBatchAutoAnnotate()">批量自动标注</button>
+                            <div id="datasetDetailMsg" style="font-size:12px; color:#6c757d;"></div>
+                        </div>
+                        
+                        <div id="batchAnnotateModalOverlay" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:none; align-items:center; justify-content:center;" onclick="if(event.target===this) hideBatchAnnotateModal()">
+                            <div id="batchAnnotateModal" class="section" style="max-width:520px; width:90%;">
+                                <div class="section-title">批量自动标注</div>
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                    <label>选择模型</label>
+                                    <select id="autoAnnotateModelSelect" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px; min-width:240px;"></select>
+                                    <label>阈值</label>
+                                    <input type="number" id="autoAnnotateConf" step="0.01" value="0.35" style="width:90px; padding:6px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                    <button class="btn btn-success" id="batchAnnotateStartBtn" onclick="startBatchAutoAnnotate()">开始</button>
+                                    <button class="btn" onclick="hideBatchAnnotateModal()">关闭</button>
+                                </div>
+                                <div id="batchAnnotateStatus" style="margin-top:8px; font-size:13px; color:#2c3e50;"></div>
+                            </div>
+                        </div>
+                        <div id="topToast" class="hidden" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10001; display:none; background:#2ecc71; color:#fff; padding:10px 16px; border-radius:8px; box-shadow:0 6px 16px rgba(0,0,0,0.2);"></div>
+                    </div>
+
+                    
+
+                    <div id="trainingSection" class="section hidden">
+                        <div class="section-title">🤖 模型训练</div>
+                        <div class="model-selector" id="modelSelector"></div>
+
+                        <div class="training-panel" id="trainingPanel">
+                            <div class="training-status">
+                                <div id="trainingStatusText">准备训练</div>
+                                <div id="trainingProgressText">0%</div>
+                            </div>
+
+                            <div class="training-progress">
+                                <div class="training-progress-fill" id="trainingProgressBar" style="width: 0%"></div>
+                            </div>
+
+                            <button class="btn btn-success" id="startTrainingBtn" onclick="startTraining()">🚀
+                                开始训练</button>
+                            <button class="btn btn-warning hidden" id="stopTrainingBtn" onclick="stopTraining()">⏹️
+                                停止训练</button>
+                            <button class="btn" id="continueLastBtn" onclick="continueTraining(false)"
+                                style="margin-left:10px;">🔄 继续训练(last)</button>
+                            <button class="btn" id="continueBestBtn" onclick="continueTraining(true)"
+                                style="margin-left:10px;">🏆 继续训练(best)</button>
+                            <button class="btn" id="resumeBtn" onclick="resumeTraining()" style="margin-left:10px;">⏯️
+                                续跑（恢复上次run）</button>
+                            <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px;">
+                                <div>
+                                    <label>epochs</label>
+                                    <input type="number" id="cfgEpochs" placeholder="例如 30" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                                <div>
+                                    <label>batch</label>
+                                    <input type="number" id="cfgBatch" placeholder="例如 4" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                                <div>
+                                    <label>imgsz</label>
+                                    <input type="number" id="cfgImgsz" placeholder="例如 1280" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                                <div>
+                                    <label>freeze</label>
+                                    <input type="text" id="cfgFreeze" placeholder="backbone 或 层数" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                                <div>
+                                    <label>lr0</label>
+                                    <input type="number" step="0.001" id="cfgLr0" placeholder="例如 0.005" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                            </div>
+                        </div>
+
+                        
+
+                        <div class="section" id="artifactsSection" style="margin-top: 16px;">
+                            <div class="section-title">📎 训练/验证产物</div>
+                            <div style="margin-bottom:10px; display:flex; gap:10px; align-items:center;">
+                                <label>训练版本</label>
+                                <select id="runSelector" onchange="onRunChange()" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;"></select>
+                            </div>
+                            <div id="metricsSummary" style="font-size: 14px; color: #2c3e50; margin-bottom: 10px;"></div>
+                            <div id="trainingDownload" style="margin-bottom:10px; font-size:13px;"></div>
+                            <div id="artifactsImages"
+                                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
+                            </div>
+                            <div style="margin-top:16px;">
+                                <div class="section-title">🛠️ 导出模型</div>
+                                <div
+                                    style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">
+                                    <div>
+                                        <label>格式</label>
+                                        <select id="exportFormat"
+                                            style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;">
+                                            <option value="onnx">ONNX</option>
+                                            <option value="openvino">OpenVINO</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label>半精度(FP16)</label>
+                                        <input type="checkbox" id="exportHalf" />
+                                    </div>
+                                    <div>
+                                        <label>INT8量化</label>
+                                        <input type="checkbox" id="exportInt8" />
+                                    </div>
+                                    <div>
+                                        <label>imgsz</label>
+                                        <input type="number" id="exportImgsz" placeholder="可选，如 640"
+                                            style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;" />
+                                    </div>
+                                    <div>
+                                        <label>每类采样(per_class)</label>
+                                        <input type="number" id="exportPerClass" value="20"
+                                            style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;" />
+                                    </div>
+                                    <div>
+                                        <label>校准集上限(max_images)</label>
+                                        <input type="number" id="exportMaxImages" value="200"
+                                            style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;" />
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+                                    <label>来源训练版本</label>
+                                    <select id="exportRunSelector" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;"></select>
+                                    <button class="btn btn-success" onclick="startExport()">📦 开始导出</button>
+                                    <div id="exportStatusText" style="font-size:13px; color:#2c3e50;"></div>
+                                </div>
+                                <div id="diagnoseInfo" style="margin-top:8px; font-size:13px; color:#6c757d;"></div>
+                                <div id="exportList" style="margin-top:10px; font-size:13px;"></div>
+                            </div>
+                            <div style="margin-top:16px;">
+                                <div class="section-title">📊 评估模型</div>
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+                                    <button class="btn" onclick="startEvaluate('val')">📊 验证集评估</button>
+                                    <button class="btn" onclick="startEvaluate('test')">🧪 测试集评估</button>
+                                    <div id="evalStatusText" style="font-size:13px; color:#2c3e50;"></div>
+                                </div>
+                                <div class="training-progress" style="margin-top:10px;">
+                                    <div class="training-progress-fill" id="evalProgressBar" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="emptyState" class="section">
+                    <div style="text-align: center; padding: 60px 20px;">
+                        <div style="font-size: 64px; margin-bottom: 20px;">🎯</div>
+                        <h3 style="margin-bottom: 10px;">欢迎使用数据集工具</h3>
+                        <p style="color: #6c757d;">请从左侧选择一个项目开始管理和训练您的数据集</p>
+                    </div>
+                </div>
+            </div>
+            <div id="imagePreviewOverlay" class="loading" onclick="if(event.target===this) closeAnnotator()">
+                    <div id="annotOverlay" style="max-width:95vw; max-height:95vh; overflow:auto;">
+                        <div class="annot-controls">
+                            <button class="btn" onclick="closeAnnotator()">关闭</button>
+                            <button class="btn" onclick="prevImage()">←</button>
+                            <button class="btn" onclick="nextImage()">→</button>
+                            <select id="annotClassSelect" onchange="onAnnotClassChange()" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;"></select>
+                            <button class="btn btn-success" onclick="saveCurrentAnnotation()">保存</button>
+                            <button class="btn btn-warning" onclick="confirmDeleteImage()">删除图片与标签</button>
+                            <button class="btn" onclick="scaleDown()">缩小</button>
+                            <button class="btn" onclick="scaleUp()">放大</button>
+                            <button class="btn" onclick="fitAnnot()">适屏</button>
+                            <button class="btn" onclick="resetScale()">1:1</button>
+                        </div>
+                        <div id="annotImageWrap" style="position:relative; overflow:auto; max-width:95vw; max-height:85vh; transform-origin: top left;">
+                            <img id="imagePreviewLarge" src="" style="max-width:95vw; max-height:85vh; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.2); display:block;"/>
+                            <canvas id="annotCanvas" style="position:absolute; left:0; top:0;"></canvas>
+                            <button id="annotDeleteBtn" class="btn" style="position:absolute; display:none;">✕</button>
+                        </div>
+                    </div>
+                </div>
+        </div>
+    </div>
+
+    <script>
+        let currentProject = null;
+        let selectedDataset = null;
+        let selectedModel = null;
+        let trainingUpdateInterval = null;
+
+        document.addEventListener('DOMContentLoaded', function () {
+            loadProjects();
+            loadModels();
+            loadRuns();
+        });
+
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const result = await response.json();
+
+                if (result.success) {
+                    renderProjects(result.projects);
+                }
+            } catch (error) {
+                console.error('加载项目失败:', error);
+            }
+        }
+
+        function renderProjects(projects) {
+            const projectList = document.getElementById('projectList');
+
+            if (projects.length === 0) {
+                projectList.innerHTML = '<div style="padding: 20px; text-align: center; color: #6c757d;"><p>暂无项目</p></div>';
+                return;
+            }
+
+            projectList.innerHTML = projects.map(project => {
+                const trainableCount = project.datasets.trainable.length;
+                const annotatableCount = project.datasets.annotatable.length;
+
+                return `
+                    <div class="project-item" onclick="selectProject('${project.id}', '${project.path}')">
+                        <div class="project-name">${project.name}</div>
+                        <div class="project-stats">
+                            🚀 ${trainableCount} 个可训练数据集
+                            <br>
+                            ✏️ ${annotatableCount} 个可标注数据集
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectProject(projectId, projectPath) {
+            document.querySelectorAll('.project-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.target.closest('.project-item').classList.add('active');
+
+            // 切换项目时关闭遮罩预览
+            closeAnnotator();
+            currentProject = { id: projectId, path: projectPath };
+            document.getElementById('pageTitle').textContent = `项目: ${projectId}`;
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('projectDetails').classList.remove('hidden');
+            // 进入项目后只展示数据集列表，其它区在选择数据集后再显示
+            document.getElementById('datasetDetail').classList.add('hidden');
+            document.getElementById('trainingSection').classList.add('hidden');
+            loadProjectDetails();
+        }
+
+        async function loadProjectDetails() {
+            try {
+                const url = `/api/datasets?project_path=${encodeURIComponent(currentProject.path)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) { renderDatasets(data.datasets || {trainable: []}); }
+            } catch (error) {
+                console.error('加载项目详情错误:', error);
+            }
+            await loadRuns();
+        }
+
+        function renderDatasets(datasets) {
+            const trainableContainer = document.getElementById('trainableDatasets');
+            if (datasets.trainable.length === 0) {
+                trainableContainer.innerHTML = '<p style="color: #6c757d;">暂无可训练数据集</p>';
+            } else {
+                trainableContainer.innerHTML = datasets.trainable.map(dataset =>
+                    createDatasetCard(dataset, 'trainable')
+                ).join('');
+            }
+
+            
+        }
+
+        function createDatasetCard(dataset, type) {
+            const annotationRate = Math.round(dataset.annotation_rate * 100);
+            const statusClass = type === 'trainable' ? 'status-trainable' : 'status-annotatable';
+            const statusText = type === 'trainable' ? '可训练' : '需标注';
+
+            return `
+                <div class="dataset-card" onclick="selectDataset('${dataset.name}', '${dataset.path}', '${type}')">
+                    <div class="dataset-header">
+                        <div class="dataset-name">${dataset.name}</div>
+                        <div class="dataset-status ${statusClass}">${statusText}</div>
+                    </div>
+                    <div class="dataset-stats">
+                        <div class="stat-item">
+                            <span>图片数量:</span>
+                            <span>${dataset.image_count}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>标注数量:</span>
+                            <span>${dataset.label_count}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>标注率:</span>
+                            <span>${annotationRate}%</span>
+                        </div>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${annotationRate}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function selectDataset(datasetName, datasetPath, type) {
+            document.querySelectorAll('.dataset-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            event.target.closest('.dataset-card').classList.add('selected');
+
+            selectedDataset = { name: datasetName, path: datasetPath, type: type };
+
+            if (type === 'trainable') {
+                document.getElementById('trainingSection').classList.remove('hidden');
+                openDatasetDetail(datasetName);
+                loadArtifacts();
+            }
+        }
+
+        let currentDatasetName = '';
+        let previewOffset = 0;
+        const previewLimit = 24;
+
+        async function openDatasetDetail(dsName) {
+            try {
+                currentDatasetName = dsName;
+                previewOffset = 0;
+                const infoRes = await fetch(`/api/dataset/info?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(dsName)}`);
+                const infoData = await infoRes.json();
+                const ds = infoData.info || {};
+                document.getElementById('datasetDetail').classList.remove('hidden');
+                document.getElementById('datasetDetailHeader').textContent = `数据集: ${dsName} | 图片: ${ds.image_count || 0} | 标注率: ${Math.round((ds.annotation_rate||0)*100)}%`;
+                document.getElementById('datasetSplit').value = 'train';
+                const sel = document.getElementById('classFilter');
+                if (sel){
+                    const names = Array.isArray(ds.names) ? ds.names : [];
+                    sel.innerHTML = names.map((nm,idx)=>`<option value="${idx}">${idx}: ${nm}</option>`).join('');
+                }
+                await renderDatasetPreview();
+            } catch(e) { console.error('打开数据集详情失败', e); }
+        }
+
+        async function uploadImages(dsName) {
+            try {
+                const inp = document.getElementById('uploadInput');
+                if (!inp || !inp.files || inp.files.length === 0) return;
+                const fd = new FormData();
+                fd.append('project_path', currentProject.path);
+                fd.append('dataset_name', dsName);
+                fd.append('split', 'train');
+                Array.from(inp.files).forEach(f => fd.append('files', f));
+                const res = await fetch('/api/dataset/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+                document.getElementById('datasetDetailMsg').textContent = data.success ? `已新增 ${data.count} 张` : `上传失败: ${data.error}`;
+                await renderDatasetPreview();
+            } catch(e) { console.error('上传失败', e); }
+        }
+
+        
+
+        async function openBatchAutoAnnotate(){
+            await initAutoAnnotateModels();
+            const ov = document.getElementById('batchAnnotateModalOverlay');
+            if (ov) { ov.classList.remove('hidden'); ov.style.display='flex'; }
+            const st = document.getElementById('batchAnnotateStatus');
+            if (st) { st.textContent = ''; }
+        }
+
+        async function batchAutoAnnotate(dsName, modelPath, conf){
+            try{
+                const body = { project_path: currentProject.path, dataset_name: dsName, split:'train', model_path: modelPath||'', conf: conf||0.35, max_det: 300, batch_size: 4 };
+                const res = await fetch('/api/auto_annotate/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                const data = await res.json();
+                document.getElementById('datasetDetailMsg').textContent = data.success ? `批量自动标注完成：新增框 ${data.added_boxes}，待复核图片 ${data.pending_count}` : ('批量失败：'+(data.error||''));
+                
+            }catch(e){ console.error('批量自动标注失败', e); }
+        }
+
+        function hideBatchAnnotateModal(){ const ov = document.getElementById('batchAnnotateModalOverlay'); if (ov){ ov.classList.add('hidden'); ov.style.display='none'; } }
+
+        function startBatchAutoAnnotate(){
+            const sel = document.getElementById('autoAnnotateModelSelect');
+            const path = sel && sel.value ? sel.value : '';
+            const conf = parseFloat(document.getElementById('autoAnnotateConf').value || '0.35');
+            const btn = document.getElementById('batchAnnotateStartBtn');
+            if (btn) btn.disabled = true;
+            const st = document.getElementById('batchAnnotateStatus');
+            if (st) st.textContent = '执行中...';
+            // 轮询进度
+            const timer = setInterval(async ()=>{
+                try{
+                    const r = await fetch('/api/auto_annotate/batch/status');
+                    const d = await r.json();
+                    if (d && d.status){ st.textContent = (d.status.message||'') + ` ${d.status.progress||0}%`; }
+                }catch(e){}
+            }, 800);
+            batchAutoAnnotate(currentDatasetName, path, conf).then(()=>{
+                clearInterval(timer);
+                if (btn) btn.disabled = false;
+                if (st) st.textContent = '完成';
+                hideBatchAnnotateModal();
+            }).catch(()=>{
+                clearInterval(timer);
+                if (btn) btn.disabled = false;
+                if (st) st.textContent = '失败';
+            });
+        }
+
+        
+
+        async function renderDatasetPreview() {
+            try {
+                const split = document.getElementById('datasetSplit').value;
+                const classes = (window.classFilter||[]).join(',');
+                const mode = window.classFilterMode || 'include';
+                const url = `/api/dataset/images?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(currentDatasetName)}&split=${encodeURIComponent(split)}&offset=${previewOffset}&limit=${previewLimit}&classes=${encodeURIComponent(classes)}&mode=${encodeURIComponent(mode)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                const items = data.images || [];
+                window.previewList = items;
+                window.previewTotal = data.total || items.length || 0;
+                const pageInfo = document.getElementById('pageInfo');
+                if (pageInfo){ const totalPages = Math.max(1, Math.ceil((window.previewTotal||0)/previewLimit)); const currentPage = Math.floor(previewOffset/previewLimit)+1; pageInfo.textContent = `${currentPage}/${totalPages}`; document.getElementById('pageInput').value = currentPage; }
+                const container = document.getElementById('datasetPreview');
+                container.innerHTML = items.map((it,idx) => `
+                    <div style="position:relative;">
+                        <img src="${it.url}" onclick="openAnnotator('${split}','${it.path}',${idx})" style="height:120px; width:auto; border-radius:6px; object-fit:cover; cursor:pointer;"/>
+                        ${it.pending ? '<span style="position:absolute; top:6px; right:6px; background:#e67e22; color:#fff; font-size:12px; padding:2px 6px; border-radius:6px;">待复核</span>' : ''}
+                    </div>
+                `).join('');
+            } catch(e) { console.error('加载预览失败', e); }
+        }
+
+        async function onSplitChange(){
+            try {
+                previewOffset = 0;
+                window.previewIndex = 0;
+                await renderDatasetPreview();
+            } catch (e) { console.error('切换分割失败', e); }
+        }
+
+        function applyClassFilter(){
+            try{
+                const sel = document.getElementById('classFilter');
+                const modeEl = document.getElementById('classFilterMode');
+                const values = [];
+                if (sel){ for (const opt of sel.options){ if (opt.selected) values.push(opt.value); } }
+                window.classFilter = values;
+                window.classFilterMode = modeEl ? modeEl.value : 'include';
+                previewOffset = 0;
+                renderDatasetPreview();
+            }catch(e){ console.error('应用类别筛选失败', e); }
+        }
+
+        async function initAutoAnnotateModels(){
+            try{
+                const res = await fetch('/api/models');
+                const data = await res.json();
+                const sel = document.getElementById('autoAnnotateModelSelect');
+                if (data.success && sel){
+                    const models = data.models || [];
+                    sel.innerHTML = ['<option value="">默认模型</option>'].concat(models.map(m => `<option value="${m.path||''}">${m.name}${m.size?(' ('+m.size+')'):''}</option>`)).join('');
+                }
+            }catch(e){ console.error('加载预训练模型失败', e); }
+        }
+
+        function prevPreviewPage() { if (previewOffset - previewLimit >= 0) { previewOffset -= previewLimit; renderDatasetPreview(); } }
+        function nextPreviewPage() { previewOffset += previewLimit; renderDatasetPreview(); }
+
+        function showImagePreview(u) {
+            const ov = document.getElementById('imagePreviewOverlay');
+            const img = document.getElementById('imagePreviewLarge');
+            img.src = u; ov.classList.add('show');
+        }
+        function hideImagePreview() { document.getElementById('imagePreviewOverlay').classList.remove('show'); }
+
+        async function openAnnotator(split, path, index) {
+            try {
+                window.previewIndex = (typeof index === 'number') ? index : (window.previewList||[]).findIndex(it => it && it.path === path);
+                window.currentAnnot = { split, path, boxes: [], names: [], w: 0, h: 0 };
+                await loadAnnotImage(path);
+            } catch(e) { console.error('打开标注器失败', e); }
+        }
+
+        function closeAnnotator() { const ov = document.getElementById('imagePreviewOverlay'); ov.classList.remove('show'); ov.style.display='none'; detachAnnotatorHotkeys(); }
+
+        async function loadAnnotImage(path) {
+            try {
+                const ov = document.getElementById('imagePreviewOverlay');
+                const img = document.getElementById('imagePreviewLarge');
+                ov.style.display='flex'; ov.classList.add('show');
+                img.src = `/api/file?path=${path}`;
+                await new Promise(r => { if (img.complete) r(); else img.onload = r; });
+                // 拉取标签
+                const res = await fetch(`/api/annotation/get?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(currentDatasetName)}&split=${encodeURIComponent(window.currentAnnot.split)}&image_path=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                const manual = (data.boxes||[]).map(function(b){ b.src='manual'; return b; });
+                const auto   = (data.auto_boxes||[]).map(function(b){ b.src='auto'; return b; });
+                window.currentAnnot.boxes = manual.concat(auto);
+                window.currentAnnot.w = data.width||0; window.currentAnnot.h = data.height||0; window.currentAnnot.path = path;
+                // names
+                const infoRes = await fetch(`/api/dataset/info?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(currentDatasetName)}`);
+                const info = await infoRes.json();
+                window.currentAnnot.names = (info.info && info.info.names) ? info.info.names : [];
+                const sel = document.getElementById('annotClassSelect');
+                sel.innerHTML = (window.currentAnnot.names || []).map((n,i)=>`<option value="${i}">${n}</option>`).join('');
+                // 初始化画布尺寸匹配图片
+                const cv = document.getElementById('annotCanvas');
+                cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+                cv.style.width = img.clientWidth + 'px';
+                cv.style.height = img.clientHeight + 'px';
+                const wrap = document.getElementById('annotImageWrap');
+                window.currentAnnot.scale = 1;
+                wrap.style.transform = 'scale(1)';
+                drawBoxes();
+                setupCanvasInteractions();
+                attachAnnotatorHotkeys();
+            } catch(e) { console.error('加载预览失败', e); }
+        }
+
+        function drawBoxes() {
+            const cv = document.getElementById('annotCanvas');
+            const ctx = cv.getContext('2d');
+            ctx.clearRect(0,0,cv.width,cv.height);
+            const names = window.currentAnnot.names || [];
+            const selected = window.currentAnnot.selectedIndex;
+            const handleSize = 8;
+            (window.currentAnnot.boxes||[]).forEach((b,i)=>{
+                const w = b.x2 - b.x1; const h = b.y2 - b.y1;
+                const isAuto = b.src === 'auto';
+                ctx.lineWidth = (i===selected)?3:2;
+                ctx.strokeStyle = isAuto ? ((i===selected)? '#d35400':'#e67e22') : ((i===selected)? '#00c853':'#00e676');
+                ctx.strokeRect(b.x1, b.y1, w, h);
+                const label = names[b.class] || `class ${b.class}`;
+                ctx.font = '14px sans-serif';
+                const tw = Math.min(cv.width, ctx.measureText(label).width + 10);
+                const ty = Math.max(0, b.y1 - 20);
+                ctx.fillStyle = isAuto ? 'rgba(230,126,34,0.85)' : 'rgba(0,230,118,0.85)';
+                ctx.fillRect(b.x1, ty, tw, 20);
+                ctx.fillStyle = '#000';
+                ctx.fillText(label, b.x1 + 5, ty + 14);
+                b._lb = {x:b.x1, y:ty, w:tw, h:20};
+                if (i===selected) {
+                    const cx=(b.x1+b.x2)/2, cy=(b.y1+b.y2)/2;
+                    ctx.fillStyle = isAuto ? '#d35400' : '#00c853';
+                    [[b.x1,b.y1],[cx,b.y1],[b.x2,b.y1],[b.x1,cy],[b.x2,cy],[b.x1,b.y2],[cx,b.y2],[b.x2,b.y2]].forEach(([hx,hy])=>{
+                        ctx.fillRect(hx-handleSize/2, hy-handleSize/2, handleSize, handleSize);
+                    });
+                }
+            });
+            updateDeleteBtn();
+        }
+
+        function setupCanvasInteractions() {
+            const cv = document.getElementById('annotCanvas');
+            let dragging = null; let start = null; let creating = null; let creatingStart = null; let resizing = null;
+            const createThreshold = 8;
+            const clamp = (b)=>{
+                const W=cv.width, H=cv.height;
+                b.x1=Math.max(0, Math.min(W, b.x1));
+                b.y1=Math.max(0, Math.min(H, b.y1));
+                b.x2=Math.max(0, Math.min(W, b.x2));
+                b.y2=Math.max(0, Math.min(H, b.y2));
+                if (b.x2<b.x1) [b.x1,b.x2]=[b.x2,b.x1];
+                if (b.y2<b.y1) [b.y1,b.y2]=[b.y2,b.y1];
+            };
+            const handleAt = (p,b)=>{
+                const hs=8; const cx=(b.x1+b.x2)/2, cy=(b.y1+b.y2)/2;
+                const tests=[['nw',b.x1,b.y1],['n',cx,b.y1],['ne',b.x2,b.y1],['w',b.x1,cy],['e',b.x2,cy],['sw',b.x1,b.y2],['s',cx,b.y2],['se',b.x2,b.y2]];
+                for (const [name,hx,hy] of tests){ if (Math.abs(p.x-hx)<=hs && Math.abs(p.y-hy)<=hs) return name; }
+                return null;
+            };
+            cv.onmousedown = (e)=>{
+                const p = getPos(e, cv);
+                const hit = hitTest(p);
+                if (hit>=0) {
+                    window.currentAnnot.selectedIndex = hit; const b = window.currentAnnot.boxes[hit]; const h = handleAt(p,b); if (h){ resizing=h; start=p; } else { dragging = hit; start = p; } drawBoxes();
+                } else {
+                    creatingStart = p; creating = null; window.currentAnnot.selectedIndex = null; cv.style.cursor='crosshair';
+                }
+            };
+            cv.onmousemove = (e)=>{
+                const p = getPos(e, cv);
+                if (resizing){
+                    const b = window.currentAnnot.boxes[window.currentAnnot.selectedIndex]; const dx=p.x-start.x, dy=p.y-start.y;
+                    switch(resizing){case 'nw': b.x1+=dx; b.y1+=dy; break; case 'n': b.y1+=dy; break; case 'ne': b.x2+=dx; b.y1+=dy; break; case 'w': b.x1+=dx; break; case 'e': b.x2+=dx; break; case 'sw': b.x1+=dx; b.y2+=dy; break; case 's': b.y2+=dy; break; case 'se': b.x2+=dx; b.y2+=dy; break;}
+                    clamp(b); start=p; drawBoxes();
+                } else if (dragging!=null) {
+                    const b = window.currentAnnot.boxes[dragging];
+                    const dx=p.x-start.x, dy=p.y-start.y;
+                    if (e.shiftKey) { b.x2 += dx; b.y2 += dy; }
+                    else { b.x1 += dx; b.y1 += dy; b.x2 += dx; b.y2 += dy; }
+                    clamp(b); start=p; drawBoxes();
+                } else if (creatingStart) {
+                    const dx = Math.abs(p.x - creatingStart.x), dy = Math.abs(p.y - creatingStart.y);
+                    if (!creating && (dx >= createThreshold || dy >= createThreshold)) {
+                        const cls = parseInt(document.getElementById('annotClassSelect').value||'0',10);
+                        creating = {class: cls, x1:creatingStart.x, y1:creatingStart.y, x2:p.x, y2:p.y};
+                        window.currentAnnot.boxes.push(creating);
+                        window.currentAnnot.selectedIndex = window.currentAnnot.boxes.length-1;
+                    } else if (creating) {
+                        creating.x2 = p.x; creating.y2 = p.y;
+                    }
+                    if (creating) { clamp(creating); drawBoxes(); }
+                }
+                // 光标样式提示
+                const sel = window.currentAnnot.selectedIndex; if (sel!=null){ const h = handleAt(p, window.currentAnnot.boxes[sel]); if (h==='nw' || h==='se') cv.style.cursor='nwse-resize'; else if (h==='ne' || h==='sw') cv.style.cursor='nesw-resize'; else if (h==='n' || h==='s') cv.style.cursor='ns-resize'; else if (h==='w' || h==='e') cv.style.cursor='ew-resize'; else cv.style.cursor = dragging!=null||creating? 'grabbing':'default'; } else { cv.style.cursor = dragging!=null||creating? 'grabbing':'default'; }
+            };
+            cv.onmouseup = ()=>{ dragging=null; creatingStart=null; creating=null; resizing=null; cv.style.cursor='default'; };
+            cv.onmouseleave = ()=>{ dragging=null; creatingStart=null; creating=null; resizing=null; cv.style.cursor='default'; };
+        }
+
+        function updateDeleteBtn(){
+            const btn = document.getElementById('annotDeleteBtn'); const cv = document.getElementById('annotCanvas');
+            const idx = window.currentAnnot.selectedIndex; if (idx==null || idx<0) { btn.style.display='none'; return; }
+            const b = window.currentAnnot.boxes[idx]; const rect = cv.getBoundingClientRect(); const sx = rect.width / cv.width; const sy = rect.height / cv.height;
+            btn.style.left = (b.x2 * sx + 8) + 'px'; btn.style.top = (Math.max(0, b.y1*sy - 28)) + 'px'; btn.style.display='inline-block';
+            btn.onclick = ()=>{ window.currentAnnot.boxes.splice(idx,1); window.currentAnnot.selectedIndex=null; btn.style.display='none'; drawBoxes(); };
+        }
+
+        function setAnnotScale(s){ const wrap = document.getElementById('annotImageWrap'); const cv = document.getElementById('annotCanvas'); const img = document.getElementById('imagePreviewLarge'); const v = Math.max(0.2, Math.min(5, s||1)); window.currentAnnot.scale = v; wrap.style.transform = 'scale('+v+')'; updateDeleteBtn(); }
+        function scaleUp(){ setAnnotScale((window.currentAnnot && window.currentAnnot.scale ? window.currentAnnot.scale : 1) * 1.2); }
+        function scaleDown(){ setAnnotScale((window.currentAnnot && window.currentAnnot.scale ? window.currentAnnot.scale : 1) / 1.2); }
+        function fitAnnot(){ setAnnotScale(1); }
+        function resetScale(){ setAnnotScale(1); }
+
+        function getPos(e, cv) { const r = cv.getBoundingClientRect(); const sx = cv.width/r.width; const sy = cv.height/r.height; return { x:(e.clientX-r.left)*sx, y:(e.clientY-r.top)*sy }; }
+        function hitTest(p) { const boxes=window.currentAnnot.boxes||[]; for (let i=boxes.length-1;i>=0;i--) { const b=boxes[i]; if (p.x>=b.x1 && p.x<=b.x2 && p.y>=b.y1 && p.y<=b.y2) return i; const lb=b._lb; if (lb && p.x>=lb.x && p.x<=lb.x+lb.w && p.y>=lb.y && p.y<=lb.y+lb.h) return i; } return -1; }
+
+        function onAnnotClassChange(){ const sel = document.getElementById('annotClassSelect'); const idx = window.currentAnnot.selectedIndex; if (idx!=null && idx>=0) { window.currentAnnot.boxes[idx].class = parseInt(sel.value||'0',10); drawBoxes(); }}
+
+        async function saveCurrentAnnotation() {
+            try {
+                const payloadManual = { project_path: currentProject.path, dataset_name: currentDatasetName, split: window.currentAnnot.split, image_path: window.currentAnnot.path, labels: window.currentAnnot.boxes };
+                const res = await fetch('/api/annotation/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payloadManual)});
+                const data = await res.json();
+                if (!data.success) { showToast('保存失败: '+(data.error||''), 'error'); return; }
+                // 后端已在保存时自动删除对应 auto_labels，实现合并效果
+                showToast('保存并合并成功', 'success');
+            } catch(e) { console.error('保存失败', e); }
+        }
+
+        function confirmDeleteImage(){
+            if (!window.currentAnnot || !window.currentAnnot.path) return;
+            const ok = window.confirm('确定删除当前图片及其标签吗？此操作不可恢复。');
+            if (!ok) return;
+            deleteImageAndLabel();
+        }
+
+        async function deleteImageAndLabel(){
+            try{
+                const split = window.currentAnnot.split || 'train';
+                const path = window.currentAnnot.path;
+                const imgDir = `${currentProject.path}/training/${currentDatasetName}/${split}/images/`;
+                let rel = '';
+                if (path.startsWith(imgDir)) {
+                    rel = path.slice(imgDir.length);
+                } else {
+                    const key = `/${split}/images/`;
+                    const pos = path.indexOf(key);
+                    rel = pos >= 0 ? path.slice(pos + key.length) : (path.split('/').pop()||'');
+                }
+                const body = { project_path: currentProject.path, dataset_name: currentDatasetName, split: split, image_rel: rel };
+                const res = await fetch('/api/dataset/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                const data = await res.json();
+                if (data.success){
+                    showToast('已删除', 'success');
+                    closeAnnotator();
+                    await renderDatasetPreview();
+                } else {
+                    showToast('删除失败: '+(data.error||''), 'error');
+                }
+            }catch(e){ console.error('删除失败', e); }
+        }
+
+        function showToast(msg, kind){
+            const el = document.getElementById('topToast');
+            if (!el) return;
+            el.textContent = msg;
+            el.style.background = (kind==='error') ? '#e74c3c' : '#2ecc71';
+            el.classList.remove('hidden');
+            el.style.display = 'block';
+            setTimeout(()=>{ el.style.display='none'; el.classList.add('hidden'); }, 2000);
+        }
+
+        async function prevImage() {
+            if (!window.previewList) return;
+            if ((window.previewIndex||0) > 0) {
+                window.previewIndex -= 1;
+                const it = window.previewList[window.previewIndex];
+                if (it) loadAnnotImage(it.path);
+            } else if ((previewOffset - previewLimit) >= 0) {
+                previewOffset -= previewLimit;
+                await renderDatasetPreview();
+                window.previewIndex = (window.previewList.length ? window.previewList.length - 1 : 0);
+                const it = window.previewList[window.previewIndex];
+                if (it) loadAnnotImage(it.path);
+            }
+        }
+        async function nextImage() {
+            if (!window.previewList) return;
+            if ((window.previewIndex||0) < window.previewList.length - 1) {
+                window.previewIndex += 1;
+                const it = window.previewList[window.previewIndex];
+                if (it) loadAnnotImage(it.path);
+            } else if ((previewOffset + (window.previewList ? window.previewList.length : 0)) < (window.previewTotal||0)) {
+                previewOffset += previewLimit;
+                await renderDatasetPreview();
+                window.previewIndex = 0;
+                const it = window.previewList[0];
+                if (it) loadAnnotImage(it.path);
+            }
+        }
+
+        async function goToPage(){
+            try{
+                const p = parseInt(document.getElementById('pageInput').value||'1',10);
+                const totalPages = Math.max(1, Math.ceil((window.previewTotal||0)/previewLimit));
+                const page = Math.min(totalPages, Math.max(1, p));
+                previewOffset = (page-1) * previewLimit;
+                await renderDatasetPreview();
+                window.previewIndex = 0;
+            }catch(e){ console.error('跳转页失败', e); }
+        }
+
+        function attachAnnotatorHotkeys(){
+            if (window.annotatorKeyHandler) return;
+            window.annotatorKeyHandler = function(e){
+                const ov = document.getElementById('imagePreviewOverlay');
+                if (!ov || !ov.classList.contains('show')) return;
+                if (e.key === 'ArrowLeft'){ e.preventDefault(); prevImage(); }
+                else if (e.key === 'ArrowRight'){ e.preventDefault(); nextImage(); }
+                else if (e.key === 'Delete' || e.key === 'Backspace'){
+                    const idx = window.currentAnnot && window.currentAnnot.selectedIndex;
+                    if (idx!=null && idx>=0){ window.currentAnnot.boxes.splice(idx,1); window.currentAnnot.selectedIndex=null; drawBoxes(); }
+                }
+            };
+            document.addEventListener('keydown', window.annotatorKeyHandler);
+        }
+
+        function detachAnnotatorHotkeys(){
+            if (window.annotatorKeyHandler){ document.removeEventListener('keydown', window.annotatorKeyHandler); window.annotatorKeyHandler = null; }
+        }
+
+         async function loadRuns() {
+            if (!currentProject) return;
+            try {
+                // 使用已有接口历史记录填充，避免后端新路由未生效
+                const res = await fetch(`/api/training/history?project_path=${encodeURIComponent(currentProject.path)}`);
+                const data = await res.json();
+                if (data.success) {
+                    const runs = (data.history || []).map(h => ({ training_id: h.training_id })).reverse();
+                    const runSel = document.getElementById('runSelector');
+                    const expSel = document.getElementById('exportRunSelector');
+                    const opts = runs.map(r => `<option value="${r.training_id}">${r.training_id}</option>`).join('');
+                    runSel.innerHTML = opts;
+                    expSel.innerHTML = opts;
+                    if (runs.length > 0) {
+                        runSel.value = runs[0].training_id;
+                        expSel.value = runs[0].training_id;
+                        onRunChange();
+                    }
+                }
+            } catch (e) { console.error('加载训练版本失败', e); }
+        }
+
+        function onRunChange() {
+            loadArtifactsByRun();
+        }
+
+        async function loadArtifactsByRun() {
+            try {
+                const rid = document.getElementById('runSelector').value;
+                if (!rid) return;
+                const url = `/api/training/artifacts?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(rid)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    const metrics = data.metrics || {};
+                    document.getElementById('metricsSummary').textContent = formatMetricsText(metrics);
+                    const images = [];
+                    const a = data.artifacts || {};
+                    ['results_png', 'confusion_matrix', 'pr_curve', 'f1_curve'].forEach(k => { if (a[k]) images.push(a[k]); });
+                    (a.val_batch_images || []).forEach(p => images.push(p));
+                    renderArtifactImages(images);
+                    const best = a.weights_best || '';
+                    const last = a.weights_last || '';
+                    const bsz = a.best_size_bytes || 0;
+                    const lsz = a.last_size_bytes || 0;
+                    const html = [
+                        best ? `<div>最佳模型: <a href="${best}" download>下载</a>（${formatSize(bsz)}）</div>` : '',
+                        last ? `<div>最后模型: <a href="${last}" download>下载</a>（${formatSize(lsz)}）</div>` : ''
+                    ].filter(Boolean).join('');
+                    document.getElementById('trainingDownload').innerHTML = html || '<div style="color:#6c757d;">暂无可下载模型</div>';
+                }
+            } catch (e) { console.error('加载指定版本产物失败', e); }
+        }
+
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const result = await response.json();
+
+                if (result.success) {
+                    renderModels(result.models);
+                }
+            } catch (error) {
+                renderModels([
+                    { name: 'yolov8n', description: '轻量级YOLOv8模型' },
+                    { name: 'yolov8s', description: '小型YOLOv8模型' }
+                ]);
+            }
+        }
+
+        function renderModels(models) {
+            const modelSelector = document.getElementById('modelSelector');
+
+            if (models.length === 0) {
+                modelSelector.innerHTML = '<p style="color: #6c757d;">暂无可用模型</p>';
+                return;
+            }
+
+            modelSelector.innerHTML = models.map(model => {
+                const label = model.name || (model.path ? model.path.split('/').pop() : '未知模型');
+                const path = model.path || '';
+                const desc = model.description || (path ? '项目训练产物' : '预训练模型');
+                const onclick = path ? `selectModel('${path}')` : `selectModel('${label}')`;
+                const short = label.length > 22 ? label.slice(0, 19) + '...' : label;
+                return `
+                <div class="model-option" onclick="${onclick}" title="${label}">
+                    <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" aria-label="${label}">${short}</div>
+                    <div style="font-size: 12px; color: #6c757d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${desc}">${desc}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function selectModel(modelName) {
+            document.querySelectorAll('.model-option').forEach(option => {
+                option.classList.remove('selected');
+            });
+            event.target.closest('.model-option').classList.add('selected');
+
+            selectedModel = modelName;
+        }
+
+        async function startTraining() {
+            if (!selectedDataset || !selectedModel) {
+                alert('请先选择数据集和模型');
+                return;
+            }
+
+            try {
+                // 进入loading状态
+                document.getElementById('trainingStatusText').textContent = '准备训练...';
+                document.getElementById('trainingProgressText').textContent = '0%';
+                document.getElementById('trainingProgressBar').style.width = '0%';
+                document.getElementById('startTrainingBtn').disabled = true;
+
+                const response = await fetch('/api/training/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        project_path: currentProject.path,
+                        dataset_name: selectedDataset.name,
+                        dataset_path: selectedDataset.path,
+                        model_name: selectedModel,
+                        training_config: {
+                            epochs: parseInt(document.getElementById('cfgEpochs')?.value||'',10) || '',
+                            batch: parseInt(document.getElementById('cfgBatch')?.value||'',10) || '',
+                            imgsz: parseInt(document.getElementById('cfgImgsz')?.value||'',10) || '',
+                            freeze: document.getElementById('cfgFreeze')?.value||'',
+                            lr0: parseFloat(document.getElementById('cfgLr0')?.value||'') || ''
+                        }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('startTrainingBtn').classList.add('hidden');
+                    document.getElementById('stopTrainingBtn').classList.remove('hidden');
+                    startTrainingStatusUpdate();
+                } else {
+                    alert('启动训练失败: ' + result.error);
+                }
+            } catch (error) {
+                console.error('开始训练错误:', error);
+                alert('启动训练失败');
+            } finally {
+                document.getElementById('startTrainingBtn').disabled = false;
+            }
+        }
+
+        async function startTwoStageTraining(){
+            try{
+                if (!selectedDataset || !selectedModel){ alert('请先选择数据集和模型'); return; }
+                const s1 = { epochs: parseInt(document.getElementById('s1Epochs').value||'15',10), imgsz: parseInt(document.getElementById('s1Imgsz').value||'1280',10), freeze: document.getElementById('s1Freeze').value||'backbone' };
+                const s2 = {
+                    epochs: parseInt(document.getElementById('s2Epochs').value||'25',10),
+                    imgsz: parseInt(document.getElementById('s2Imgsz').value||'1280',10),
+                    batch: parseInt(document.getElementById('s2Batch').value||'',10),
+                    lr0: parseFloat(document.getElementById('s2Lr0').value||''),
+                    freeze: (document.getElementById('s2Freeze').value||''),
+                    mosaic: parseFloat(document.getElementById('s2Mosaic').value||''),
+                    close_mosaic: parseInt(document.getElementById('s2CloseMosaic').value||'',10),
+                    auto_augment: document.getElementById('s2AutoAugment').value||'',
+                    erasing: parseFloat(document.getElementById('s2Erasing').value||''),
+                    hsv_s: parseFloat(document.getElementById('s2HSV_S').value||''),
+                    hsv_v: parseFloat(document.getElementById('s2HSV_V').value||''),
+                    augment: document.getElementById('s2Augment').checked
+                };
+                const s2Path = document.getElementById('s2DatasetPath').value||'';
+                const body = { project_path: currentProject.path, dataset_name: selectedDataset.name, dataset_path: selectedDataset.path, model_name: selectedModel, stage1_config: s1, stage2_config: s2, stage2_dataset_path: s2Path };
+                const res = await fetch('/api/training/start_two_stage', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+                const data = await res.json();
+                document.getElementById('twoStageMsg').textContent = data.success ? ('已启动: '+data.training_id) : ('失败: '+(data.error||''));
+                if (data.success){ startTrainingStatusUpdate(); }
+            }catch(e){ console.error('启动两阶段失败', e); document.getElementById('twoStageMsg').textContent = '启动失败'; }
+        }
+
+        async function stopTraining() {
+            try {
+                const response = await fetch('/api/training/stop', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('startTrainingBtn').classList.remove('hidden');
+                    document.getElementById('stopTrainingBtn').classList.add('hidden');
+                    stopTrainingStatusUpdate();
+                }
+            } catch (error) {
+                console.error('停止训练错误:', error);
+            }
+        }
+
+        function startTrainingStatusUpdate() {
+            trainingUpdateInterval = setInterval(updateTrainingStatus, 1000);
+        }
+
+        function stopTrainingStatusUpdate() {
+            if (trainingUpdateInterval) {
+                clearInterval(trainingUpdateInterval);
+                trainingUpdateInterval = null;
+            }
+        }
+
+        async function updateTrainingStatus() {
+            try {
+                const response = await fetch('/api/training/status');
+                const result = await response.json();
+
+                if (result.success) {
+                    const status = result.status;
+
+                    document.getElementById('trainingStatusText').textContent = status.message;
+                    document.getElementById('trainingProgressBar').style.width = status.progress + '%';
+                    document.getElementById('trainingProgressText').textContent = status.progress + '%';
+                    // 如果正在下载权重，提示loading
+                    if (status.is_running && status.message && status.message.includes('下载预训练模型')) {
+                        document.getElementById('trainingStatusText').textContent = '正在下载预训练模型...';
+                    }
+
+                    if (!status.is_running && status.progress === 100) {
+                        document.getElementById('startTrainingBtn').classList.remove('hidden');
+                        document.getElementById('stopTrainingBtn').classList.add('hidden');
+                        stopTrainingStatusUpdate();
+                        // 加载训练产物
+                        loadArtifacts();
+                        alert('训练完成！');
+                    }
+                }
+            } catch (error) {
+                console.error('更新训练状态错误:', error);
+            }
+        }
+
+        async function loadArtifacts() {
+            try {
+                const ridEl = document.getElementById('runSelector');
+                const rid = ridEl && ridEl.value ? ridEl.value : '';
+                const url = rid ? `/api/training/artifacts?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(rid)}` : `/api/training/artifacts?project_path=${encodeURIComponent(currentProject.path)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    const metrics = data.metrics || {};
+                    document.getElementById('metricsSummary').textContent = formatMetricsText(metrics);
+                    const images = [];
+                    const a = data.artifacts || {};
+                    ['results_png', 'confusion_matrix', 'pr_curve', 'f1_curve'].forEach(k => {
+                        if (a[k]) images.push(a[k]);
+                    });
+                    (a.val_batch_images || []).forEach(p => images.push(p));
+                    renderArtifactImages(images);
+                    const best = a.weights_best || '';
+                    const last = a.weights_last || '';
+                    const bsz = a.best_size_bytes || 0;
+                    const lsz = a.last_size_bytes || 0;
+                    const html = [
+                        best ? `<div>最佳模型: <a href="${best}" download>下载</a>（${formatSize(bsz)}）</div>` : '',
+                        last ? `<div>最后模型: <a href="${last}" download>下载</a>（${formatSize(lsz)}）</div>` : ''
+                    ].filter(Boolean).join('');
+                    document.getElementById('trainingDownload').innerHTML = html || '<div style="color:#6c757d;">暂无可下载模型</div>';
+                }
+            } catch (e) {
+                console.error('加载产物失败', e);
+            }
+        }
+
+        async function startExport() {
+            if (!currentProject) { alert('请先选择项目'); return; }
+            const trainingId = document.getElementById('exportRunSelector').value;
+            if (!trainingId) { alert('请选择来源训练版本'); return; }
+            await diagnoseDataset(trainingId);
+            const format = document.getElementById('exportFormat').value;
+            const half = document.getElementById('exportHalf').checked;
+            const int8 = document.getElementById('exportInt8').checked;
+            const imgsz = parseInt(document.getElementById('exportImgsz').value || '0', 10) || null;
+            const perClass = parseInt(document.getElementById('exportPerClass').value || '20', 10);
+            const maxImages = parseInt(document.getElementById('exportMaxImages').value || '200', 10);
+            try {
+                const res = await fetch('/api/model/export', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_path: currentProject.path, training_id: trainingId, format, half_precision: half, int8_quant: int8, imgsz, per_class: perClass, max_images: maxImages })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('exportStatusText').textContent = '导出任务已启动...';
+                    pollExportStatus();
+                } else {
+                    alert('导出启动失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) { console.error('导出错误', e); alert('导出失败'); }
+        }
+
+        async function diagnoseDataset(trainingId) {
+            try {
+                const res = await fetch(`/api/dataset/diagnose?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(trainingId)}`);
+                const data = await res.json();
+                if (data.success) {
+                    const d = data.diagnose || {};
+                    const msg = data.message || '';
+                    const lines = [];
+                    if (d.dataset_yaml) lines.push(`dataset_yaml: ${d.dataset_yaml}`);
+                    if (d.images_train) lines.push(`images/train: ${d.images_train} (${d.exists_images_train ? '存在' : '缺失'})`);
+                    if (d.labels_train) lines.push(`labels/train: ${d.labels_train} (${d.exists_labels_train ? '存在' : '缺失'})`);
+                    if (msg) lines.push(msg);
+                    document.getElementById('diagnoseInfo').innerText = lines.join('\n');
+                    if (!d.exists_images_train) throw new Error('缺少 images/train');
+                }
+            } catch (e) {
+                document.getElementById('diagnoseInfo').innerText = '诊断失败：' + (e.message || '');
+                throw e;
+            }
+        }
+
+        async function pollExportStatus() {
+            try {
+                const res = await fetch('/api/model/export/status');
+                const data = await res.json();
+                if (data.success) {
+                    const st = data.status || {};
+                    document.getElementById('exportStatusText').textContent = (st.message || '') + (st.progress ? (' ' + st.progress + '%') : '');
+                    if (!st.is_running) { await listExports(); if (document.getElementById('exportAutoDownload').checked) { autoDownloadLatestExport(); } }
+                    else { setTimeout(pollExportStatus, 1000); }
+                }
+            } catch (e) { console.error('导出状态错误', e); }
+        }
+
+        async function listExports() {
+            try {
+                const url = `/api/model/exports?project_path=${encodeURIComponent(currentProject.path)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    const items = (data.exports || []).sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
+                    const it = items[0];
+                    if (!it) {
+                        document.getElementById('exportList').innerHTML = '<div style="color:#6c757d;">暂无最新导出产物</div>';
+                        return;
+                    }
+                        const links = it.files.map(f => `<a href="${f}" download>下载</a>`).join(' | ');
+                    const totalSize = it.total_size_bytes ? `（总大小: ${formatSize(it.total_size_bytes)}）` : '';
+                    const primary = it.primary_model_path ? `<div>主模型: <a href="/api/file?path=${it.primary_model_path}" target="_blank">${basename(it.primary_model_path)}</a></div>` : '<div style="color:#6c757d;">主模型未识别</div>';
+                    const netron = `<a href="https://netron.app" target="_blank">可视化(Netron)</a>`;
+                    document.getElementById('exportList').innerHTML = `<div>导出目录: ${it.export_dir} ${totalSize}<br/>${primary}<div>文件: ${links} | ${netron}</div></div>`;
+                }
+            } catch (e) { console.error('列出导出失败', e); }
+        }
+
+        function formatSize(bytes) {
+            const units = ['B','KB','MB','GB'];
+            let v = bytes; let i = 0;
+            while (v >= 1024 && i < units.length-1) { v /= 1024; i++; }
+            return `${v.toFixed(2)} ${units[i]}`;
+        }
+        function basename(p) { try { return p.split('/').pop(); } catch { return p; } }
+
+        async function downloadRawWeights() {
+            try {
+                const url = `/api/training/artifacts?project_path=${encodeURIComponent(currentProject.path)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    const a = data.artifacts || {};
+                    const files = [];
+                    if (a.weights_best) files.push(a.weights_best);
+                    if (a.weights_last) files.push(a.weights_last);
+                    files.forEach(url => {
+                        if (!url) return;
+                        const link = document.createElement('a');
+                        link.href = url; link.download = '';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    });
+                }
+            } catch (e) { console.error('下载原模型失败', e); }
+        }
+
+        function renderArtifactImages(images) {
+            document.getElementById('artifactsImages').innerHTML = images.map(src => `
+                <div style="background:#fff; border:1px solid #e0e0e0; border-radius:8px; padding:8px;">
+                    <img src="${src}" style="width:100%; border-radius:6px; cursor: zoom-in;" onclick="openImageModal('${src}')" />
+                </div>
+            `).join('');
+        }
+
+        function formatMetricsText(m) {
+            const pick = (keys) => {
+                for (const k of keys) { if (m[k] !== undefined) return Number(m[k]); }
+                return null;
+            };
+            const map50 = pick(['map50', 'metrics/mAP50', 'metrics/mAP50(B)', 'mAP50']);
+            const map5095 = pick(['map', 'map50_95', 'metrics/mAP50-95', 'metrics/mAP50-95(B)', 'mAP50_95']);
+            const precision = pick(['precision', 'metrics/precision', 'metrics/precision(B)']);
+            const recall = pick(['recall', 'metrics/recall', 'metrics/recall(B)']);
+            if (map50 != null || map5095 != null || precision != null || recall != null) {
+                const parts = [];
+                if (map50 != null) parts.push(`mAP@0.5: ${map50.toFixed(4)}`);
+                if (map5095 != null) parts.push(`mAP@0.5:0.95: ${map5095.toFixed(4)}`);
+                if (precision != null) parts.push(`P: ${precision.toFixed(4)}`);
+                if (recall != null) parts.push(`R: ${recall.toFixed(4)}`);
+                return parts.join(' | ');
+            }
+            return '暂无指标';
+        }
+
+        function autoDownloadLatestExport() {
+            fetch(`/api/model/exports?project_path=${encodeURIComponent(currentProject.path)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.success) return;
+                    const items = data.exports || [];
+                    if (!items.length) return;
+                    const latest = items[items.length - 1];
+                    (latest.files || []).forEach(url => {
+                        const a = document.createElement('a');
+                        a.href = url; a.download = '';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    });
+                });
+        }
+
+        async function startEvaluate(split) {
+            try {
+                document.getElementById('evalStatusText').textContent = '评估启动...';
+                document.getElementById('evalProgressBar').style.width = '0%';
+                // 尝试使用异步评估接口
+                const startRes = await fetch('/api/model/evaluate/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_path: currentProject.path, split })
+                });
+                if (startRes.ok) {
+                    pollEvaluateStatus();
+                } else {
+                    // 回退同步
+                    await evaluateFallback(split);
+                }
+            } catch (e) {
+                console.warn('异步评估不可用，回退同步', e);
+                await evaluateFallback(split);
+            }
+        }
+
+        async function pollEvaluateStatus() {
+            try {
+                const res = await fetch('/api/model/evaluate/status');
+                const data = await res.json();
+                if (data.success) {
+                    const st = data.status || {};
+                    const pct = st.progress || 0;
+                    document.getElementById('evalStatusText').textContent = st.message || '';
+                    document.getElementById('evalProgressBar').style.width = pct + '%';
+                    if (!st.is_running) {
+                        if (st.results && st.results.metrics) {
+                            const m = st.results.metrics;
+                            document.getElementById('metricsSummary').textContent = formatMetricsText(m);
+                        }
+                        loadArtifacts();
+                    } else {
+                        setTimeout(pollEvaluateStatus, 1000);
+                    }
+                }
+            } catch (e) { console.error('评估状态错误', e); }
+        }
+
+        async function evaluateFallback(split) {
+            try {
+                document.getElementById('evalStatusText').textContent = '评估执行中...';
+                const res = await fetch('/api/model/evaluate', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_path: currentProject.path, split })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const m = data.metrics || {};
+                    document.getElementById('metricsSummary').textContent = formatMetricsText(m);
+                    const images = (data.images || []);
+                    renderArtifactImages(images);
+                    document.getElementById('evalStatusText').textContent = '评估完成';
+                    document.getElementById('evalProgressBar').style.width = '100%';
+                } else {
+                    alert('评估失败: ' + (data.error || '未知错误'));
+                    document.getElementById('evalStatusText').textContent = '评估失败';
+                }
+            } catch (e) {
+                console.error('评估错误', e);
+                alert('评估失败');
+                document.getElementById('evalStatusText').textContent = '评估失败';
+            }
+        }
+
+        async function continueTraining(useBest) {
+            if (!currentProject) {
+                alert('请先选择项目');
+                return;
+            }
+            try {
+                const res = await fetch('/api/training/continue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_path: currentProject.path, dataset_name: 'training', use_best: useBest, training_config: {} })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('startTrainingBtn').classList.add('hidden');
+                    document.getElementById('stopTrainingBtn').classList.remove('hidden');
+                    startTrainingStatusUpdate();
+                } else {
+                    alert('继续训练失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                console.error('继续训练错误', e);
+                alert('继续训练失败');
+            }
+        }
+
+        async function resumeTraining() {
+            if (!currentProject) {
+                alert('请先选择项目');
+                return;
+            }
+            try {
+                const res = await fetch('/api/training/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_path: currentProject.path, dataset_name: 'training' })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('startTrainingBtn').classList.add('hidden');
+                    document.getElementById('stopTrainingBtn').classList.remove('hidden');
+                    startTrainingStatusUpdate();
+                } else {
+                    alert('续跑失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                console.error('续跑错误', e);
+                alert('续跑失败');
+            }
+        }
+
+        window.addEventListener('beforeunload', function () {
+            stopTrainingStatusUpdate();
+        });
+    </script>
+    <div id="imageModal" class="modal-overlay" onclick="closeImageModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImg" src="" />
+        </div>
+    </div>
+    <script>
+        function openImageModal(src) {
+            const modal = document.getElementById('imageModal');
+            const img = document.getElementById('modalImg');
+            img.src = src;
+            modal.style.display = 'flex';
+        }
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            modal.style.display = 'none';
+            document.getElementById('modalImg').src = '';
+        }
+    </script>
+</body>
+
+</html>
+       

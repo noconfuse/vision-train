@@ -1,0 +1,10 @@
+*.pyc
+.pt
+lab_safety_env
+.trae
+docs
+projects
+pretrained_models
+myenv
+runs
+*.pt

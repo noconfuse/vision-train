@@ -1,0 +1,3420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图像标注工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            color: #333;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 100%;
+            height: 100vh;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            flex-shrink: 0;
+        }
+
+        .header h1 {
+            color: #4a5568;
+            text-align: center;
+            margin-bottom: 5px;
+            font-size: 1.8em;
+            font-weight: 600;
+        }
+
+        .project-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+            gap: 10px;
+        }
+
+        .project-selector label {
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        .project-selector select {
+            padding: 5px 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 5px;
+            background: white;
+            color: #4a5568;
+            font-size: 14px;
+        }
+
+        .project-info {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #718096;
+        }
+
+        .artifacts-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 10px;
+            background: #f8fafc;
+        }
+
+        .artifact-category {
+            margin-bottom: 15px;
+        }
+
+        .artifact-category h4 {
+            color: #2d3748;
+            font-size: 14px;
+            margin-bottom: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .artifact-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .artifact-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 5px;
+            border: 1px solid #e2e8f0;
+            font-size: 12px;
+            transition: all 0.2s ease;
+        }
+
+        .artifact-item:hover {
+            border-color: #4299e1;
+            box-shadow: 0 2px 4px rgba(66, 153, 225, 0.1);
+        }
+
+        .artifact-name {
+            color: #2d3748;
+            font-weight: 500;
+        }
+
+        .artifact-size {
+            color: #718096;
+            font-size: 11px;
+        }
+
+        .artifact-loading {
+            text-align: center;
+            color: #718096;
+            font-size: 12px;
+            padding: 20px;
+        }
+
+        .artifact-empty {
+            text-align: center;
+            color: #a0aec0;
+            font-size: 12px;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        .progress-bar {
+            background: #e2e8f0;
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 5px 0;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #48bb78, #38a169);
+            height: 100%;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 600px;
+            gap: 15px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .image-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .image-container {
+            flex: 1;
+            position: relative;
+            border: 2px dashed #cbd5e0;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f7fafc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .image-container.has-image {
+            border: 2px solid #48bb78;
+        }
+
+        #annotationCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            cursor: crosshair;
+            border-radius: 8px;
+        }
+
+        .image-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            gap: 8px;
+        }
+
+        .page-navigation {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+
+
+        .image-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .image-select {
+            min-width: 300px;
+            max-width: 400px;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .image-select:hover {
+            border-color: #9ca3af;
+            background: #f9fafb;
+        }
+
+        .image-select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            background: white;
+        }
+
+        .image-select option {
+            padding: 8px 12px;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .image-select option:hover {
+            background: #f3f4f6;
+        }
+
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 16px;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            padding: 14px;
+            background: rgba(248, 250, 252, 0.8);
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            min-width: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .section h3 {
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 1.0em;
+            font-weight: 600;
+        }
+
+        .image-classes {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .image-group {
+            margin-bottom: 15px;
+        }
+
+        .image-group h4 {
+            color: #4a5568;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .class-btn {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: left;
+            font-size: 0.9em;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .class-btn:hover {
+            border-color: #667eea;
+            background: #f7fafc;
+        }
+
+        .class-btn.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .class-btn .shortcut {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .class-btn.active .shortcut {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #48bb78, #38a169);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ed8936, #dd6b20);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(237, 137, 54, 0.4);
+        }
+
+        .annotations-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f7fafc;
+        }
+
+        .annotation-item {
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .annotation-item:hover {
+            background: #edf2f7;
+        }
+
+        .annotation-item.selected {
+            background: #bee3f8;
+            border-color: #3182ce;
+        }
+
+        .annotation-item:last-child {
+            border-bottom: none;
+        }
+
+        .category-select {
+            padding: 4px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background-color: white;
+            font-size: 0.9em;
+            cursor: pointer;
+            min-width: 120px;
+            transition: border-color 0.2s;
+        }
+        
+        .category-select:hover {
+            border-color: #cbd5e0;
+        }
+        
+        .category-select:focus {
+            outline: none;
+            border-color: #3182ce;
+            box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1);
+        }
+
+        .btn-delete {
+            background: #fed7d7;
+            border: 1px solid #feb2b2;
+            border-radius: 4px;
+            padding: 4px 6px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: all 0.2s ease;
+            color: #c53030;
+        }
+
+        .btn-delete:hover {
+            background: #fc8181;
+            color: white;
+            transform: scale(1.1);
+        }
+
+
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .stat-item {
+            background: #f7fafc;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.8em;
+            color: #718096;
+            margin-top: 4px;
+        }
+
+        .shortcuts-help {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            line-height: 1.5;
+        }
+
+        .shortcuts-help h4 {
+            margin-bottom: 8px;
+            color: #2d3748;
+        }
+
+        .shortcuts-help ul {
+            list-style: none;
+        }
+
+        .shortcuts-help li {
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .shortcut-key {
+            background: #4a5568;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        .loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            z-index: 10;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: #718096;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .loading.show {
+            display: flex;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .success {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .info {
+            background: #bee3f8;
+            color: #2c5282;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .buffer-info {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 0.9em;
+        }
+
+        .buffer-stats {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .buffer-stat {
+            text-align: center;
+            padding: 6px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .buffer-stat-value {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2d3748;
+        }
+
+        .buffer-stat-label {
+            font-size: 0.8em;
+            color: #718096;
+            margin-top: 2px;
+        }
+
+        .buffer-classes {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .buffer-class-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 0.85em;
+        }
+
+        .buffer-class-name {
+            color: #4a5568;
+        }
+
+        .buffer-class-count {
+            background: #edf2f7;
+            color: #2d3748;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+
+        /* 预训练模型选择器样式 */
+        .pretrained-model-selector {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+        
+        .pretrained-model-selector h4 {
+            color: #2d3748;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        
+        .model-select-container {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .model-select-container select {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            background: white;
+            color: #4a5568;
+            font-size: 13px;
+        }
+        
+        .model-description {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        /* 训练状态样式 */
+        .training-status {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 0.9em;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding: 8px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .status-light {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #cbd5e0;
+            transition: all 0.3s ease;
+        }
+
+        .status-light.idle {
+            background: #68d391;
+            box-shadow: 0 0 8px rgba(104, 211, 145, 0.4);
+        }
+
+        .status-light.training {
+            background: #f6ad55;
+            box-shadow: 0 0 8px rgba(246, 173, 85, 0.4);
+            animation: pulse 2s infinite;
+        }
+
+        .status-light.error {
+            background: #fc8181;
+            box-shadow: 0 0 8px rgba(252, 129, 129, 0.4);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        .training-details {
+            display: grid;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 8px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .detail-label {
+            color: #718096;
+            font-size: 0.85em;
+        }
+
+        .detail-value {
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        .training-warning {
+            background: #fed7d7;
+            border: 1px solid #feb2b2;
+            border-radius: 4px;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .warning-icon {
+            font-size: 1.2em;
+        }
+
+        .warning-text {
+            color: #c53030;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        @media (max-width: 1400px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr auto;
+            }
+            
+            .control-panel {
+                max-height: 400px;
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+        }
+
+        @media (max-width: 800px) {
+            .control-panel {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            
+            .section {
+                margin-bottom: 10px;
+                padding: 10px;
+            }
+            
+            .section h3 {
+                font-size: 0.95em;
+                margin-bottom: 6px;
+            }
+        }
+
+        /* 训练状态样式 */
+        .training-status-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            padding: 16px;
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .training-status-indicator {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .status-icon {
+            font-size: 24px;
+            margin-right: 12px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-text {
+            flex: 1;
+        }
+
+        .status-title {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+
+        .status-message {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .training-progress-bar {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            height: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #4ade80, #22c55e);
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+        }
+
+        .training-progress-text {
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 图像标注工具</h1>
+            <div class="project-selector">
+                <label for="projectSelect">选择项目:</label>
+                <select id="projectSelect" onchange="switchProject()">
+                    <option value="">加载项目中...</option>
+                </select>
+            </div>
+            <div class="project-info" id="projectInfo" style="display: none;">
+                <span id="projectStats"></span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div style="text-align: center; margin-top: 10px; color: #718096;">
+                <span id="progressText">准备中...</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="image-panel">
+                <div class="image-container" id="imageContainer">
+                    <canvas id="annotationCanvas"></canvas>
+                    <div class="loading" id="imageLoading">
+                        <div>🔄 加载图片中...</div>
+                    </div>
+                </div>
+                
+                <div class="image-controls">
+                    <button class="btn btn-secondary" id="prevBtn">⬅️ 上一张</button>
+                    <span id="imageInfo">未选择图片</span>
+                    <button class="btn btn-secondary" id="nextBtn">下一张 ➡️</button>
+                </div>
+                
+                <div class="page-navigation">
+                    <div class="image-selector">
+                        <label for="imageSelect">选择图片:</label>
+                        <select id="imageSelect" class="image-select">
+                            <option value="">请选择图片</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="error" id="errorMessage"></div>
+                <div class="success" id="successMessage"></div>
+                <div class="info" id="infoMessage"></div>
+            </div>
+
+            <div class="control-panel">
+                <!-- 训练状态显示 -->
+                <div class="section" id="trainingStatusSection" style="display: none;">
+                    <h3>🚀 训练状态</h3>
+                    <div class="training-status-container">
+                        <div class="training-status-indicator">
+                            <div class="status-icon" id="trainingStatusIcon">⏳</div>
+                            <div class="status-text">
+                                <div class="status-title" id="trainingStatusTitle">正在训练...</div>
+                                <div class="status-message" id="trainingStatusMessage">准备训练数据...</div>
+                            </div>
+                        </div>
+                        <div class="training-progress-bar">
+                            <div class="progress-fill" id="trainingProgressFill" style="width: 0%;"></div>
+                        </div>
+                        <div class="training-progress-text" id="trainingProgressText">0%</div>
+                    </div>
+                </div>
+
+                <!-- 项目产物展示 -->
+                <div class="section" id="projectArtifactsSection" style="display: none;">
+                    <h3>📁 项目产物</h3>
+                    <div id="projectArtifacts" class="artifacts-container">
+                        <div class="artifact-loading">加载项目产物中...</div>
+                    </div>
+                </div>
+
+                <!-- 图像类别选择 -->
+                <div class="section">
+                    <h3>🏷️ 图像类别</h3>
+                    <div class="image-classes">
+                        <div class="image-group">
+                            <h4>标注类别</h4>
+                            {% for i in work_behaviors %}
+                            <button class="class-btn" data-class="{{ i }}" id="class-{{ i }}">
+                                <span>{{ behavior_classes[i] }}</span>
+                                <span class="shortcut">{{ i }}</span>
+                            </button>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <!-- 动态标签管理 -->
+                    <div style="margin-top: 15px; padding: 10px; background: #f0f9ff; border-radius: 8px; border: 1px solid #0ea5e9;">
+                        <h5 style="color: #0c4a6e; margin-bottom: 10px;">🎯 标签管理</h5>
+                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                            <input type="text" id="newClassName" placeholder="新标签名称" style="flex: 1; padding: 6px 8px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.9em;">
+                            <input type="color" id="newClassColor" value="#3b82f6" style="width: 40px; height: 30px; border: none; border-radius: 4px; cursor: pointer;">
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-primary" onclick="addNewClass()" style="flex: 1; padding: 6px 12px; font-size: 0.85em;">➕ 添加标签</button>
+                            <button class="btn btn-secondary" onclick="showClassManager()" style="flex: 1; padding: 6px 12px; font-size: 0.85em;">⚙️ 管理</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI预测 -->
+                <div class="section">
+                    <h3>🤖 AI预测</h3>
+                    
+                    <!-- AI预测开关 -->
+                    <div style="margin-bottom: 15px; padding: 10px; background: #f7fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500; margin-bottom: 8px;">
+                            <input type="checkbox" id="aiPredictionToggle" checked style="margin-right: 8px; transform: scale(1.2);">
+                            🤖 自动AI预测
+                        </label>
+                        <div style="font-size: 0.85em; color: #718096; margin-bottom: 12px; margin-left: 24px;">
+                            切换图片时自动获取AI预测
+                        </div>
+                        
+                        <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
+                            <input type="checkbox" id="showAiAnnotationsToggle" checked style="margin-right: 8px; transform: scale(1.2);">
+                            👁️ 显示AI标注
+                        </label>
+                        <div style="font-size: 0.85em; color: #718096; margin-top: 4px; margin-left: 24px;">
+                            在画布上显示/隐藏AI预测标注
+                        </div>
+                    </div>
+                    
+                    <!-- 手动AI预测按钮 -->
+                    <div style="margin-bottom: 15px;">
+                        <button class="btn btn-primary" id="manualPredictBtn" style="width: 100%; padding: 12px; font-weight: 500;">
+                            🤖 获取AI预测
+                        </button>
+                        <div style="font-size: 0.85em; color: #718096; margin-top: 4px; text-align: center;">
+                            手动获取当前图片的AI预测结果
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 颜色图例 -->
+                <div class="section">
+                    <h3>🎨 标注图例</h3>
+                    <div style="padding: 10px; background: #f7fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 20px; height: 12px; background: #4ecdc4; border-radius: 2px; margin-right: 8px;"></div>
+                            <span style="font-size: 0.9em;">真实标注</span>
+                        </div>
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <div style="width: 20px; height: 12px; background: #ffa500; border-radius: 2px; margin-right: 8px; border: 2px dashed #ffa500; background: transparent;"></div>
+                            <span style="font-size: 0.9em;">🤖 AI预测（临时）</span>
+                        </div>
+                        <div style="display: flex; align-items: center;">
+                            <div style="width: 20px; height: 12px; background: #ff6b6b; border-radius: 2px; margin-right: 8px;"></div>
+                            <span style="font-size: 0.9em;">选中状态</span>
+                        </div>
+                        <div style="font-size: 0.8em; color: #718096; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0;">
+                            💡 只有在"显示AI标注"开启时，保存后AI预测才会变为真实标注
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 当前标注 -->
+                <div class="section">
+                    <h3>📝 当前标注</h3>
+                    <div class="annotations-list" id="annotationsList">
+                        <div style="text-align: center; color: #718096; padding: 20px;">
+                            暂无标注
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button class="btn btn-success" id="saveBtn" style="flex: 1;">
+                            💾 保存 (Ctrl+S)
+                        </button>
+                        <button class="btn btn-secondary" id="clearBtn">
+                            🗑️ 清空
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 统计信息 -->
+                <div class="section">
+                    <h3>📊 统计信息</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="totalImages">0</div>
+                            <div class="stat-label">总图片</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="annotatedImages">0</div>
+                            <div class="stat-label">已标注</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="sessionCount">0</div>
+                            <div class="stat-label">本次标注</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="avgTime">0s</div>
+                            <div class="stat-label">平均用时</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 预训练模型选择 -->
+                <div class="section">
+                    <div class="pretrained-model-selector">
+                        <h4>🤖 预训练模型</h4>
+                        <div class="model-select-container">
+                            <label for="pretrainedModelSelect">选择模型:</label>
+                            <select id="pretrainedModelSelect" onchange="updateModelDescription()">
+                                <option value="">加载模型中...</option>
+                            </select>
+                        </div>
+                        <div class="model-description" id="modelDescription">请选择预训练模型</div>
+                    </div>
+                </div>
+
+                <!-- 训练状态 -->
+                <div class="section">
+                    <h3>🚀 训练状态</h3>
+                    <div class="training-status" id="trainingStatus">
+                        <div class="status-indicator">
+                            <div class="status-light" id="statusLight"></div>
+                            <div class="status-text" id="statusText">检查中...</div>
+                        </div>
+                        <div class="training-details" id="trainingDetails">
+                            <div class="detail-item">
+                                <span class="detail-label">队列任务:</span>
+                                <span class="detail-value" id="queueSize">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">缓冲样本:</span>
+                                <span class="detail-value" id="bufferSize">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">下次训练:</span>
+                                <span class="detail-value" id="nextTraining">-</span>
+                            </div>
+                        </div>
+                        <div class="training-warning" id="trainingWarning" style="display: none;">
+                            <div class="warning-icon">⚠️</div>
+                            <div class="warning-text">训练进行中，建议暂停标注以避免数据冲突</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 训练缓冲区 -->
+                <div class="section">
+                    <h3>🎯 训练缓冲区</h3>
+                    <div class="buffer-info" id="bufferInfo">
+                        <div style="text-align: center; color: #718096; padding: 10px;">
+                            加载中...
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button class="btn btn-warning" id="manualTrainBtn" style="width: 100%;">
+                            🚀 开始训练
+                        </button>
+                        <div style="font-size: 0.8em; color: #718096; margin-top: 5px; text-align: center;">
+                            需要有标注数据才能触发训练
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 批量自动标注 -->
+                <div class="section">
+                    <h3>🤖 批量自动标注</h3>
+                    <div class="batch-annotation-info" id="batchInfo">
+                        <div class="detail-item">
+                            <span class="detail-label">未标注图片:</span>
+                            <span class="detail-value" id="unannotatedCount">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">总图片数:</span>
+                            <span class="detail-value" id="totalImagesCount">-</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <button class="btn btn-success" id="batchAnnotateBtn" style="width: 100%; margin-bottom: 8px;">
+                            ✨ 智能批量标注
+                        </button>
+                        <button class="btn btn-secondary" id="batchSettingsBtn" style="width: 100%; margin-bottom: 8px;">
+                            ⚙️ 标注设置
+                        </button>
+                        <button class="btn btn-secondary" id="clearBatchBtn" style="width: 100%;">
+                            🗑️ 清空所有标注
+                        </button>
+                    </div>
+                    
+                    <div style="font-size: 0.8em; color: #718096; margin-top: 8px; text-align: center;">
+                        基于当前训练模型进行智能标注
+                    </div>
+                </div>
+
+                <!-- 快捷键帮助 -->
+                <div class="section">
+                    <div class="shortcuts-help">
+                        <h4>⚡ 快捷键</h4>
+                        <ul>
+                            <li><span>数字键 0-9</span> <span class="shortcut-key">选择类别</span></li>
+                            <li><span>左右箭头</span> <span class="shortcut-key">切换图片</span></li>
+                            <li><span>Delete</span> <span class="shortcut-key">删除标注</span></li>
+                            <li><span>Ctrl+S</span> <span class="shortcut-key">保存</span></li>
+                            <li><span>Space</span> <span class="shortcut-key">应用建议</span></li>
+                            <li><span>Esc</span> <span class="shortcut-key">取消选择</span></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let currentImageIndex = 0;
+        let images = [];
+        let currentAnnotations = [];
+        let selectedAnnotation = null;
+        let selectedClass = 0;
+        let isDrawing = false;
+        let startX, startY;
+        let canvas, ctx;
+        let currentImage = null;
+        let imageClasses = {}; // 从后端动态获取的图像类别定义
+        
+        // 项目相关功能
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+                
+                if (data.success && data.projects && data.projects.length > 0) {
+                    const projectSelect = document.getElementById('projectSelect');
+                    projectSelect.innerHTML = '<option value="">选择项目</option>';
+                    
+                    data.projects.forEach(project => {
+                        const option = document.createElement('option');
+                        option.value = project.id;
+                        option.textContent = project.name;
+                        projectSelect.appendChild(option);
+                    });
+                    
+                    // 如果有保存的项目选择，恢复它
+                    const savedProject = localStorage.getItem('selectedProject');
+                    if (savedProject) {
+                        projectSelect.value = savedProject;
+                    }
+                } else {
+                    document.getElementById('projectSelect').innerHTML = '<option value="">无可用项目</option>';
+                }
+            } catch (error) {
+                console.error('加载项目失败:', error);
+                document.getElementById('projectSelect').innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        async function switchProject() {
+            const projectSelect = document.getElementById('projectSelect');
+            const projectId = projectSelect.value;
+            
+            if (!projectId) return;
+            
+            try {
+                const response = await fetch('/api/project/select', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ project_id: projectId })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 保存项目选择
+                    localStorage.setItem('selectedProject', projectId);
+                    
+                    // 显示项目信息
+                    showProjectInfo(data.project);
+                    
+                    // 重新加载数据
+                    loadImageClasses();
+                    loadImages();
+                    updateStats();
+                    loadProjectArtifacts(); // 加载项目产物
+                    
+                    alert('项目切换成功: ' + data.project.name);
+                } else {
+                    alert('项目切换失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                console.error('切换项目失败:', error);
+                alert('切换项目失败: ' + error.message);
+            }
+        }
+
+        function showProjectInfo(project) {
+            const projectInfo = document.getElementById('projectInfo');
+            const projectStats = document.getElementById('projectStats');
+            
+            if (project && project.classes) {
+                projectStats.textContent = `项目: ${project.name} | 类别数: ${Object.keys(project.classes).length}`;
+                projectInfo.style.display = 'block';
+            } else {
+                projectInfo.style.display = 'none';
+            }
+        }
+
+        // 加载项目产物
+        async function loadProjectArtifacts() {
+            const artifactsSection = document.getElementById('projectArtifactsSection');
+            const artifactsContainer = document.getElementById('projectArtifacts');
+            
+            try {
+                const response = await fetch('/api/project/artifacts');
+                const data = await response.json();
+                
+                if (data.success && data.artifacts) {
+                    artifactsSection.style.display = 'block';
+                    
+                    let html = '';
+                    
+                    // 预训练模型
+                    if (data.artifacts.pretrained_models && data.artifacts.pretrained_models.length > 0) {
+                        html += '<div class="artifact-category">';
+                        html += '<h4>🤖 预训练模型</h4>';
+                        html += '<div class="artifact-list">';
+                        data.artifacts.pretrained_models.forEach(model => {
+                            html += '<div class="artifact-item">';
+                            html += '<span class="artifact-name">' + model.name + '</span>';
+                            html += '<span class="artifact-size">' + formatFileSize(model.size) + '</span>';
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    }
+                    
+                    // 训练模型
+                    if (data.artifacts.trained_models && data.artifacts.trained_models.length > 0) {
+                        html += '<div class="artifact-category">';
+                        html += '<h4>🎯 训练模型</h4>';
+                        html += '<div class="artifact-list">';
+                        data.artifacts.trained_models.forEach(model => {
+                            html += '<div class="artifact-item">';
+                            html += '<span class="artifact-name">' + model.name + '</span>';
+                            html += '<span class="artifact-size">' + formatFileSize(model.size) + '</span>';
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    }
+                    
+                    // 数据集
+                    if (data.artifacts.datasets && data.artifacts.datasets.length > 0) {
+                        html += '<div class="artifact-category">';
+                        html += '<h4>📊 数据集</h4>';
+                        html += '<div class="artifact-list">';
+                        data.artifacts.datasets.forEach(dataset => {
+                            html += '<div class="artifact-item">';
+                            html += '<span class="artifact-name">' + dataset.name + '</span>';
+                            html += '<span class="artifact-size">' + formatFileSize(dataset.size) + '</span>';
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    }
+                    
+                    // 配置文件
+                    if (data.artifacts.configs && data.artifacts.configs.length > 0) {
+                        html += '<div class="artifact-category">';
+                        html += '<h4>⚙️ 配置文件</h4>';
+                        html += '<div class="artifact-list">';
+                        data.artifacts.configs.forEach(config => {
+                            html += '<div class="artifact-item">';
+                            html += '<span class="artifact-name">' + config.name + '</span>';
+                            html += '<span class="artifact-size">' + formatFileSize(config.size) + '</span>';
+                            html += '</div>';
+                        });
+                        html += '</div></div>';
+                    }
+                    
+                    if (html === '') {
+                        html = '<div class="artifact-empty">暂无项目产物</div>';
+                    }
+                    
+                    artifactsContainer.innerHTML = html;
+                } else {
+                    artifactsSection.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('加载项目产物失败:', error);
+                artifactsContainer.innerHTML = '<div class="artifact-empty">加载失败</div>';
+            }
+        }
+
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // 新增：边界框调整相关变量
+        let isResizing = false;
+        let isDragging = false;
+        let resizeHandle = null;
+        let dragStartX, dragStartY;
+        let originalBbox = null;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            canvas = document.getElementById('annotationCanvas');
+            ctx = canvas.getContext('2d');
+            
+            initializeEventListeners();
+            loadProjects(); // 加载项目列表
+            loadImageClasses();
+            loadImages();
+            updateStats();
+        });
+
+        // 事件监听器
+        function initializeEventListeners() {
+            // 类别按钮
+            document.querySelectorAll('.class-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    selectClass(parseInt(this.dataset.class));
+                });
+            });
+
+            // 导航按钮
+            document.getElementById('prevBtn').addEventListener('click', () => navigateImage(-1));
+            document.getElementById('nextBtn').addEventListener('click', () => navigateImage(1));
+
+            // 保存和清空
+            document.getElementById('saveBtn').addEventListener('click', saveAnnotations);
+            document.getElementById('clearBtn').addEventListener('click', clearAnnotations);
+
+            // 手动AI预测按钮
+            document.getElementById('manualPredictBtn').addEventListener('click', manualPredict);
+
+            // 画布事件
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+
+            // 键盘快捷键
+            document.addEventListener('keydown', handleKeyboard);
+        }
+
+        // 键盘事件处理
+        function handleKeyboard(e) {
+            // 防止在输入框中触发
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            switch(e.key) {
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    navigateImage(-1);
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    navigateImage(1);
+                    break;
+                case 'Delete':
+                    e.preventDefault();
+                    deleteSelectedAnnotation();
+                    break;
+
+                case 'Escape':
+                    e.preventDefault();
+                    selectedAnnotation = null;
+                    redrawCanvas();
+                    break;
+                case 's':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        saveAnnotations();
+                    }
+                    break;
+
+                default:
+                    // 数字键选择类别
+                    if (e.key >= '0' && e.key <= '9') {
+                        const classId = parseInt(e.key);
+                        if (classId < 12) {
+                            selectClass(classId);
+                        }
+                    }
+                    break;
+            }
+        }
+
+        // 加载图像类别定义
+        async function loadImageClasses() {
+            try {
+                const response = await fetch('/api/image_classes');
+                const data = await response.json();
+                
+                if (data.success) {
+                    imageClasses = data.image_classes;
+                    console.log('图像类别定义已加载:', imageClasses);
+                } else {
+                    console.error('加载图像类别定义失败:', data.error);
+                }
+            } catch (error) {
+                console.error('加载图像类别定义失败:', error.message);
+            }
+        }
+
+        // 加载图片列表
+        async function loadImages() {
+            try {
+                // 先获取图片列表
+                const response = await fetch('/api/images');
+                const data = await response.json();
+                images = data.images;
+                
+                updateProgressBar(data.annotated_images, data.total);
+                
+                if (images.length > 0) {
+                    // 获取第一个未标注的图片
+                    try {
+                        const nextResponse = await fetch('/api/next_unannotated');
+                        const nextData = await nextResponse.json();
+                        
+                        if (nextData.success) {
+                            const startIndex = nextData.index;
+                            if (nextData.all_annotated) {
+                                showInfo('🎉 所有图片都已标注完成！从第一张图片开始浏览。');
+                            } else {
+                                showInfo(`📍 从第 ${startIndex + 1} 张未标注图片开始`);
+                            }
+                            loadImage(startIndex);
+                        } else {
+                            loadImage(0);
+                        }
+                    } catch (error) {
+                        console.warn('获取未标注图片失败，从第一张开始:', error);
+                        loadImage(0);
+                    }
+                } else {
+                    showError('未找到图片文件');
+                }
+                
+                // 初始化页码导航
+                initializePageNavigation();
+            } catch (error) {
+                showError('加载图片列表失败: ' + error.message);
+            }
+        }
+
+        // 加载指定图片
+        async function loadImage(index) {
+            if (index < 0 || index >= images.length) return;
+            
+            currentImageIndex = index;
+            const imageName = images[index];
+            
+            showLoading(true);
+            
+            try {
+                // 检查AI预测开关状态
+                const aiToggle = document.getElementById('aiPredictionToggle');
+                const autoPredictEnabled = aiToggle ? aiToggle.checked : true;
+                
+                const response = await fetch(`/api/image/${imageName}?auto_predict=${autoPredictEnabled}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+                
+                // 加载图片
+                const img = new Image();
+                img.onload = function() {
+                    currentImage = img;
+                    resizeCanvas(img.width, img.height);
+                    
+                    // 合并已存在的标注和AI预测标注
+                    currentAnnotations = [];
+                    
+                    // 添加已存在的标注（真实标注）
+                    if (data.annotations && data.annotations.length > 0) {
+                        currentAnnotations = [...data.annotations];
+                    }
+                    
+                    // 添加AI预测标注（如果有的话）
+                    if (data.ai_predictions && data.ai_predictions.length > 0) {
+                        currentAnnotations = [...currentAnnotations, ...data.ai_predictions];
+                    }
+                    
+                    redrawCanvas();
+                    updateAnnotationsList();
+                    updateImageInfo();
+                    
+                    // 更新训练缓冲区信息
+                    updateBufferInfo(data.annotation_buffer_data, data.buffer_stats);
+                    
+                    // 更新训练状态
+                    updateTrainingStatus(data.training_status);
+                    
+                    showLoading(false);
+                };
+                
+                img.onerror = function() {
+                    showError('图片加载失败');
+                    showLoading(false);
+                };
+                
+                img.src = `/images/${imageName}`;
+                
+            } catch (error) {
+                showError('加载图片失败: ' + error.message);
+                showLoading(false);
+            }
+        }
+
+        // 调整画布大小
+        function resizeCanvas(imgWidth, imgHeight) {
+            const container = document.getElementById('imageContainer');
+            const containerWidth = container.clientWidth - 40;
+            const containerHeight = container.clientHeight - 40;
+            
+            const scale = Math.min(containerWidth / imgWidth, containerHeight / imgHeight);
+            
+            canvas.width = imgWidth * scale;
+            canvas.height = imgHeight * scale;
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+            
+            // 保存缩放比例
+            canvas.scaleX = canvas.width / imgWidth;
+            canvas.scaleY = canvas.height / imgHeight;
+        }
+
+        // 重绘画布
+        function redrawCanvas() {
+            if (!currentImage) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(currentImage, 0, 0, canvas.width, canvas.height);
+            
+            // 根据AI标注开关过滤要显示的标注
+            const showAi = shouldShowAiAnnotations();
+            const annotationsToShow = currentAnnotations.filter(ann => {
+                // 如果是AI预测标注且AI开关关闭，则不显示
+                if (ann.is_predicted && !showAi) {
+                    return false;
+                }
+                return true;
+            });
+            
+            // 绘制标注框
+            annotationsToShow.forEach((ann, index) => {
+                // 需要找到原始索引来判断是否选中
+                const originalIndex = currentAnnotations.indexOf(ann);
+                drawAnnotation(ann, originalIndex === selectedAnnotation);
+            });
+        }
+
+        // 绘制标注框
+        function drawAnnotation(annotation, isSelected = false) {
+            const x = (annotation.x_center - annotation.width / 2) * canvas.width;
+            const y = (annotation.y_center - annotation.height / 2) * canvas.height;
+            const width = annotation.width * canvas.width;
+            const height = annotation.height * canvas.height;
+            
+            // 根据标注类型选择颜色
+            let strokeColor, fillColor;
+            if (isSelected) {
+                strokeColor = '#ff6b6b';  // 选中时的红色
+                fillColor = '#ff6b6b';
+            } else if (annotation.is_predicted) {
+                strokeColor = '#ffa500';  // AI预测：橙色
+                fillColor = '#ffa500';
+            } else {
+                strokeColor = '#4ecdc4';  // 真实标注：青色
+                fillColor = '#4ecdc4';
+            }
+            
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = isSelected ? 3 : 2;
+            
+            // 如果是AI预测，使用虚线边框
+            if (annotation.is_predicted && !isSelected) {
+                ctx.setLineDash([5, 5]);
+            } else {
+                ctx.setLineDash([]);
+            }
+            
+            ctx.strokeRect(x, y, width, height);
+            
+            // 绘制类别标签
+            const label = annotation.class_name;
+            const confidence = annotation.confidence || 1.0;
+            const labelPrefix = annotation.is_predicted ? '🤖 ' : '';
+            const labelText = confidence < 1.0 ? 
+                `${labelPrefix}${label} (${(confidence * 100).toFixed(0)}%)` : 
+                `${labelPrefix}${label}`;
+            
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y - 25, ctx.measureText(labelText).width + 10, 20);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '12px Arial';
+            ctx.fillText(labelText, x + 5, y - 10);
+            
+            // 重置虚线设置
+            ctx.setLineDash([]);
+            
+            // 如果选中，绘制调整手柄
+            if (isSelected) {
+                drawResizeHandles(x, y, width, height);
+            }
+        }
+        
+        function drawResizeHandles(x, y, width, height) {
+            const handleSize = 8;
+            
+            ctx.fillStyle = '#ff0000';
+            
+            // 四个角的调整手柄
+            ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize); // 左上
+            ctx.fillRect(x + width - handleSize/2, y - handleSize/2, handleSize, handleSize); // 右上
+            ctx.fillRect(x - handleSize/2, y + height - handleSize/2, handleSize, handleSize); // 左下
+            ctx.fillRect(x + width - handleSize/2, y + height - handleSize/2, handleSize, handleSize); // 右下
+            
+            // 四边中点的调整手柄
+            ctx.fillRect(x + width/2 - handleSize/2, y - handleSize/2, handleSize, handleSize); // 上
+            ctx.fillRect(x + width/2 - handleSize/2, y + height - handleSize/2, handleSize, handleSize); // 下
+            ctx.fillRect(x - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize); // 左
+            ctx.fillRect(x + width - handleSize/2, y + height/2 - handleSize/2, handleSize, handleSize); // 右
+        }
+
+        // 开始绘制
+        function startDrawing(e) {
+            if (!currentImage) return;
+            
+            // 检查是否正在训练
+            if (shouldDisableAnnotation()) {
+                showError('训练进行中，请等待训练完成后再进行标注');
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / canvas.width;
+            const y = (e.clientY - rect.top) / canvas.height;
+            
+            // 检查是否点击了现有标注
+            for (let i = currentAnnotations.length - 1; i >= 0; i--) {
+                const ann = currentAnnotations[i];
+                
+                // 如果是AI预测标注且AI开关关闭，则跳过
+                if (ann.is_predicted && !shouldShowAiAnnotations()) {
+                    continue;
+                }
+                
+                const left = ann.x_center - ann.width / 2;
+                const right = ann.x_center + ann.width / 2;
+                const top = ann.y_center - ann.height / 2;
+                const bottom = ann.y_center + ann.height / 2;
+                
+                if (x >= left && x <= right && y >= top && y <= bottom) {
+                    selectedAnnotation = i;
+                    
+                    // 检查是否点击了调整手柄
+                    const handle = getResizeHandle(x, y, ann);
+                    if (handle) {
+                        isResizing = true;
+                        resizeHandle = handle;
+                        originalBbox = {...ann};
+                        dragStartX = x;
+                        dragStartY = y;
+                    } else {
+                        // 开始拖拽
+                        isDragging = true;
+                        dragStartX = x;
+                        dragStartY = y;
+                        originalBbox = {...ann};
+                    }
+                    
+                    updateAnnotationsList();
+                    redrawCanvas();
+                    return;
+                }
+            }
+            
+            // 开始绘制新标注
+            if (selectedClass === null) {
+                showError('请先选择图像类别');
+                return;
+            }
+            
+            selectedAnnotation = null;
+            isDrawing = true;
+            startX = x;
+            startY = y;
+        }
+        
+        function getResizeHandle(x, y, annotation) {
+            const handleSize = 8 / canvas.width; // 转换为相对坐标
+            const tolerance = handleSize;
+            
+            const left = annotation.x_center - annotation.width / 2;
+            const right = annotation.x_center + annotation.width / 2;
+            const top = annotation.y_center - annotation.height / 2;
+            const bottom = annotation.y_center + annotation.height / 2;
+            const centerX = annotation.x_center;
+            const centerY = annotation.y_center;
+            
+            // 检查各个调整手柄
+            if (Math.abs(x - left) < tolerance && Math.abs(y - top) < tolerance) return 'nw';
+            if (Math.abs(x - right) < tolerance && Math.abs(y - top) < tolerance) return 'ne';
+            if (Math.abs(x - left) < tolerance && Math.abs(y - bottom) < tolerance) return 'sw';
+            if (Math.abs(x - right) < tolerance && Math.abs(y - bottom) < tolerance) return 'se';
+            if (Math.abs(x - centerX) < tolerance && Math.abs(y - top) < tolerance) return 'n';
+            if (Math.abs(x - centerX) < tolerance && Math.abs(y - bottom) < tolerance) return 's';
+            if (Math.abs(x - left) < tolerance && Math.abs(y - centerY) < tolerance) return 'w';
+            if (Math.abs(x - right) < tolerance && Math.abs(y - centerY) < tolerance) return 'e';
+            
+            return null;
+        }
+
+        // 绘制过程
+        function draw(e) {
+            if (!currentImage) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const currentX = (e.clientX - rect.left) / canvas.width;
+            const currentY = (e.clientY - rect.top) / canvas.height;
+            
+            if (isDrawing) {
+                // 绘制新标注
+                redrawCanvas();
+                
+                // 绘制临时框
+                const x = Math.min(startX, currentX) * canvas.width;
+                const y = Math.min(startY, currentY) * canvas.height;
+                const width = Math.abs(currentX - startX) * canvas.width;
+                const height = Math.abs(currentY - startY) * canvas.height;
+                
+                ctx.strokeStyle = '#667eea';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(x, y, width, height);
+                ctx.setLineDash([]);
+            } else if (isDragging && selectedAnnotation !== null) {
+                // 拖拽移动标注
+                const deltaX = currentX - dragStartX;
+                const deltaY = currentY - dragStartY;
+                
+                currentAnnotations[selectedAnnotation].x_center = originalBbox.x_center + deltaX;
+                currentAnnotations[selectedAnnotation].y_center = originalBbox.y_center + deltaY;
+                
+                // 确保不超出边界
+                const ann = currentAnnotations[selectedAnnotation];
+                const halfWidth = ann.width / 2;
+                const halfHeight = ann.height / 2;
+                
+                ann.x_center = Math.max(halfWidth, Math.min(1 - halfWidth, ann.x_center));
+                ann.y_center = Math.max(halfHeight, Math.min(1 - halfHeight, ann.y_center));
+                
+                redrawCanvas();
+            } else if (isResizing && selectedAnnotation !== null) {
+                // 调整标注大小
+                resizeAnnotation(currentX, currentY);
+                redrawCanvas();
+            }
+        }
+        
+        function resizeAnnotation(currentX, currentY) {
+            const ann = currentAnnotations[selectedAnnotation];
+            const deltaX = currentX - dragStartX;
+            const deltaY = currentY - dragStartY;
+            
+            let newLeft = originalBbox.x_center - originalBbox.width / 2;
+            let newRight = originalBbox.x_center + originalBbox.width / 2;
+            let newTop = originalBbox.y_center - originalBbox.height / 2;
+            let newBottom = originalBbox.y_center + originalBbox.height / 2;
+            
+            // 根据调整手柄类型调整边界
+            switch (resizeHandle) {
+                case 'nw':
+                    newLeft += deltaX;
+                    newTop += deltaY;
+                    break;
+                case 'ne':
+                    newRight += deltaX;
+                    newTop += deltaY;
+                    break;
+                case 'sw':
+                    newLeft += deltaX;
+                    newBottom += deltaY;
+                    break;
+                case 'se':
+                    newRight += deltaX;
+                    newBottom += deltaY;
+                    break;
+                case 'n':
+                    newTop += deltaY;
+                    break;
+                case 's':
+                    newBottom += deltaY;
+                    break;
+                case 'w':
+                    newLeft += deltaX;
+                    break;
+                case 'e':
+                    newRight += deltaX;
+                    break;
+            }
+            
+            // 确保最小尺寸和边界限制
+            const minSize = 0.02;
+            newLeft = Math.max(0, Math.min(newLeft, newRight - minSize));
+            newRight = Math.min(1, Math.max(newRight, newLeft + minSize));
+            newTop = Math.max(0, Math.min(newTop, newBottom - minSize));
+            newBottom = Math.min(1, Math.max(newBottom, newTop + minSize));
+            
+            // 更新标注
+            ann.x_center = (newLeft + newRight) / 2;
+            ann.y_center = (newTop + newBottom) / 2;
+            ann.width = newRight - newLeft;
+            ann.height = newBottom - newTop;
+        }
+
+        // 停止绘制
+        function stopDrawing(e) {
+            if (!currentImage) return;
+            
+            if (isDrawing) {
+                isDrawing = false;
+                
+                const rect = canvas.getBoundingClientRect();
+                const endX = (e.clientX - rect.left) / canvas.width;
+                const endY = (e.clientY - rect.top) / canvas.height;
+                
+                const width = Math.abs(endX - startX);
+                const height = Math.abs(endY - startY);
+                
+                // 检查最小尺寸
+                if (width < 0.01 || height < 0.01) {
+                    redrawCanvas();
+                    return;
+                }
+                
+                // 添加新标注
+                const annotation = {
+                    class_id: selectedClass,
+                    class_name: getClassName(selectedClass),
+                    x_center: (startX + endX) / 2,
+                    y_center: (startY + endY) / 2,
+                    width: width,
+                    height: height,
+                    confidence: 1.0,
+                    is_predicted: false
+                };
+                
+                currentAnnotations.push(annotation);
+                updateAnnotationsList();
+            } else if (isDragging) {
+                isDragging = false;
+                updateAnnotationsList();
+            } else if (isResizing) {
+                isResizing = false;
+                resizeHandle = null;
+                updateAnnotationsList();
+            }
+            
+            originalBbox = null;
+            redrawCanvas();
+        }
+
+        // 选择类别
+        function selectClass(classId) {
+            selectedClass = classId;
+            
+            document.querySelectorAll('.class-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            document.getElementById(`class-${classId}`).classList.add('active');
+        }
+
+        // 获取类别名称
+        function getClassName(classId) {
+            if (imageClasses[classId]) {
+                return imageClasses[classId];
+            }
+            if (dynamicClasses[classId]) {
+                // 处理新格式 {name: '名称', color: '#颜色'}
+                if (typeof dynamicClasses[classId] === 'object' && dynamicClasses[classId].name) {
+                    return dynamicClasses[classId].name;
+                }
+                // 处理旧格式 '名称'
+                return dynamicClasses[classId];
+            }
+            return "未知";
+        }
+
+        // 更新标注列表
+        function updateAnnotationsList() {
+            const list = document.getElementById('annotationsList');
+            
+            // 根据AI标注开关过滤要显示的标注
+            const showAi = shouldShowAiAnnotations();
+            const annotationsToShow = currentAnnotations.filter(ann => {
+                // 如果是AI预测标注且AI开关关闭，则不显示
+                if (ann.is_predicted && !showAi) {
+                    return false;
+                }
+                return true;
+            });
+            
+            if (annotationsToShow.length === 0) {
+                const message = currentAnnotations.length === 0 ? '暂无标注' : '暂无可显示的标注';
+                list.innerHTML = `<div style="text-align: center; color: #718096; padding: 20px;">${message}</div>`;
+                return;
+            }
+            
+            list.innerHTML = annotationsToShow.map((ann, displayIndex) => {
+                // 找到原始索引
+                const originalIndex = currentAnnotations.indexOf(ann);
+                return `
+                <div class="annotation-item ${originalIndex === selectedAnnotation ? 'selected' : ''}" 
+                     onclick="selectAnnotation(${originalIndex})">
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <select class="category-select" onchange="changeAnnotationCategory(${originalIndex}, this.value)" onclick="event.stopPropagation()">
+                            ${generateCategoryOptions(ann.class_id)}
+                        </select>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 0.8em; color: #718096;">
+                                ${ann.is_predicted ? '🤖' : '👤'} ${(ann.confidence * 100).toFixed(0)}%
+                            </span>
+                            <button class="btn-delete" onclick="deleteAnnotation(${originalIndex}); event.stopPropagation();" 
+                                    title="删除此标注">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        
+        function generateCategoryOptions(selectedClassId) {
+            return Object.entries(imageClasses).map(([classId, className]) => 
+                `<option value="${classId}" ${classId == selectedClassId ? 'selected' : ''}>${className}</option>`
+            ).join('');
+        }
+        
+        function changeAnnotationCategory(index, newClassId) {
+            if (index >= 0 && index < currentAnnotations.length) {
+                currentAnnotations[index].class_id = parseInt(newClassId);
+                currentAnnotations[index].class_name = getClassName(parseInt(newClassId));
+                redrawCanvas();
+            }
+        }
+
+        // 更新建议列表
+
+
+        // 选择标注
+        function selectAnnotation(index) {
+            selectedAnnotation = selectedAnnotation === index ? null : index;
+            updateAnnotationsList();
+            redrawCanvas();
+        }
+
+        // 删除选中的标注
+        function deleteSelectedAnnotation() {
+            if (selectedAnnotation !== null) {
+                currentAnnotations.splice(selectedAnnotation, 1);
+                selectedAnnotation = null;
+                updateAnnotationsList();
+                redrawCanvas();
+            }
+        }
+
+        // 删除指定索引的标注
+        function deleteAnnotation(index) {
+            if (index >= 0 && index < currentAnnotations.length) {
+                currentAnnotations.splice(index, 1);
+                // 如果删除的是当前选中的标注，清除选中状态
+                if (selectedAnnotation === index) {
+                    selectedAnnotation = null;
+                } else if (selectedAnnotation !== null && selectedAnnotation > index) {
+                    // 如果删除的标注在当前选中标注之前，需要调整选中索引
+                    selectedAnnotation--;
+                }
+                updateAnnotationsList();
+                redrawCanvas();
+                showSuccess('标注已删除');
+            }
+        }
+
+
+
+        // 手动获取并应用AI预测
+        async function manualPredict() {
+            if (!images[currentImageIndex]) {
+                showError('请先选择图片');
+                return;
+            }
+
+            const btn = document.getElementById('manualPredictBtn');
+            const originalText = btn.innerHTML;
+            
+            try {
+                btn.innerHTML = '🔄 预测中...';
+                btn.disabled = true;
+
+                const response = await fetch('/api/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        image_name: images[currentImageIndex]
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.annotations) {
+                    // 清除现有的AI预测标注，保留真实标注
+                    currentAnnotations = currentAnnotations.filter(annotation => !annotation.is_predicted);
+                    
+                    // 添加新的AI预测标注
+                    data.annotations.forEach(annotation => {
+                        annotation.is_predicted = true;
+                        currentAnnotations.push(annotation);
+                    });
+
+                    updateAnnotationsList();
+                    redrawCanvas();
+                    showSuccess(`获取到 ${data.annotations.length} 个AI预测结果`);
+                } else {
+                    showError(data.error || 'AI预测失败');
+                }
+            } catch (error) {
+                showError('AI预测请求失败: ' + error.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // 应用单个建议
+
+
+        // 清空标注
+        function clearAnnotations() {
+            if (confirm('确定要清空所有标注吗？')) {
+                currentAnnotations = [];
+                selectedAnnotation = null;
+                updateAnnotationsList();
+                redrawCanvas();
+            }
+        }
+
+        // 保存标注
+        async function saveAnnotations() {
+            if (!images[currentImageIndex]) return;
+            
+            // 检查是否正在训练
+            if (shouldDisableAnnotation()) {
+                showError('训练进行中，请等待训练完成后再保存标注');
+                return;
+            }
+            
+            try {
+                // 检查是否显示AI标注
+                const showAiAnnotations = shouldShowAiAnnotations();
+                
+                // 过滤要保存的标注
+                const annotationsToSave = currentAnnotations
+                    .filter(annotation => {
+                        // 如果是AI预测标注且AI标注开关关闭，则不保存
+                        if (annotation.is_predicted && !showAiAnnotations) {
+                            return false;
+                        }
+                        return true;
+                    })
+                    .map(annotation => {
+                        const savedAnnotation = { ...annotation };
+                        // 移除is_predicted标识，保存后就是真实标注
+                        delete savedAnnotation.is_predicted;
+                        return savedAnnotation;
+                    });
+                
+                const response = await fetch('/api/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        image_name: images[currentImageIndex],
+                        annotations: annotationsToSave
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 保存成功后，只对实际保存的标注移除is_predicted标识
+                    // 如果AI标注开关关闭，AI标注应该保持为预测状态
+                    currentAnnotations = currentAnnotations.map(annotation => {
+                        const updatedAnnotation = { ...annotation };
+                        // 只有当AI标注开关开启时，或者不是AI预测标注时，才移除is_predicted标识
+                        if (!annotation.is_predicted || showAiAnnotations) {
+                            delete updatedAnnotation.is_predicted;
+                        }
+                        return updatedAnnotation;
+                    });
+                    
+                    // 重新绘制画布以更新颜色
+                    redrawCanvas();
+                    updateAnnotationsList();
+                    
+                    showSuccess(data.message);
+                    updateStats();
+                } else {
+                    showError(data.error || '保存失败');
+                }
+            } catch (error) {
+                showError('保存失败: ' + error.message);
+            }
+        }
+
+        // 导航图片
+        function navigateImage(direction) {
+            const newIndex = currentImageIndex + direction;
+            if (newIndex >= 0 && newIndex < images.length) {
+                loadImage(newIndex);
+            }
+        }
+
+        // 更新进度条
+        function updateProgressBar(annotated, total) {
+            const percentage = total > 0 ? (annotated / total) * 100 : 0;
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('progressText').textContent = 
+                `进度: ${annotated}/${total} (${percentage.toFixed(1)}%)`;
+        }
+
+        // 更新图片信息
+        function updateImageInfo() {
+            const info = `${currentImageIndex + 1}/${images.length} - ${images[currentImageIndex]}`;
+            document.getElementById('imageInfo').textContent = info;
+            
+            // 更新页码输入框
+            updatePageInput();
+        }
+
+        // 初始化页码导航
+        function initializePageNavigation() {
+            const imageSelect = document.getElementById('imageSelect');
+            
+            // 填充图片选择下拉框
+            populateImageSelect();
+            
+            // 绑定图片选择事件
+            imageSelect.addEventListener('change', function() {
+                const selectedIndex = parseInt(this.value);
+                if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < images.length) {
+                    loadImage(selectedIndex);
+                }
+            });
+            
+            // 初始化AI标注显示开关
+            initializeAiToggle();
+        }
+
+        // 填充图片选择下拉框
+        function populateImageSelect() {
+            const imageSelect = document.getElementById('imageSelect');
+            imageSelect.innerHTML = '<option value="">请选择图片...</option>';
+            
+            images.forEach((imageName, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                
+                // 简化图片名称显示
+                let displayName = imageName;
+                // 如果文件名太长，只显示关键部分
+                if (displayName.length > 50) {
+                    const parts = displayName.split('_');
+                    if (parts.length > 3) {
+                        displayName = `${parts[0]}_...${parts[parts.length-1]}`;
+                    } else {
+                        displayName = displayName.substring(0, 47) + '...';
+                    }
+                }
+                
+                option.textContent = `第${index + 1}页 - ${displayName}`;
+                option.title = imageName; // 完整文件名作为提示
+                imageSelect.appendChild(option);
+            });
+        }
+
+        // 更新图片选择状态
+        function updatePageInput() {
+            const imageSelect = document.getElementById('imageSelect');
+            imageSelect.value = currentImageIndex;
+        }
+
+        // 初始化AI标注开关
+        function initializeAiToggle() {
+            const showAiToggle = document.getElementById('showAiAnnotationsToggle');
+            
+            // 绑定AI标注显示开关事件
+            showAiToggle.addEventListener('change', function() {
+                // 如果当前选中的是AI标注且要隐藏AI标注，则取消选择
+                if (!this.checked && selectedAnnotation !== null) {
+                    const selectedAnn = currentAnnotations[selectedAnnotation];
+                    if (selectedAnn && selectedAnn.is_predicted) {
+                        selectedAnnotation = null;
+                    }
+                }
+                
+                // 重新绘制画布和更新标注列表
+                redrawCanvas();
+                updateAnnotationsList();
+                
+                if (this.checked) {
+                    showSuccess('AI标注已显示');
+                } else {
+                    showSuccess('AI标注已隐藏');
+                }
+            });
+        }
+
+        // 检查是否显示AI标注
+        function shouldShowAiAnnotations() {
+            const showAiToggle = document.getElementById('showAiAnnotationsToggle');
+            return showAiToggle ? showAiToggle.checked : true;
+        }
+
+        // 更新统计信息
+        async function updateStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                document.getElementById('totalImages').textContent = data.total_images;
+                document.getElementById('annotatedImages').textContent = data.annotated_images;
+                document.getElementById('sessionCount').textContent = data.session_stats.annotated_this_session;
+                document.getElementById('avgTime').textContent = data.session_stats.avg_time_per_image + 's';
+                
+                updateProgressBar(data.annotated_images, data.total_images);
+            } catch (error) {
+                console.error('更新统计信息失败:', error);
+            }
+        }
+
+
+
+        // 显示加载状态
+        function showLoading(show) {
+            const loadingElement = document.getElementById('imageLoading');
+            if (show) {
+                loadingElement.classList.add('show');
+            } else {
+                loadingElement.classList.remove('show');
+            }
+        }
+
+        // 显示错误信息
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // 显示成功信息
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            setTimeout(() => {
+                successDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        // 显示信息提示
+        function showInfo(message) {
+            const infoDiv = document.getElementById('infoMessage');
+            infoDiv.textContent = message;
+            infoDiv.style.display = 'block';
+            setTimeout(() => {
+                infoDiv.style.display = 'none';
+            }, 4000);
+        }
+
+        // 更新训练缓冲区信息
+        function updateBufferInfo(bufferData, bufferStats) {
+            const bufferInfoDiv = document.getElementById('bufferInfo');
+            const manualTrainBtn = document.getElementById('manualTrainBtn');
+            
+            if (!bufferStats || bufferStats.total_images === 0) {
+                bufferInfoDiv.innerHTML = `
+                    <div style="text-align: center; color: #718096; padding: 10px;">
+                        暂无训练数据
+                    </div>
+                `;
+                manualTrainBtn.disabled = true;
+                return;
+            }
+            
+            // 构建类别分布HTML
+            let classDistributionHtml = '';
+            if (bufferStats.class_distribution && Object.keys(bufferStats.class_distribution).length > 0) {
+                classDistributionHtml = '<div class="buffer-classes">';
+                for (const [className, count] of Object.entries(bufferStats.class_distribution)) {
+                    classDistributionHtml += `
+                        <div class="buffer-class-item">
+                            <span class="buffer-class-name">${className}</span>
+                            <span class="buffer-class-count">${count}</span>
+                        </div>
+                    `;
+                }
+                classDistributionHtml += '</div>';
+            }
+            
+            // 当前图片的缓冲区数据
+            let currentImageInfo = '';
+            if (bufferData && bufferData.annotation_count > 0) {
+                const timestamp = new Date(bufferData.timestamp).toLocaleString();
+                currentImageInfo = `
+                    <div style="background: #e6fffa; border: 1px solid #38b2ac; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 0.85em;">
+                        <div style="font-weight: bold; color: #234e52;">📍 当前图片已在缓冲区</div>
+                        <div style="color: #2c7a7b; margin-top: 4px;">
+                            标注数量: ${bufferData.annotation_count} | 时间: ${timestamp}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            bufferInfoDiv.innerHTML = `
+                ${currentImageInfo}
+                <div class="buffer-stats">
+                    <div class="buffer-stat">
+                        <div class="buffer-stat-value">${bufferStats.total_images}</div>
+                        <div class="buffer-stat-label">图片数</div>
+                    </div>
+                    <div class="buffer-stat">
+                        <div class="buffer-stat-value">${bufferStats.total_annotations}</div>
+                        <div class="buffer-stat-label">标注数</div>
+                    </div>
+                </div>
+                ${classDistributionHtml}
+            `;
+            
+            // 更新手动训练按钮状态
+            manualTrainBtn.disabled = false;
+        }
+        
+        // 更新训练状态显示
+        function updateTrainingStatus(trainingStatus) {
+            const statusSection = document.getElementById('trainingStatusSection');
+            const statusIcon = document.getElementById('trainingStatusIcon');
+            const statusTitle = document.getElementById('trainingStatusTitle');
+            const statusMessage = document.getElementById('trainingStatusMessage');
+            const progressFill = document.getElementById('trainingProgressFill');
+            const progressText = document.getElementById('trainingProgressText');
+            
+            if (!trainingStatus || !trainingStatus.is_training) {
+                // 隐藏训练状态区域
+                statusSection.style.display = 'none';
+                return;
+            }
+            
+            // 显示训练状态区域
+            statusSection.style.display = 'block';
+            
+            // 更新状态图标
+            if (trainingStatus.training_progress >= 100) {
+                statusIcon.textContent = '✅';
+            } else {
+                statusIcon.textContent = '⏳';
+            }
+            
+            // 更新状态文本
+            statusTitle.textContent = trainingStatus.is_training ? '正在训练...' : '训练完成';
+            statusMessage.textContent = trainingStatus.training_message || '准备训练数据...';
+            
+            // 更新进度条
+            const progress = Math.max(0, Math.min(100, trainingStatus.training_progress || 0));
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `${progress}%`;
+            
+            // 训练与标注并行，保持画布可用
+        }
+
+        // 检查是否应该禁用标注功能
+        function shouldDisableAnnotation() {
+            // 检查训练状态区域是否显示（display不为none）
+            const statusSection = document.getElementById('trainingStatusSection');
+            return statusSection && statusSection.style.display !== 'none';
+        }
+
+        // 手动触发训练
+        async function triggerManualTraining() {
+            const manualTrainBtn = document.getElementById('manualTrainBtn');
+            
+            if (!confirm('确定要开始项目训练吗？将使用项目datasets中的train/val数据。')) {
+                return;
+            }
+            
+            manualTrainBtn.disabled = true;
+            manualTrainBtn.textContent = '🔄 训练中...';
+            
+            try {
+                const response = await fetch('/api/training/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showSuccess('训练已启动');
+                } else {
+                    showError(data.message || '训练启动失败');
+                }
+            } catch (error) {
+                showError('训练启动失败: ' + error.message);
+            } finally {
+                manualTrainBtn.disabled = false;
+                manualTrainBtn.textContent = '🚀 开始训练';
+            }
+        }
+        
+        // 初始化手动训练按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const manualTrainBtn = document.getElementById('manualTrainBtn');
+            if (manualTrainBtn) manualTrainBtn.addEventListener('click', triggerManualTraining);
+        });
+
+        // 批量自动标注相关功能
+        async function updateBatchInfo() {
+            try {
+                const response = await fetch('/api/images');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('totalImagesCount').textContent = data.total;
+                    document.getElementById('unannotatedCount').textContent = data.unannotated_count;
+                    
+                    // 存储图片列表供批量操作使用
+                    window.unannotatedImages = data.unannotated_images || [];
+                    window.allImages = data.images || [];
+                    window.annotatedImages = data.annotated_images_list || [];
+                }
+            } catch (error) {
+                console.error('更新批量信息失败:', error);
+            }
+        }
+
+        // 显示批量标注对话框
+        function showBatchAnnotationDialog() {
+            document.getElementById('batchAnnotationDialog').style.display = 'block';
+            updateBatchInfo();
+        }
+
+        // 关闭批量标注对话框
+        function closeBatchAnnotationDialog() {
+            document.getElementById('batchAnnotationDialog').style.display = 'none';
+            document.getElementById('batchProgress').style.display = 'none';
+        }
+
+        // 显示批量设置对话框
+        function showBatchSettingsDialog() {
+            document.getElementById('batchSettingsDialog').style.display = 'block';
+        }
+
+        // 关闭批量设置对话框
+        function closeBatchSettingsDialog() {
+            document.getElementById('batchSettingsDialog').style.display = 'none';
+        }
+
+        // 执行批量自动标注
+        async function executeBatchAnnotation() {
+            const mode = document.querySelector('input[name="batchMode"]:checked').value;
+            const confidenceThreshold = parseFloat(document.getElementById('confidenceThreshold').value);
+            const maxImages = parseInt(document.getElementById('maxImages').value);
+            
+            let imageNames = [];
+            
+            // 根据模式选择图片
+            if (mode === 'all_unannotated') {
+                // 使用已缓存的未标注图片列表
+                imageNames = window.unannotatedImages || [];
+                if (maxImages > 0 && imageNames.length > maxImages) {
+                    imageNames = imageNames.slice(0, maxImages);
+                }
+            } else if (mode === 'range') {
+                const startIdx = parseInt(document.getElementById('rangeStart').value) - 1;
+                const endIdx = parseInt(document.getElementById('rangeEnd').value) - 1;
+                const allImages = window.allImages || images || [];
+                imageNames = allImages.slice(startIdx, endIdx + 1);
+            } else if (mode === 'remaining') {
+                const allImages = window.allImages || images || [];
+                imageNames = allImages.slice(currentImageIndex);
+                if (maxImages > 0 && imageNames.length > maxImages) {
+                    imageNames = imageNames.slice(0, maxImages);
+                }
+            } else if (mode === 'smart_filter') {
+                // 智能筛选模式
+                try {
+                    const strategy = document.getElementById('filterStrategy').value;
+                    const response = await fetch('/api/smart_filter', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            strategy: strategy,
+                            max_count: maxImages || 100,
+                            confidence_range: [0.3, 0.7]
+                        })
+                    });
+                    
+                    const filterResult = await response.json();
+                    if (filterResult.success) {
+                        imageNames = filterResult.selected_images;
+                    } else {
+                        showError('智能筛选失败: ' + filterResult.message);
+                        return;
+                    }
+                } catch (error) {
+                    showError('智能筛选失败: ' + error.message);
+                    return;
+                }
+            }
+
+            if (imageNames.length === 0) {
+                showError('没有找到需要标注的图片');
+                return;
+            }
+
+            // 确认对话框
+            if (!confirm(`确定要对 ${imageNames.length} 张图片进行批量自动标注吗？\n置信度阈值: ${confidenceThreshold}\n这将覆盖现有标注。`)) {
+                return;
+            }
+
+            // 显示进度条
+            document.getElementById('batchProgress').style.display = 'block';
+            document.getElementById('batchProgressFill').style.width = '0%';
+            document.getElementById('batchProgressText').textContent = '0%';
+
+            try {
+                const response = await fetch('/api/batch_operations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        operation: 'auto_annotate',
+                        image_names: imageNames,
+                        confidence_threshold: confidenceThreshold
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 更新进度条
+                    document.getElementById('batchProgressFill').style.width = '100%';
+                    document.getElementById('batchProgressText').textContent = '100%';
+                    
+                    // 显示详细的批量标注结果
+                    const summary = result.summary || {};
+                    let message = `✅ 批量标注完成！\n`;
+                    message += `成功处理: ${summary.success_images || 0}/${summary.total_images || 0} 张图片\n`;
+                    message += `生成标注: ${summary.total_annotations || 0} 个\n`;
+                    message += `置信度阈值: ${summary.confidence_threshold || 0.5}\n`;
+                    
+                    if (summary.failed_images > 0) {
+                        message += `⚠️ 失败图片: ${summary.failed_images} 张`;
+                    }
+                    
+                    showSuccess(message);
+                    
+                    // 重新加载当前图片和统计信息
+                    loadImage(currentImageIndex);
+                    updateStats();
+                    updateBatchInfo();
+                } else {
+                    showError(`❌ 批量标注失败: ${result.error || '未知错误'}`);
+                }
+            } catch (error) {
+                showError(`❌ 批量标注失败: ${error.message}`);
+            }
+
+            closeBatchAnnotationDialog();
+        }
+
+        // 批量清空标注
+        async function executeBatchClear() {
+            if (!confirm('确定要清空所有标注吗？此操作不可撤销！')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/batch_operations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        operation: 'clear_annotations',
+                        image_names: images
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess(result.message);
+                    loadImage(currentImageIndex);
+                    updateStats();
+                    updateBatchInfo();
+                } else {
+                    showError(`清空失败: ${result.error || '未知错误'}`);
+                }
+            } catch (error) {
+                showError(`清空失败: ${error.message}`);
+            }
+        }
+
+        // 智能筛选预览功能
+        async function showSmartFilterPreview() {
+            const strategy = document.getElementById('filterStrategy').value;
+            const maxImages = parseInt(document.getElementById('maxImages').value) || 100;
+            
+            try {
+                const response = await fetch('/api/smart_filter', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        strategy: strategy,
+                        max_count: Math.min(maxImages, 20), // 预览最多20张
+                        confidence_range: [0.3, 0.7]
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    const previewText = `筛选策略: ${strategy}\n` +
+                                      `总未标注图片: ${result.total_unannotated}\n` +
+                                      `筛选出图片: ${result.selected_count}\n` +
+                                      `预览图片: ${result.selected_images.slice(0, 5).join(', ')}` +
+                                      (result.selected_images.length > 5 ? '...' : '');
+                    alert(previewText);
+                } else {
+                    showError('预览失败: ' + result.message);
+                }
+            } catch (error) {
+                showError('预览失败: ' + error.message);
+            }
+        }
+
+        // 控制智能筛选选项的显示
+        function toggleSmartFilterOptions() {
+            const smartFilterRadio = document.querySelector('input[name="batchMode"][value="smart_filter"]');
+            const smartFilterOptions = document.getElementById('smartFilterOptions');
+            
+            if (smartFilterRadio && smartFilterOptions) {
+                smartFilterOptions.style.display = smartFilterRadio.checked ? 'block' : 'none';
+            }
+        }
+
+        // 批量标注预览功能
+        async function showBatchPreview() {
+            const mode = document.querySelector('input[name="batchMode"]:checked').value;
+            const confidenceThreshold = parseFloat(document.getElementById('confidenceThreshold').value);
+            const maxImages = parseInt(document.getElementById('maxImages').value);
+            
+            let imageNames = [];
+            
+            try {
+                // 根据模式获取图片列表（复用executeBatchAnnotation的逻辑）
+                if (mode === 'all_unannotated') {
+                    imageNames = window.unannotatedImages || [];
+                    if (maxImages > 0 && imageNames.length > maxImages) {
+                        imageNames = imageNames.slice(0, maxImages);
+                    }
+                } else if (mode === 'range') {
+                    const startIdx = parseInt(document.getElementById('rangeStart').value) - 1;
+                    const endIdx = parseInt(document.getElementById('rangeEnd').value) - 1;
+                    const allImages = window.allImages || images || [];
+                    imageNames = allImages.slice(startIdx, endIdx + 1);
+                } else if (mode === 'remaining') {
+                    const allImages = window.allImages || images || [];
+                    imageNames = allImages.slice(currentImageIndex);
+                    if (maxImages > 0 && imageNames.length > maxImages) {
+                        imageNames = imageNames.slice(0, maxImages);
+                    }
+                } else if (mode === 'smart_filter') {
+                    const strategy = document.getElementById('filterStrategy').value;
+                    const response = await fetch('/api/smart_filter', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            strategy: strategy,
+                            max_count: maxImages || 100,
+                            confidence_range: [0.3, 0.7]
+                        })
+                    });
+                    
+                    const filterResult = await response.json();
+                    if (filterResult.success) {
+                        imageNames = filterResult.selected_images;
+                    } else {
+                        showError('智能筛选失败: ' + filterResult.message);
+                        return;
+                    }
+                }
+                
+                if (imageNames.length === 0) {
+                    alert('没有找到符合条件的图片');
+                    return;
+                }
+                
+                // 调用预览API
+                const previewResponse = await fetch('/api/batch_preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        image_names: imageNames,
+                        confidence_threshold: confidenceThreshold,
+                        max_preview: 5
+                    })
+                });
+                
+                const previewResult = await previewResponse.json();
+                if (previewResult.success) {
+                    showPreviewDialog(previewResult);
+                } else {
+                    showError('预览失败: ' + previewResult.message);
+                }
+                
+            } catch (error) {
+                showError('预览失败: ' + error.message);
+            }
+        }
+
+        // 显示预览结果对话框
+        function showPreviewDialog(previewData) {
+            let previewHtml = `
+                <div id="previewDialog" style="display: block; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1001;">
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 700px; width: 90%; max-height: 80%; overflow-y: auto;">
+                        <h3>🔍 批量标注预览</h3>
+                        <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                            <strong>预览信息：</strong><br>
+                            总图片数: ${previewData.total_images}<br>
+                            预览图片数: ${previewData.previewed_images}<br>
+                            置信度阈值: ${previewData.confidence_threshold}
+                        </div>
+                        <div style="margin: 20px 0;">
+                            <h4>预测结果预览：</h4>
+            `;
+            
+            previewData.preview_results.forEach((result, index) => {
+                if (result.error) {
+                    previewHtml += `
+                        <div style="margin: 10px 0; padding: 10px; border: 1px solid #dc3545; border-radius: 4px; background: #f8d7da;">
+                            <strong>${result.image_name}</strong><br>
+                            <span style="color: #721c24;">错误: ${result.error}</span>
+                        </div>
+                    `;
+                } else {
+                    previewHtml += `
+                        <div style="margin: 10px 0; padding: 10px; border: 1px solid #28a745; border-radius: 4px; background: #d4edda;">
+                            <strong>${result.image_name}</strong><br>
+                            总预测数: ${result.total_predictions} | 
+                            过滤后: ${result.filtered_predictions}<br>
+                    `;
+                    
+                    if (result.predictions && result.predictions.length > 0) {
+                        previewHtml += '<small>预测详情: ';
+                        result.predictions.forEach((pred, i) => {
+                            const confidence = (pred.confidence * 100).toFixed(1);
+                            previewHtml += `${pred.class_name || 'Unknown'}(${confidence}%)`;
+                            if (i < result.predictions.length - 1) previewHtml += ', ';
+                        });
+                        previewHtml += '</small>';
+                    }
+                    
+                    previewHtml += '</div>';
+                }
+            });
+            
+            previewHtml += `
+                        </div>
+                        <div style="text-align: right; margin-top: 20px;">
+                            <button class="btn btn-secondary" onclick="closePreviewDialog()">关闭</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // 添加到页面
+            document.body.insertAdjacentHTML('beforeend', previewHtml);
+        }
+
+        // 关闭预览对话框
+        function closePreviewDialog() {
+            const previewDialog = document.getElementById('previewDialog');
+            if (previewDialog) {
+                previewDialog.remove();
+            }
+        }
+
+        // 初始化批量操作按钮事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const batchAnnotateBtn = document.getElementById('batchAnnotateBtn');
+            const batchSettingsBtn = document.getElementById('batchSettingsBtn');
+            const clearBatchBtn = document.getElementById('clearBatchBtn');
+            
+            if (batchAnnotateBtn) {
+                batchAnnotateBtn.addEventListener('click', showBatchAnnotationDialog);
+            }
+            if (batchSettingsBtn) {
+                batchSettingsBtn.addEventListener('click', showBatchSettingsDialog);
+            }
+            if (clearBatchBtn) {
+                clearBatchBtn.addEventListener('click', executeBatchClear);
+            }
+            
+            // 添加批量模式选择事件监听
+            const batchModeRadios = document.querySelectorAll('input[name="batchMode"]');
+            batchModeRadios.forEach(radio => {
+                radio.addEventListener('change', toggleSmartFilterOptions);
+            });
+            
+            // 初始化批量信息
+            updateBatchInfo();
+        });
+
+        // 定期更新统计信息和批量信息
+        setInterval(() => {
+            updateStats();
+            updateBatchInfo();
+        }, 30000); // 每30秒更新一次
+
+        // 加载预训练模型列表
+        async function loadPretrainedModels() {
+            try {
+                const response = await fetch('/api/pretrained_models');
+                const data = await response.json();
+                
+                const modelSelect = document.getElementById('pretrainedModelSelect');
+                modelSelect.innerHTML = '<option value="">选择预训练模型</option>';
+                
+                if (data.success && data.models) {
+                    window.pretrainedModels = data.models; // 保存到全局变量
+                    
+                    for (const [modelId, modelInfo] of Object.entries(data.models)) {
+                        const option = document.createElement('option');
+                        option.value = modelId;
+                        option.textContent = modelInfo.name;
+                        modelSelect.appendChild(option);
+                    }
+                    
+                    // 如果有保存的选择，恢复它
+                    const savedModel = localStorage.getItem('selectedPretrainedModel');
+                    if (savedModel && data.models[savedModel]) {
+                        modelSelect.value = savedModel;
+                        updateModelDescription();
+                    }
+                } else {
+                    modelSelect.innerHTML = '<option value="">无可用模型</option>';
+                }
+            } catch (error) {
+                console.error('加载预训练模型失败:', error);
+                document.getElementById('pretrainedModelSelect').innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        // 更新模型描述
+        function updateModelDescription() {
+            const modelSelect = document.getElementById('pretrainedModelSelect');
+            const modelDescription = document.getElementById('modelDescription');
+            const selectedModelId = modelSelect.value;
+            
+            if (selectedModelId && window.pretrainedModels && window.pretrainedModels[selectedModelId]) {
+                const modelInfo = window.pretrainedModels[selectedModelId];
+                modelDescription.textContent = modelInfo.description || '暂无描述';
+                
+                // 保存选择
+                localStorage.setItem('selectedPretrainedModel', selectedModelId);
+            } else {
+                modelDescription.textContent = '请选择预训练模型';
+            }
+        }
+
+        // 页面加载时加载预训练模型
+        document.addEventListener('DOMContentLoaded', function() {
+            loadPretrainedModels();
+        });
+
+        // 动态标签管理功能
+        let dynamicClasses = {}; // 存储动态添加的类别 {id: {name: '名称', color: '#颜色'}}
+        let nextClassId = 100; // 动态类别从100开始，避免与预设类别冲突
+
+        // 添加新类别
+        async function addNewClass() {
+            const className = document.getElementById('newClassName').value.trim();
+            const classColor = document.getElementById('newClassColor').value;
+            
+            if (!className) {
+                alert('请输入标签名称');
+                return;
+            }
+            
+            // 检查是否已存在相同名称的类别
+            const existingClasses = { ...imageClasses };
+            // 处理动态类别的新格式和旧格式
+            for (const [id, classInfo] of Object.entries(dynamicClasses)) {
+                if (typeof classInfo === 'object' && classInfo.name) {
+                    existingClasses[id] = classInfo.name;
+                } else {
+                    existingClasses[id] = classInfo;
+                }
+            }
+            for (const [id, name] of Object.entries(existingClasses)) {
+                if (name === className) {
+                    alert('该标签名称已存在');
+                    return;
+                }
+            }
+            
+            const classId = nextClassId++;
+            dynamicClasses[classId] = {
+                name: className,
+                color: classColor
+            };
+            
+            // 创建新的类别按钮
+            const classBtn = document.createElement('button');
+            classBtn.className = 'class-btn';
+            classBtn.setAttribute('data-class', classId);
+            classBtn.setAttribute('id', `class-${classId}`);
+            classBtn.style.backgroundColor = classColor;
+            classBtn.style.borderColor = classColor;
+            classBtn.onclick = function() { selectClass(classId); };
+            
+            classBtn.innerHTML = `
+                <span>${className}</span>
+                <span class="shortcut">${classId}</span>
+            `;
+            
+            // 保存颜色信息到按钮数据
+            classBtn.dataset.color = classColor;
+            
+            // 添加到类别区域
+            const classGroup = document.querySelector('.image-group');
+            classGroup.appendChild(classBtn);
+            
+            // 清空输入框
+            document.getElementById('newClassName').value = '';
+            
+            // 保存到后端
+            await saveDynamicClasses();
+            
+            showSuccess(`标签 "${className}" 添加成功`);
+        }
+
+        // 显示类别管理器
+        function showClassManager() {
+            const allClasses = { ...imageClasses, ...dynamicClasses };
+            let managerHtml = '<div style="max-height: 400px; overflow-y: auto;">';
+            managerHtml += '<h4>标签管理</h4>';
+            
+            // 预设类别（只读）
+            managerHtml += '<div style="margin-bottom: 20px;">';
+            managerHtml += '<h5 style="color: #666;">预设标签</h5>';
+            for (const [classId, className] of Object.entries(imageClasses)) {
+                managerHtml += `
+                    <div style="display: flex; align-items: center; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 4px;">
+                        <span style="flex: 1;">${className}</span>
+                        <span style="color: #999; font-size: 0.9em;">ID: ${classId}</span>
+                    </div>
+                `;
+            }
+            managerHtml += '</div>';
+            
+            // 动态类别（可删除）
+            managerHtml += '<div>';
+            managerHtml += '<h5 style="color: #666;">自定义标签</h5>';
+            if (Object.keys(dynamicClasses).length === 0) {
+                managerHtml += '<div style="color: #999; text-align: center; padding: 20px;">暂无自定义标签</div>';
+            } else {
+                for (const [classId, classInfo] of Object.entries(dynamicClasses)) {
+                    // 处理新格式和旧格式
+                    const className = (typeof classInfo === 'object' && classInfo.name) ? classInfo.name : classInfo;
+                    managerHtml += `
+                        <div style="display: flex; align-items: center; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 4px;">
+                            <span style="flex: 1;">${className}</span>
+                            <span style="color: #999; font-size: 0.9em; margin-right: 10px;">ID: ${classId}</span>
+                            <button onclick="deleteDynamicClass(${classId})" style="background: #fee; border: 1px solid #fcc; color: #c53030; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.9em;">删除</button>
+                        </div>
+                    `;
+                }
+            }
+            managerHtml += '</div>';
+            managerHtml += '</div>';
+            
+            // 创建自定义对话框
+            const dialog = document.createElement('div');
+            dialog.id = 'classManagerDialog';
+            dialog.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;';
+            dialog.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; max-height: 80%; overflow-y: auto;">
+                    ${managerHtml}
+                    <div style="text-align: right; margin-top: 20px;">
+                        <button onclick="closeClassManager()" class="btn btn-secondary">关闭</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(dialog);
+        }
+
+        // 关闭类别管理器
+        function closeClassManager() {
+            const dialog = document.getElementById('classManagerDialog');
+            if (dialog) {
+                dialog.remove();
+            }
+        }
+
+        // 删除动态类别
+        async function deleteDynamicClass(classId) {
+            // 处理新格式和旧格式
+            let className;
+            if (typeof dynamicClasses[classId] === 'object' && dynamicClasses[classId].name) {
+                className = dynamicClasses[classId].name;
+            } else {
+                className = dynamicClasses[classId];
+            }
+            
+            if (!confirm(`确定要删除标签 "${className}" 吗？\n注意：这不会影响已保存的标注数据。`)) {
+                return;
+            }
+            
+            // 删除按钮
+            const btn = document.getElementById(`class-${classId}`);
+            if (btn) {
+                btn.remove();
+            }
+            
+            // 从动态类别中删除
+            delete dynamicClasses[classId];
+            
+            // 保存到后端
+            await saveDynamicClasses();
+            
+            // 如果当前选中的是这个类别，取消选择
+            if (selectedClass == classId) {
+                selectedClass = null;
+            }
+            
+            showSuccess(`标签 "${className}" 已删除`);
+            closeClassManager();
+        }
+
+        // 保存动态类别到后端
+        async function saveDynamicClasses() {
+            try {
+                const response = await fetch('/api/dynamic_classes', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        dynamic_classes: dynamicClasses
+                    })
+                });
+                
+                if (!response.ok) {
+                    console.error('保存动态类别失败');
+                }
+            } catch (error) {
+                console.error('保存动态类别时出错:', error);
+            }
+        }
+
+        // 加载动态类别
+        async function loadDynamicClasses() {
+            try {
+                const response = await fetch('/api/dynamic_classes');
+                const data = await response.json();
+                
+                if (data.success && data.dynamic_classes) {
+                    dynamicClasses = data.dynamic_classes;
+                    
+                    // 重新创建动态类别按钮
+                    for (const [classId, classInfo] of Object.entries(dynamicClasses)) {
+                        if (classId >= nextClassId) {
+                            nextClassId = parseInt(classId) + 1;
+                        }
+                        
+                        // 处理新格式和旧格式
+                        let className, classColor;
+                        if (typeof classInfo === 'object' && classInfo.name) {
+                            // 新格式：{name: '名称', color: '#颜色'}
+                            className = classInfo.name;
+                            classColor = classInfo.color || '#3b82f6';
+                        } else {
+                            // 旧格式：'名称'
+                            className = classInfo;
+                            classColor = '#3b82f6';
+                        }
+                        
+                        const classBtn = document.createElement('button');
+                        classBtn.className = 'class-btn';
+                        classBtn.setAttribute('data-class', classId);
+                        classBtn.setAttribute('id', `class-${classId}`);
+                        classBtn.style.backgroundColor = classColor;
+                        classBtn.style.borderColor = classColor;
+                        classBtn.onclick = function() { selectClass(classId); };
+                        
+                        classBtn.innerHTML = `
+                            <span>${className}</span>
+                            <span class="shortcut">${classId}</span>
+                        `;
+                        
+                        // 保存颜色信息到按钮数据
+                        classBtn.dataset.color = classColor;
+                        
+                        const classGroup = document.querySelector('.image-group');
+                        classGroup.appendChild(classBtn);
+                    }
+                }
+            } catch (error) {
+                console.error('加载动态类别失败:', error);
+            }
+        }
+
+        // 页面加载时加载动态类别
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDynamicClasses();
+        });
+    </script>
+
+    <!-- 批量标注对话框 -->
+    <div id="batchAnnotationDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80%; overflow-y: auto;">
+            <h3>🤖 批量自动标注</h3>
+            <p>选择要进行批量自动标注的图片范围：</p>
+            
+            <div style="margin: 15px 0;">
+                <label>
+                    <input type="radio" name="batchMode" value="all_unannotated" checked> 
+                    所有未标注图片
+                </label>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>
+                    <input type="radio" name="batchMode" value="range"> 
+                    指定范围: 从第 
+                    <input type="number" id="rangeStart" min="1" style="width: 60px; margin: 0 5px;" value="1"> 
+                    张到第 
+                    <input type="number" id="rangeEnd" min="1" style="width: 60px; margin: 0 5px;" value="100"> 
+                    张
+                </label>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>
+                    <input type="radio" name="batchMode" value="remaining"> 
+                    从当前图片开始的剩余图片
+                </label>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>
+                    <input type="radio" name="batchMode" value="smart_filter"> 
+                    智能筛选图片
+                </label>
+                <div id="smartFilterOptions" style="margin-left: 20px; margin-top: 10px; display: none;">
+                    <select id="filterStrategy" style="margin-right: 10px;">
+                        <option value="diversity">多样性筛选</option>
+                        <option value="uncertainty">不确定性采样</option>
+                        <option value="random">随机采样</option>
+                        <option value="newest">最新图片</option>
+                        <option value="oldest">最旧图片</option>
+                    </select>
+                    <button type="button" onclick="showSmartFilterPreview()" style="padding: 2px 8px; font-size: 12px;">预览筛选结果</button>
+                </div>
+            </div>
+            
+            <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 4px;">
+                <h4>标注参数</h4>
+                <div style="margin: 10px 0;">
+                    <label>置信度阈值: <span id="confidenceValue">0.5</span></label>
+                    <input type="range" id="confidenceThreshold" min="0.1" max="0.9" step="0.1" value="0.5" style="width: 100%;" 
+                           oninput="document.getElementById('confidenceValue').textContent = this.value">
+                </div>
+                <div style="margin: 10px 0;">
+                    <label>最大处理数量: </label>
+                    <input type="number" id="maxImages" min="0" max="1000" value="100" style="width: 80px;">
+                    <small style="color: #666;">(0表示不限制)</small>
+                </div>
+            </div>
+            
+            <div style="margin: 20px 0; padding: 10px; background: #fff3cd; border-radius: 4px;">
+                <strong>⚠️ 注意：</strong> 批量操作将覆盖现有标注，建议先备份重要数据
+            </div>
+            
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="closeBatchAnnotationDialog()" style="margin-right: 10px;">取消</button>
+                <button class="btn btn-info" onclick="showBatchPreview()" style="margin-right: 10px;">预览标注结果</button>
+                <button class="btn btn-success" onclick="executeBatchAnnotation()">开始批量标注</button>
+            </div>
+            
+            <div id="batchProgress" style="display: none; margin-top: 20px;">
+                <div style="margin: 10px 0;">处理进度:</div>
+                <div style="width: 100%; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+                    <div id="batchProgressFill" style="height: 20px; background: linear-gradient(135deg, #48bb78, #38a169); width: 0%; transition: width 0.3s ease;"></div>
+                </div>
+                <div id="batchProgressText" style="text-align: center; margin-top: 5px;">0%</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量设置对话框 -->
+    <div id="batchSettingsDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%;">
+            <h3>⚙️ 批量标注设置</h3>
+            <p>配置批量自动标注的参数：</p>
+            
+            <div style="margin: 20px 0;">
+                <h4>质量控制</h4>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="checkbox" id="enableQualityFilter" checked>
+                        启用质量过滤（过滤低置信度预测）
+                    </label>
+                </div>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="checkbox" id="enableNMS" checked>
+                        启用非极大值抑制（去除重叠检测）
+                    </label>
+                </div>
+            </div>
+            
+            <div style="margin: 20px 0;">
+                <h4>处理策略</h4>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="radio" name="overwriteMode" value="skip" checked>
+                        跳过已标注图片
+                    </label>
+                </div>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="radio" name="overwriteMode" value="overwrite">
+                        覆盖已标注图片
+                    </label>
+                </div>
+                <div style="margin: 10px 0;">
+                    <label>
+                        <input type="radio" name="overwriteMode" value="merge">
+                        合并到现有标注
+                    </label>
+                </div>
+            </div>
+            
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="closeBatchSettingsDialog()" style="margin-right: 10px;">取消</button>
+                <button class="btn btn-success" onclick="saveBatchSettings()">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 保存批量设置
+        function saveBatchSettings() {
+            const qualityFilter = document.getElementById('enableQualityFilter').checked;
+            const nmsEnabled = document.getElementById('enableNMS').checked;
+            const overwriteMode = document.querySelector('input[name="overwriteMode"]:checked').value;
+            
+            // 保存设置到localStorage
+            const settings = {
+                enableQualityFilter: qualityFilter,
+                enableNMS: nmsEnabled,
+                overwriteMode: overwriteMode
+            };
+            
+            localStorage.setItem('batchAnnotationSettings', JSON.stringify(settings));
+            
+            showSuccess('✅ 批量标注设置已保存');
+            closeBatchSettingsDialog();
+        }
+
+        // 加载批量设置
+        function loadBatchSettings() {
+            try {
+                const savedSettings = localStorage.getItem('batchAnnotationSettings');
+                if (savedSettings) {
+                    const settings = JSON.parse(savedSettings);
+                    
+                    if (document.getElementById('enableQualityFilter')) {
+                        document.getElementById('enableQualityFilter').checked = settings.enableQualityFilter !== false;
+                    }
+                    if (document.getElementById('enableNMS')) {
+                        document.getElementById('enableNMS').checked = settings.enableNMS !== false;
+                    }
+                    
+                    const overwriteRadio = document.querySelector(`input[name="overwriteMode"][value="${settings.overwriteMode || 'skip'}"]`);
+                    if (overwriteRadio) {
+                        overwriteRadio.checked = true;
+                    }
+                }
+            } catch (error) {
+                console.error('加载批量设置失败:', error);
+            }
+        }
+
+        // 页面加载时加载设置
+        document.addEventListener('DOMContentLoaded', function() {
+            loadBatchSettings();
+        });
+    </script>
+
+</body>
+</html>
