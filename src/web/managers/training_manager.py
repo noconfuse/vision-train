@@ -92,9 +92,14 @@ class TrainingManager:
                     
                 data_yaml = os.path.join(dataset_path, "data.yaml")
                 if not os.path.exists(data_yaml):
-                    # 尝试自动生成
-                    TrainingManager.generate_data_yaml(dataset_path, save_dir)
-                    data_yaml = os.path.join(save_dir, "data.yaml")
+                    # Check for dataset.yaml
+                    dataset_yaml_candidate = os.path.join(dataset_path, "dataset.yaml")
+                    if os.path.exists(dataset_yaml_candidate):
+                        data_yaml = dataset_yaml_candidate
+                    else:
+                        # 尝试自动生成
+                        TrainingManager.generate_data_yaml(dataset_path, save_dir)
+                        data_yaml = os.path.join(save_dir, "data.yaml")
                     
                 # 记录使用的 dataset.yaml
                 config_save['dataset_yaml'] = data_yaml
@@ -244,12 +249,37 @@ class TrainingManager:
                 results_csv = os.path.join(run_dir, 'results.csv')
                 status = 'completed' if os.path.exists(os.path.join(run_dir, 'weights', 'best.pt')) else 'running/failed'
                 
+                metrics = {}
+                if os.path.exists(results_csv):
+                    try:
+                        with open(results_csv, 'r') as f:
+                            lines = f.readlines()
+                            if len(lines) > 1:
+                                headers = [h.strip() for h in lines[0].split(',')]
+                                values = [v.strip() for v in lines[-1].split(',')]
+                                if len(headers) == len(values):
+                                    for h, v in zip(headers, values):
+                                        try:
+                                            metrics[h] = float(v)
+                                            # Add simplified keys for frontend
+                                            if 'mAP50(B)' in h:
+                                                metrics['mAP50'] = float(v)
+                                                metrics['map50'] = float(v)
+                                            if 'mAP50-95(B)' in h:
+                                                metrics['mAP50-95'] = float(v)
+                                                metrics['map'] = float(v)
+                                        except:
+                                            pass
+                    except:
+                        pass
+
                 runs.append({
                     'id': run_id,
                     'dataset': dataset_name,
                     'path': run_dir,
                     'config': config,
                     'status': status,
+                    'metrics': metrics,
                     'created_at': datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S')
                 })
                 
@@ -365,6 +395,8 @@ class TrainingManager:
         else:
             # 尝试推断
              data_yaml = os.path.join(run['path'], 'data.yaml')
+             if not os.path.exists(data_yaml):
+                 data_yaml = os.path.join(run['path'], 'dataset.yaml')
              
         if not data_yaml or not os.path.exists(data_yaml):
              raise ValueError("未找到数据集配置文件")

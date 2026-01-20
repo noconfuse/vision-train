@@ -34,6 +34,12 @@
             <div class="h-full bg-blue-500 transition-all duration-300" 
                  :style="{ width: `${ds.annotation_rate * 100}%` }"></div>
           </div>
+
+          <div v-if="ds.tags && ds.tags.length > 0" class="mt-3 flex flex-wrap gap-1">
+            <span v-for="tag in ds.tags" :key="tag" class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
+              #{{ tag }}
+            </span>
+          </div>
           
           <div class="mt-4 pt-4 border-t border-gray-100 flex gap-2 justify-end" @click.stop>
             <button @click="openHistory(ds)" class="px-3 py-1.5 text-xs font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-colors">
@@ -88,6 +94,12 @@
             <div class="h-full bg-yellow-500 transition-all duration-300" 
                  :style="{ width: `${ds.annotation_rate * 100}%` }"></div>
           </div>
+
+          <div v-if="ds.tags && ds.tags.length > 0" class="mt-3 flex flex-wrap gap-1">
+            <span v-for="tag in ds.tags" :key="tag" class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
+              #{{ tag }}
+            </span>
+          </div>
           
           <div class="mt-4 pt-4 border-t border-gray-100 flex gap-2 justify-end" @click.stop>
             <button @click="openHistory(ds)" class="px-3 py-1.5 text-xs font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-colors">
@@ -133,16 +145,21 @@
               <th class="text-left px-4 py-2 font-medium">imgsz</th>
               <th class="text-left px-4 py-2 font-medium">mAP50</th>
               <th class="text-left px-4 py-2 font-medium">mAP50-95</th>
+              <th class="text-left px-4 py-2 font-medium">产物</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
             <tr v-for="r in historyRuns" :key="r.training_id" class="hover:bg-gray-50">
-              <td class="px-4 py-2 font-mono text-xs text-gray-700">{{ r.training_id }}</td>
+              <td class="px-4 py-2 font-mono text-xs text-gray-700">{{ r.training_id || r.id }}</td>
               <td class="px-4 py-2 text-gray-700">{{ r.model_name || r.config?.model_name || '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ r.config?.epochs ?? '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ r.config?.imgsz ?? '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ metric(r, 'mAP50') ?? metric(r, 'map50') ?? '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ metric(r, 'mAP50-95') ?? metric(r, 'map') ?? '-' }}</td>
+              <td class="px-4 py-2 text-gray-700 text-xs space-x-2">
+                <a :href="`/api/file?path=${encodePath(r.path + '/weights/best.pt')}`" target="_blank" class="text-blue-600 hover:underline">best.pt</a>
+                <a :href="`/api/file?path=${encodePath(r.path + '/confusion_matrix.png')}`" target="_blank" class="text-blue-600 hover:underline">matrix</a>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -235,6 +252,8 @@ const metric = (run, key) => {
   if (!m || typeof m !== 'object') return undefined;
   return m[key];
 };
+
+const encodePath = (p) => encodeURIComponent(p);
 
 const historyDataset = ref(null);
 const historyRuns = ref([]);

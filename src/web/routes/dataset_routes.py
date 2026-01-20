@@ -390,7 +390,10 @@ def api_dataset_reorder_labels():
 
         yaml_path = os.path.join(ds_root, 'data.yaml')
         if not os.path.exists(yaml_path):
-            return jsonify({'success': False, 'error': '未找到 data.yaml'})
+            yaml_path = os.path.join(ds_root, 'dataset.yaml')
+            
+        if not os.path.exists(yaml_path):
+            return jsonify({'success': False, 'error': '未找到 data.yaml 或 dataset.yaml'})
 
         with open(yaml_path, 'r', encoding='utf-8') as f:
             y = yaml.safe_load(f) or {}
@@ -520,6 +523,47 @@ def api_dataset_reorder_labels():
             'skipped_files': skipped_files,
             'order': order_ints,
         })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/dataset/update_tags', methods=['POST'])
+def api_dataset_update_tags():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        dataset_name = data.get('dataset_name')
+        tags = data.get('tags') or []
+        
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        ds_candidates = [
+            os.path.join(project_path, 'training', dataset_name),
+            os.path.join(project_path, 'datasets', dataset_name),
+        ]
+        ds_root = None
+        for p in ds_candidates:
+            if p and os.path.isdir(p):
+                ds_root = p
+                break
+        if not ds_root:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        yaml_path = os.path.join(ds_root, 'data.yaml')
+        if not os.path.exists(yaml_path):
+             # If data.yaml doesn't exist, create minimal one or error?
+             # For raw datasets, maybe it doesn't exist.
+             # We can create it just for tags.
+             with open(yaml_path, 'w', encoding='utf-8') as f:
+                 yaml.safe_dump({'tags': tags}, f, allow_unicode=True, sort_keys=False)
+        else:
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                y = yaml.safe_load(f) or {}
+            y['tags'] = tags
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
+                
+        return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 

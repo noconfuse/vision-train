@@ -40,8 +40,23 @@ def api_training_status():
 
 @bp.route('/api/training/history')
 def api_training_history():
-    # 简单返回 log
-    return jsonify({'success': True, 'history': list(training_status['log'])})
+    try:
+        project_path = request.args.get('project_path')
+        dataset_name = request.args.get('dataset_name')
+        
+        if not project_path:
+            # Fallback to current log if no project path (legacy behavior)
+            return jsonify({'success': True, 'history': list(training_status['log'])})
+
+        runs = TrainingManager.list_training_runs(project_path)
+        
+        # Filter by dataset if provided
+        if dataset_name:
+            runs = [r for r in runs if r.get('dataset') == dataset_name]
+            
+        return jsonify({'success': True, 'history': runs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @bp.route('/api/training/runs')
 def api_training_runs():

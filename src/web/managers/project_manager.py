@@ -123,7 +123,10 @@ class ProjectManager:
                     }
                     
                     # 检查是否符合 YOLO 训练要求
-                    is_yolo = os.path.exists(os.path.join(p, 'data.yaml')) or \
+                    data_yaml_exists = os.path.exists(os.path.join(p, 'data.yaml')) or \
+                                     os.path.exists(os.path.join(p, 'dataset.yaml'))
+                    
+                    is_yolo = data_yaml_exists or \
                              (os.path.exists(os.path.join(p, 'train')) and os.path.exists(os.path.join(p, 'val')))
                     
                     if is_yolo:
@@ -156,7 +159,8 @@ class ProjectManager:
             "has_train": False,
             "has_val": False,
             "has_test": False,
-            "annotation_rate": 0.0
+            "annotation_rate": 0.0,
+            "tags": []
         }
         
         class_counts = {} # {class_id: count}
@@ -164,6 +168,9 @@ class ProjectManager:
         # 尝试读取 data.yaml 获取类别名称
         class_names = {}
         data_yaml_path = os.path.join(dataset_path, 'data.yaml')
+        if not os.path.exists(data_yaml_path):
+            data_yaml_path = os.path.join(dataset_path, 'dataset.yaml')
+            
         if os.path.exists(data_yaml_path):
             try:
                 with open(data_yaml_path, 'r') as f:
@@ -176,6 +183,10 @@ class ProjectManager:
                         elif isinstance(names, dict):
                             for k, v in names.items():
                                 class_names[int(k)] = v
+                    if 'tags' in data_config:
+                        t = data_config['tags']
+                        if isinstance(t, list):
+                            info['tags'] = t
             except:
                 pass
         
