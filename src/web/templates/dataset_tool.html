@@ -134,9 +134,22 @@
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 9999;
+            z-index: 10001;
         }
         #imagePreviewOverlay.show { display: flex; }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
 
         .dataset-card {
             border: 2px solid #e9ecef;
@@ -286,24 +299,31 @@
             color: white;
         }
 
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #27ae60;
+            color: #27ae60;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        .btn-outline:hover {
+            background: #27ae60;
+            color: white;
+        }
+
         .hidden {
             display: none;
         }
 
         /* 预览弹窗 */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.6);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-
+        /* Moved .modal-overlay definition up to resolve z-index ordering clarity, 
+           but we need to ensure we remove the duplicate definition down below 
+           or just keep it consistent. */
         .modal-content {
             background: #fff;
             padding: 10px;
@@ -351,8 +371,10 @@
                         <div class="section-title">🚀 可训练数据集</div>
                         <div class="datasets-grid" id="trainableDatasets"></div>
                     </div>
+                    
                     <div id="datasetDetail" class="section hidden">
                         <div id="datasetDetailHeader" style="font-weight:600; margin-bottom:8px;"></div>
+                        <div id="datasetClassStats" class="hidden" style="margin-bottom: 10px;"></div>
                         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
                             <label>分割</label>
                             <select id="datasetSplit" onchange="onSplitChange()" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;">
@@ -366,7 +388,23 @@
                                 <option value="include">包含所选类别</option>
                                 <option value="exclude">排除所选类别</option>
                             </select>
+                            <div style="display:flex; align-items:center; margin-left:8px;">
+                                <input type="checkbox" id="unannotatedFilter" style="margin-right:4px;">
+                                <label for="unannotatedFilter" style="cursor:pointer; margin-bottom:0;">仅看未标注</label>
+                            </div>
                             <button class="btn btn-outline-primary" onclick="applyClassFilter()">应用筛选</button>
+                            
+                            <div style="border-left: 1px solid #ddd; margin: 0 10px; height: 24px;"></div>
+                            
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <button class="btn" onclick="toggleSelectionMode()" id="selectionModeBtn">进入选择模式</button>
+                                <span id="selectionControls" style="display:none; gap:8px; align-items:center;">
+                                    <button class="btn" onclick="selectAllPage()">全选本页</button>
+                                    <button class="btn" onclick="clearSelection()">清空选择</button>
+                                    <button class="btn btn-success" onclick="openCreateSubsetModal()">生成数据集 (<span id="selectedCount">0</span>)</button>
+                                </span>
+                            </div>
+
                             <button class="btn" onclick="prevPreviewPage()">上一页</button>
                             <button class="btn" onclick="nextPreviewPage()">下一页</button>
                             <label>页码</label>
@@ -389,6 +427,12 @@
                             <div id="batchAnnotateModal" class="section" style="max-width:520px; width:90%;">
                                 <div class="section-title">批量自动标注</div>
                                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                    <label>数据集</label>
+                                    <select id="autoAnnotateSplitSelect" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px; width:80px;">
+                                        <option value="train">train</option>
+                                        <option value="val">val</option>
+                                        <option value="test">test</option>
+                                    </select>
                                     <label>选择模型</label>
                                     <select id="autoAnnotateModelSelect" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px; min-width:240px;"></select>
                                     <label>阈值</label>
@@ -399,7 +443,8 @@
                                 <div id="batchAnnotateStatus" style="margin-top:8px; font-size:13px; color:#2c3e50;"></div>
                             </div>
                         </div>
-                        <div id="topToast" class="hidden" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10001; display:none; background:#2ecc71; color:#fff; padding:10px 16px; border-radius:8px; box-shadow:0 6px 16px rgba(0,0,0,0.2);"></div>
+
+
                     </div>
 
                     
@@ -449,6 +494,14 @@
                                     <label>lr0</label>
                                     <input type="number" step="0.001" id="cfgLr0" placeholder="例如 0.005" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
                                 </div>
+                                <div>
+                                    <label>Mosaic</label>
+                                    <input type="number" step="0.1" id="cfgMosaic" placeholder="1.0" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
+                                <div>
+                                    <label>Mixup</label>
+                                    <input type="number" step="0.1" id="cfgMixup" placeholder="0.0" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                                </div>
                             </div>
                         </div>
 
@@ -460,6 +513,7 @@
                                 <label>训练版本</label>
                                 <select id="runSelector" onchange="onRunChange()" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;"></select>
                             </div>
+                            <div id="artifactMetadata" style="font-size:13px; color:#555; margin-bottom:10px; padding:10px; background:#f8f9fa; border-radius:4px; display:none;"></div>
                             <div id="metricsSummary" style="font-size: 14px; color: #2c3e50; margin-bottom: 10px;"></div>
                             <div id="trainingDownload" style="margin-bottom:10px; font-size:13px;"></div>
                             <div id="artifactsImages"
@@ -502,8 +556,6 @@
                                     </div>
                                 </div>
                                 <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
-                                    <label>来源训练版本</label>
-                                    <select id="exportRunSelector" style="padding:6px; border:1px solid #e0e0e0; border-radius:6px;"></select>
                                     <button class="btn btn-success" onclick="startExport()">📦 开始导出</button>
                                     <div id="exportStatusText" style="font-size:13px; color:#2c3e50;"></div>
                                 </div>
@@ -522,6 +574,17 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <div id="trainingRunsPage" class="hidden">
+                    <div class="section">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                            <div class="section-title" style="margin-bottom:0;">📜 训练历史记录</div>
+                            <button class="btn" onclick="backToDatasetList()">⬅️ 返回数据集列表</button>
+                        </div>
+                        <div id="trainingRunsHeader" style="margin-bottom:20px; font-weight:600; color:#555;"></div>
+                        <div id="trainingRunsGrid" class="datasets-grid"></div>
                     </div>
                 </div>
 
@@ -557,17 +620,417 @@
         </div>
     </div>
 
+    <!-- Run Detail Modal -->
+    <div id="runDetailModalOverlay" class="modal-overlay" onclick="if(event.target===this) closeRunDetailModal()">
+        <div class="modal-content" style="max-width: 1000px; width: 95%; height: 90vh; overflow-y: auto;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                <h3 id="runDetailTitle">训练详情</h3>
+                <button class="btn" onclick="closeRunDetailModal()">✕</button>
+            </div>
+            
+            <div id="runDetailContent">
+                <!-- Content will be injected here -->
+                <div id="rdMetricsSummary" style="font-size: 14px; color: #2c3e50; margin-bottom: 10px; background:#f8f9fa; padding:10px; border-radius:6px;"></div>
+                
+                <div style="margin-bottom:16px;">
+                    <div class="section-title" style="font-size:16px;">📊 评估模型</div>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+                        <button class="btn" onclick="startRunEvaluate('val')">📊 验证集评估</button>
+                        <button class="btn" onclick="startRunEvaluate('test')">🧪 测试集评估</button>
+                        <div id="rdEvalStatusText" style="font-size:13px; color:#2c3e50;"></div>
+                    </div>
+                    <div class="training-progress" style="margin-top:10px;">
+                        <div class="training-progress-fill" id="rdEvalProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div id="rdEvaluationsWrapper" style="margin-bottom:16px; display:none;">
+                    <div class="section-title" style="font-size:16px;">📊 评估历史</div>
+                    <div id="rdEvaluations"></div>
+                </div>
+
+                <div style="margin-bottom:16px;">
+                    <div class="section-title" style="font-size:16px;">📈 训练曲线与结果</div>
+                    <div id="rdArtifactsImages" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;"></div>
+                </div>
+
+                 <div style="margin-bottom:16px;">
+                    <div class="section-title" style="font-size:16px;">🛠️ 导出模型</div>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+                        <button class="btn btn-success" onclick="openExportModalFromRun()">📦 导出模型...</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导出模型弹窗 -->
+    <div id="exportModal" class="modal-overlay" style="z-index: 10005;" onclick="if(event.target===this) closeExportModal()">
+        <div class="modal-content" style="max-width: 600px; width: 90%;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3 id="exportModalTitle">导出模型</h3>
+                <button class="btn" onclick="closeExportModal()">✕</button>
+            </div>
+            
+            <input type="hidden" id="modalExportTrainingId" />
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
+                <div>
+                    <label style="display:block; margin-bottom:5px;">导出格式</label>
+                    <select id="mExportFormat" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;">
+                        <option value="onnx">ONNX</option>
+                        <option value="openvino">OpenVINO</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block; margin-bottom:5px;">图片尺寸 (imgsz)</label>
+                    <input type="number" id="mExportImgsz" placeholder="默认 640" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;"/>
+                </div>
+                
+                <div style="grid-column: 1 / -1; display:flex; gap:20px;">
+                    <label style="display:flex; align-items:center; cursor:pointer;">
+                        <input type="checkbox" id="mExportHalf" style="margin-right:8px;"/> 半精度 (FP16)
+                    </label>
+                    <label style="display:flex; align-items:center; cursor:pointer;">
+                        <input type="checkbox" id="mExportInt8" style="margin-right:8px;"/> INT8 量化
+                    </label>
+                </div>
+                
+                <div style="grid-column: 1 / -1; background:#f8f9fa; padding:10px; border-radius:6px;">
+                    <div style="font-size:12px; color:#666; margin-bottom:8px;">INT8 量化校准设置 (仅OpenVINO INT8有效)</div>
+                    <div style="display:flex; gap:10px;">
+                        <div style="flex:1;">
+                            <label style="font-size:12px;">每类采样</label>
+                            <input type="number" id="mExportPerClass" value="20" style="width:100%; padding:4px; border:1px solid #e0e0e0; border-radius:4px;"/>
+                        </div>
+                        <div style="flex:1;">
+                            <label style="font-size:12px;">最大图片数</label>
+                            <input type="number" id="mExportMaxImages" value="200" style="width:100%; padding:4px; border:1px solid #e0e0e0; border-radius:4px;"/>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                <div id="exportStatus" style="font-size:13px; color:#666;"></div>
+                <button class="btn btn-success" id="exportBtn" onclick="doExport()">🚀 开始导出</button>
+            </div>
+            
+            <div id="exportResult"></div>
+        </div>
+    </div>
+    <div id="topToast" class="hidden" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10001; display:none; background:#2ecc71; color:#fff; padding:10px 16px; border-radius:8px; box-shadow:0 6px 16px rgba(0,0,0,0.2);"></div>
+
+    <!-- Create Subset Modal -->
+    <div id="createSubsetModalOverlay" class="modal-overlay" onclick="if(event.target===this) closeCreateSubsetModal()">
+        <div class="modal-content" style="max-width: 500px; width: 90%;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                <h3>生成子数据集</h3>
+                <button class="btn" onclick="closeCreateSubsetModal()">✕</button>
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="display:block; margin-bottom:8px;">新数据集名称</label>
+                <input type="text" id="newDatasetName" style="width:100%; padding:8px; border:1px solid #e0e0e0; border-radius:6px;" placeholder="例如: my_subset_v1">
+                <div style="font-size:12px; color:#666; margin-top:5px;">将基于当前选中的图片生成新的数据集，包含图片和对应标签。</div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button class="btn" onclick="closeCreateSubsetModal()">取消</button>
+                <button class="btn btn-success" onclick="confirmCreateSubset()">确认生成</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let currentProject = null;
         let selectedDataset = null;
         let selectedModel = null;
+        let currentRunId = null; // For run detail modal
+        let currentRunDataset = null; // For run detail modal
         let trainingUpdateInterval = null;
+        
+        // Selection Mode
+        let isSelectionMode = false;
+        let selectedImages = new Set(); // Stores paths of selected images
 
         document.addEventListener('DOMContentLoaded', function () {
             loadProjects();
             loadModels();
             loadRuns();
         });
+
+        async function showTrainingRunsView(datasetName) {
+            document.getElementById('projectDetails').classList.add('hidden');
+            document.getElementById('datasetDetail').classList.add('hidden');
+            document.getElementById('trainingSection').classList.add('hidden');
+            
+            const view = document.getElementById('trainingRunsPage');
+            view.classList.remove('hidden');
+            document.getElementById('trainingRunsHeader').textContent = `数据集: ${datasetName}`;
+            
+            const grid = document.getElementById('trainingRunsGrid');
+            grid.innerHTML = '<div style="padding:20px; text-align:center;">加载中...</div>';
+            
+            try {
+                const url = `/api/training/runs?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(datasetName)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (data.success && data.runs && data.runs.length > 0) {
+                    grid.innerHTML = data.runs.map(run => createRunCard(run)).join('');
+                } else {
+                    grid.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">暂无训练记录</div>';
+                }
+            } catch (e) {
+                console.error('加载训练记录失败', e);
+                grid.innerHTML = '<div style="padding:20px; text-align:center; color:red;">加载失败</div>';
+            }
+        }
+        
+        function backToDatasetList() {
+            document.getElementById('trainingRunsPage').classList.add('hidden');
+            document.getElementById('projectDetails').classList.remove('hidden');
+            // Ensure dataset detail/training sections are hidden until selected again
+            document.getElementById('datasetDetail').classList.add('hidden');
+            document.getElementById('trainingSection').classList.add('hidden');
+        }
+
+        function createRunCard(run) {
+            // Format metrics
+            const map50 = run.metrics && run.metrics.map50 !== undefined ? (run.metrics.map50 * 100).toFixed(1) + '%' : '-';
+            const map5095 = run.metrics && run.metrics.map50_95 !== undefined ? (run.metrics.map50_95 * 100).toFixed(1) + '%' : '-';
+            const epochs = run.config && run.config.epochs ? run.config.epochs : '-';
+            const batch = run.config && run.config.batch ? run.config.batch : '-';
+            const imgsz = run.config && run.config.imgsz ? run.config.imgsz : '-';
+            const model = run.model_name || '-';
+            const time = run.start_time || run.training_id || '-';
+            
+            // Status badge
+            let statusBadge = '';
+            if (run.status === 'running') statusBadge = '<span style="background:#fff3cd; color:#856404; padding:2px 6px; border-radius:4px; font-size:12px;">进行中</span>';
+            else if (run.status === 'completed') statusBadge = '<span style="background:#d4edda; color:#155724; padding:2px 6px; border-radius:4px; font-size:12px;">完成</span>';
+            else statusBadge = `<span style="background:#f8f9fa; color:#6c757d; padding:2px 6px; border-radius:4px; font-size:12px;">${run.status}</span>`;
+
+            return `
+                <div class="dataset-card" onclick="openRunDetail('${run.training_id}', '${run.dataset}')">
+                    <div class="dataset-header">
+                        <div class="dataset-name" style="font-size:14px;">${time}</div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            ${statusBadge}
+                            <button class="btn btn-sm btn-danger" style="padding: 2px 6px; font-size: 12px; z-index: 10;" onclick="deleteRun(event, '${run.training_id}', '${run.dataset}')" title="删除记录">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="dataset-stats">
+                        <div class="stat-item"><span>Model:</span> <span>${model}</span></div>
+                        <div class="stat-item"><span>Epochs:</span> <span>${epochs}</span></div>
+                        <div class="stat-item"><span>Batch:</span> <span>${batch}</span></div>
+                        <div class="stat-item"><span>Imgsz:</span> <span>${imgsz}</span></div>
+                        <div style="border-top:1px solid #eee; margin:8px 0;"></div>
+                        <div class="stat-item"><span>mAP50:</span> <span style="font-weight:600; color:#2c3e50;">${map50}</span></div>
+                        <div class="stat-item"><span>mAP50-95:</span> <span>${map5095}</span></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function deleteRun(event, runId, datasetName) {
+            event.stopPropagation();
+            if (!confirm(`确定要删除训练记录 ${runId} 吗？此操作不可恢复。`)) return;
+            
+            try {
+                const url = `/api/training/artifact?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(runId)}`;
+                const res = await fetch(url, { method: 'DELETE' });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showTrainingRunsView(datasetName);
+                } else {
+                    alert('删除失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                console.error('删除请求失败', e);
+                alert('删除请求失败');
+            }
+        }
+
+        async function openRunDetail(runId, datasetName) {
+            currentRunId = runId;
+            currentRunDataset = datasetName;
+            
+            const overlay = document.getElementById('runDetailModalOverlay');
+            overlay.classList.add('show');
+            overlay.style.display = 'flex';
+            
+            document.getElementById('runDetailTitle').textContent = `训练详情: ${runId}`;
+            
+            // Reset eval status
+            document.getElementById('rdEvalStatusText').textContent = '';
+            document.getElementById('rdEvalProgressBar').style.width = '0%';
+            
+            // Load detail data
+            await loadRunDetailData(runId, datasetName);
+        }
+        
+        function closeRunDetailModal() {
+            const overlay = document.getElementById('runDetailModalOverlay');
+            overlay.classList.remove('show');
+            overlay.style.display = 'none';
+            currentRunId = null;
+            currentRunDataset = null;
+            // Stop any evaluation polling if exists (optional optimization)
+        }
+
+        async function loadRunDetailData(runId, datasetName) {
+             // Re-use logic similar to onRunChange but for modal
+             try {
+                // We fetch all runs to find the specific one, or we could add a specific API. 
+                // Since we already have logic to get runs, let's just get runs and find it.
+                // Optimally we should pass the run object, but fetching ensures fresh data.
+                const url = `/api/training/runs?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(datasetName)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (data.success && data.runs) {
+                    const run = data.runs.find(r => r.training_id === runId);
+                    if (run) {
+                        renderRunDetail(run);
+                    }
+                }
+             } catch(e) {
+                 console.error(e);
+             }
+        }
+        
+        function renderRunDetail(run) {
+            // Metrics Summary
+            const mHtml = [];
+            if (run.metrics) {
+                for (const [k, v] of Object.entries(run.metrics)) {
+                     mHtml.push(`<span><b>${k}:</b> ${typeof v === 'number' ? v.toFixed(4) : v}</span>`);
+                }
+            }
+            if (run.config) {
+                 mHtml.push(`<div style="margin-top:8px; font-size:12px; color:#666;">Config: ${JSON.stringify(run.config)}</div>`);
+            }
+            document.getElementById('rdMetricsSummary').innerHTML = mHtml.join('<span style="margin:0 8px; color:#ddd;">|</span>');
+            
+            // Evaluation History
+            const evalWrapper = document.getElementById('rdEvaluationsWrapper');
+            const evalContainer = document.getElementById('rdEvaluations');
+            if (evalWrapper && evalContainer) {
+                if (run.evaluations && run.evaluations.length > 0) {
+                    evalWrapper.style.display = 'block';
+                    evalContainer.innerHTML = run.evaluations.map(ev => `
+                        <div style="margin-bottom:12px; padding:10px; background:#fff; border:1px solid #eee; border-radius:8px;">
+                            <div style="font-weight:600; color:#555; margin-bottom:8px; display:flex; justify-content:space-between;">
+                                <span>🕒 ${ev.time}</span>
+                                <span style="font-size:12px; color:#999;">${ev.images.length} 张图片</span>
+                            </div>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;">
+                                ${ev.images.map(img => `
+                                    <div style="border:1px solid #eee; border-radius:6px; overflow:hidden;">
+                                        <img src="/api/file?path=${img}" onclick="showImagePreview(this.src)" style="width:100%; height:auto; display:block; cursor:pointer;"/>
+                                        <div style="padding:4px; font-size:11px; text-align:center; background:#f8f9fa;">${img.split('/').pop()}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    evalWrapper.style.display = 'none';
+                    evalContainer.innerHTML = '';
+                }
+            }
+            
+            // Images
+            const imgContainer = document.getElementById('rdArtifactsImages');
+            if (run.images && run.images.length > 0) {
+                 imgContainer.innerHTML = run.images.map(img => `
+                    <div style="border:1px solid #eee; border-radius:8px; overflow:hidden;">
+                        <img src="/api/file?path=${img}" onclick="showImagePreview(this.src)" style="width:100%; height:auto; display:block; cursor:pointer;"/>
+                        <div style="padding:8px; font-size:12px; text-align:center; background:#f8f9fa;">${img.split('/').pop()}</div>
+                    </div>
+                `).join('');
+            } else {
+                imgContainer.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:#999;">暂无结果图片</div>';
+            }
+        }
+
+        function startRunEvaluate(split) {
+            if (!currentRunId || !currentRunDataset) return;
+            
+            const btn = event.target;
+            btn.disabled = true;
+            const statusText = document.getElementById('rdEvalStatusText');
+            statusText.textContent = '准备评估...';
+            
+            fetch('/api/model/evaluate/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_path: currentProject.path,
+                    dataset_name: currentRunDataset,
+                    training_id: currentRunId, // Use training_id specifically
+                    split: split
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    statusText.textContent = '评估已启动...';
+                    pollRunEvalStatus(split);
+                } else {
+                    statusText.textContent = '启动失败: ' + data.error;
+                    btn.disabled = false;
+                }
+            })
+            .catch(e => {
+                console.error(e);
+                statusText.textContent = '请求错误';
+                btn.disabled = false;
+            });
+        }
+        
+        function pollRunEvalStatus(split) {
+             const timer = setInterval(async () => {
+                try {
+                    // Use the existing status API which checks global variable. 
+                    // NOTE: This assumes only one evaluation happens at a time globally or per project.
+                    // The backend implementation uses a global `evaluation_state`.
+                    const res = await fetch('/api/model/evaluate/status');
+                    const data = await res.json();
+                    
+                    if (data.status) {
+                        const s = data.status;
+                        const statusText = document.getElementById('rdEvalStatusText');
+                        const bar = document.getElementById('rdEvalProgressBar');
+                        
+                        statusText.textContent = s.message;
+                        bar.style.width = (s.progress || 0) + '%';
+                        
+                        if (s.state === 'completed') {
+                            clearInterval(timer);
+                            statusText.textContent = '评估完成！请刷新查看结果'; // Could auto-reload data
+                            // Reload data to show new charts if any
+                            await loadRunDetailData(currentRunId, currentRunDataset);
+                            // Re-enable buttons
+                            document.querySelectorAll('#runDetailContent button').forEach(b => b.disabled = false);
+                        } else if (s.state === 'error') {
+                             clearInterval(timer);
+                             statusText.textContent = '评估出错: ' + s.message;
+                             document.querySelectorAll('#runDetailContent button').forEach(b => b.disabled = false);
+                        }
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            }, 1000);
+        }
+        
+        function openExportModalFromRun() {
+            if (currentRunId) {
+                openExportModal(currentRunId);
+            }
+        }
 
         async function loadProjects() {
             try {
@@ -655,12 +1118,22 @@
             const statusClass = type === 'trainable' ? 'status-trainable' : 'status-annotatable';
             const statusText = type === 'trainable' ? '可训练' : '需标注';
 
+            let tagsHtml = '';
+            if (dataset.tags && dataset.tags.length > 0) {
+                tagsHtml = '<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px;">';
+                dataset.tags.forEach(tag => {
+                    tagsHtml += `<span style="background:#e2e8f0; color:#4a5568; padding:2px 6px; border-radius:4px; font-size:11px;">${tag}</span>`;
+                });
+                tagsHtml += '</div>';
+            }
+
             return `
                 <div class="dataset-card" onclick="selectDataset('${dataset.name}', '${dataset.path}', '${type}')">
                     <div class="dataset-header">
                         <div class="dataset-name">${dataset.name}</div>
                         <div class="dataset-status ${statusClass}">${statusText}</div>
                     </div>
+                    ${tagsHtml}
                     <div class="dataset-stats">
                         <div class="stat-item">
                             <span>图片数量:</span>
@@ -678,8 +1151,76 @@
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: ${annotationRate}%"></div>
                     </div>
+                    <div style="margin-top:12px; padding-top:10px; border-top:1px solid #eee; display:flex; justify-content:flex-end; gap:8px;">
+                         <button class="btn btn-sm" style="padding:4px 8px; font-size:12px; background:#e6fffa; color:#2c7a7b; border:1px solid #b2f5ea;" onclick="event.stopPropagation(); showTrainingRunsView('${dataset.name}')" title="查看训练历史">📜 历史</button>
+                         <button class="btn btn-sm" style="padding:4px 8px; font-size:12px; background:#fffaf0; color:#c05621; border:1px solid #fbd38d;" onclick="event.stopPropagation(); openSplitDatasetModal('${dataset.name}')" title="分割数据集">✂️ 分割</button>
+                         <button class="btn btn-sm" style="padding:4px 8px; font-size:12px; background:#edf2f7; color:#2d3748;" onclick="event.stopPropagation(); editDatasetTags('${dataset.name}')" title="编辑标签">🏷️ 标签</button>
+                         <button class="btn btn-sm" style="padding:4px 8px; font-size:12px; background:#fff5f5; color:#c53030; border:1px solid #feb2b2;" onclick="event.stopPropagation(); deleteDataset('${dataset.name}')" title="删除数据集">🗑️ 删除</button>
+                    </div>
                 </div>
             `;
+        }
+
+        async function deleteDataset(dsName) {
+            if (!confirm(`确定要删除数据集 ${dsName} 吗？\n此操作将永久删除该数据集及其所有内容！`)) return;
+            if (!confirm(`再次确认：真的要删除 ${dsName} 吗？\n删除后不可恢复！`)) return;
+            
+            try {
+                const res = await fetch('/api/dataset/delete_folder', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_path: currentProject.path,
+                        dataset_name: dsName
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    loadProjectDetails();
+                } else {
+                    alert('删除失败: ' + (data.error || '未知错误'));
+                }
+            } catch(e) {
+                console.error('删除数据集失败', e);
+                alert('请求失败');
+            }
+        }
+
+        async function editDatasetTags(dsName) {
+            let oldTags = '';
+            try {
+                const infoRes = await fetch(`/api/dataset/info?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(dsName)}`);
+                const infoData = await infoRes.json();
+                if (infoData.info && infoData.info.tags) {
+                    oldTags = infoData.info.tags.join(', ');
+                }
+            } catch(e) {}
+
+            const newTagsStr = prompt(`编辑数据集 ${dsName} 的标签 (用逗号分隔):`, oldTags);
+            if (newTagsStr === null) return;
+            
+            const newTags = newTagsStr.split(/[,，]/).map(t => t.trim()).filter(t => t);
+            
+            try {
+                const res = await fetch('/api/dataset/update_tags', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_path: currentProject.path,
+                        dataset_name: dsName,
+                        tags: newTags
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    loadProjectDetails();
+                } else {
+                    alert('更新失败: ' + (data.error || '未知错误'));
+                }
+            } catch(e) {
+                console.error('更新标签失败', e);
+                alert('请求失败');
+            }
         }
 
         function selectDataset(datasetName, datasetPath, type) {
@@ -692,8 +1233,11 @@
 
             if (type === 'trainable') {
                 document.getElementById('trainingSection').classList.remove('hidden');
+                // Hide artifacts section as user requested to see it only via "History" button
+                const artifactsSec = document.getElementById('artifactsSection');
+                if (artifactsSec) artifactsSec.classList.add('hidden');
+                
                 openDatasetDetail(datasetName);
-                loadArtifacts();
             }
         }
 
@@ -710,6 +1254,30 @@
                 const ds = infoData.info || {};
                 document.getElementById('datasetDetail').classList.remove('hidden');
                 document.getElementById('datasetDetailHeader').textContent = `数据集: ${dsName} | 图片: ${ds.image_count || 0} | 标注率: ${Math.round((ds.annotation_rate||0)*100)}%`;
+                
+                const statsContainer = document.getElementById('datasetClassStats');
+                if (statsContainer) {
+                    if (ds.class_stats && ds.class_stats.length > 0) {
+                        statsContainer.innerHTML = `
+                            <div style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                <div style="font-weight: 600; margin-bottom: 5px;">分类统计 (总目标数: ${ds.total_objects})</div>
+                                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                    ${ds.class_stats.map(s => `
+                                        <div style="display: flex; align-items: center; background: white; border: 1px solid #dee2e6; border-radius: 4px; padding: 4px 8px; font-size: 12px;">
+                                            <span style="font-weight: 600; color: #495057;">${s.name}</span>
+                                            <span style="margin: 0 6px; color: #adb5bd;">|</span>
+                                            <span>${s.count} (${s.percentage}%)</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                        statsContainer.classList.remove('hidden');
+                    } else {
+                        statsContainer.classList.add('hidden');
+                    }
+                }
+
                 document.getElementById('datasetSplit').value = 'train';
                 const sel = document.getElementById('classFilter');
                 if (sel){
@@ -744,11 +1312,14 @@
             if (ov) { ov.classList.remove('hidden'); ov.style.display='flex'; }
             const st = document.getElementById('batchAnnotateStatus');
             if (st) { st.textContent = ''; }
+            const curSplit = document.getElementById('datasetSplit') ? document.getElementById('datasetSplit').value : 'train';
+            const splitSel = document.getElementById('autoAnnotateSplitSelect');
+            if(splitSel) splitSel.value = curSplit;
         }
 
-        async function batchAutoAnnotate(dsName, modelPath, conf){
+        async function batchAutoAnnotate(dsName, modelPath, conf, split){
             try{
-                const body = { project_path: currentProject.path, dataset_name: dsName, split:'train', model_path: modelPath||'', conf: conf||0.35, max_det: 300, batch_size: 4 };
+                const body = { project_path: currentProject.path, dataset_name: dsName, split: split || 'train', model_path: modelPath||'', conf: conf||0.35, max_det: 300, batch_size: 4 };
                 const res = await fetch('/api/auto_annotate/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                 const data = await res.json();
                 document.getElementById('datasetDetailMsg').textContent = data.success ? `批量自动标注完成：新增框 ${data.added_boxes}，待复核图片 ${data.pending_count}` : ('批量失败：'+(data.error||''));
@@ -762,6 +1333,8 @@
             const sel = document.getElementById('autoAnnotateModelSelect');
             const path = sel && sel.value ? sel.value : '';
             const conf = parseFloat(document.getElementById('autoAnnotateConf').value || '0.35');
+            const splitSel = document.getElementById('autoAnnotateSplitSelect');
+            const split = splitSel ? splitSel.value : 'train';
             const btn = document.getElementById('batchAnnotateStartBtn');
             if (btn) btn.disabled = true;
             const st = document.getElementById('batchAnnotateStatus');
@@ -774,7 +1347,7 @@
                     if (d && d.status){ st.textContent = (d.status.message||'') + ` ${d.status.progress||0}%`; }
                 }catch(e){}
             }, 800);
-            batchAutoAnnotate(currentDatasetName, path, conf).then(()=>{
+            batchAutoAnnotate(currentDatasetName, path, conf, split).then(()=>{
                 clearInterval(timer);
                 if (btn) btn.disabled = false;
                 if (st) st.textContent = '完成';
@@ -791,9 +1364,10 @@
         async function renderDatasetPreview() {
             try {
                 const split = document.getElementById('datasetSplit').value;
-                const classes = (window.classFilter||[]).join(',');
-                const mode = window.classFilterMode || 'include';
-                const url = `/api/dataset/images?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(currentDatasetName)}&split=${encodeURIComponent(split)}&offset=${previewOffset}&limit=${previewLimit}&classes=${encodeURIComponent(classes)}&mode=${encodeURIComponent(mode)}`;
+                const classes = (window.selectedClassFilter||[]).join(',');
+                const mode = window.selectedClassFilterMode || 'include';
+                const unannotated = window.unannotatedOnly || false;
+                const url = `/api/dataset/images?project_path=${encodeURIComponent(currentProject.path)}&dataset_name=${encodeURIComponent(currentDatasetName)}&split=${encodeURIComponent(split)}&offset=${previewOffset}&limit=${previewLimit}&classes=${encodeURIComponent(classes)}&mode=${encodeURIComponent(mode)}&unannotated=${unannotated}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 const items = data.images || [];
@@ -802,13 +1376,141 @@
                 const pageInfo = document.getElementById('pageInfo');
                 if (pageInfo){ const totalPages = Math.max(1, Math.ceil((window.previewTotal||0)/previewLimit)); const currentPage = Math.floor(previewOffset/previewLimit)+1; pageInfo.textContent = `${currentPage}/${totalPages}`; document.getElementById('pageInput').value = currentPage; }
                 const container = document.getElementById('datasetPreview');
-                container.innerHTML = items.map((it,idx) => `
-                    <div style="position:relative;">
-                        <img src="${it.url}" onclick="openAnnotator('${split}','${it.path}',${idx})" style="height:120px; width:auto; border-radius:6px; object-fit:cover; cursor:pointer;"/>
+                container.innerHTML = items.map((it,idx) => {
+                    const isSelected = selectedImages.has(it.path);
+                    const checkStyle = isSelectionMode ? 'display:block;' : 'display:none;';
+                    
+                    return `
+                    <div style="position:relative;" class="preview-item">
+                        <div class="select-checkbox" style="${checkStyle} position:absolute; top:6px; left:6px; z-index:10;">
+                            <input type="checkbox" onchange="toggleImageSelection('${it.path}', this)" ${isSelected ? 'checked' : ''} style="width:18px; height:18px; cursor:pointer;">
+                        </div>
+                        <img src="${it.url}" onclick="onPreviewImageClick('${split}','${it.path}',${idx})" style="height:120px; width:auto; border-radius:6px; object-fit:cover; cursor:pointer;"/>
                         ${it.pending ? '<span style="position:absolute; top:6px; right:6px; background:#e67e22; color:#fff; font-size:12px; padding:2px 6px; border-radius:6px;">待复核</span>' : ''}
                     </div>
-                `).join('');
+                `}).join('');
             } catch(e) { console.error('加载预览失败', e); }
+        }
+
+        function onPreviewImageClick(split, path, index) {
+            if (isSelectionMode) {
+                // In selection mode, clicking image toggles checkbox
+                const cb = document.querySelector(`input[onchange="toggleImageSelection('${path}', this)"]`);
+                if (cb) {
+                    cb.checked = !cb.checked;
+                    toggleImageSelection(path, cb);
+                }
+            } else {
+                openAnnotator(split, path, index);
+            }
+        }
+        
+        function toggleSelectionMode() {
+            isSelectionMode = !isSelectionMode;
+            const btn = document.getElementById('selectionModeBtn');
+            const controls = document.getElementById('selectionControls');
+            
+            if (isSelectionMode) {
+                btn.textContent = '退出选择模式';
+                btn.classList.add('btn-danger');
+                controls.style.display = 'flex';
+            } else {
+                btn.textContent = '进入选择模式';
+                btn.classList.remove('btn-danger');
+                controls.style.display = 'none';
+                // Optional: clear selection on exit? User might want to keep it.
+                // Let's keep it but hide checkboxes.
+            }
+            
+            // Re-render to show/hide checkboxes
+            renderDatasetPreview();
+        }
+        
+        function toggleImageSelection(path, cb) {
+            if (cb.checked) {
+                selectedImages.add(path);
+            } else {
+                selectedImages.delete(path);
+            }
+            updateSelectedCount();
+        }
+        
+        function updateSelectedCount() {
+            document.getElementById('selectedCount').textContent = selectedImages.size;
+        }
+        
+        function selectAllPage() {
+            if (!window.previewList) return;
+            window.previewList.forEach(it => {
+                selectedImages.add(it.path);
+            });
+            updateSelectedCount();
+            renderDatasetPreview();
+        }
+        
+        function clearSelection() {
+            selectedImages.clear();
+            updateSelectedCount();
+            renderDatasetPreview();
+        }
+        
+        function openCreateSubsetModal() {
+            if (selectedImages.size === 0) {
+                alert('请先选择图片');
+                return;
+            }
+            document.getElementById('newDatasetName').value = '';
+            document.getElementById('createSubsetModalOverlay').style.display = 'flex';
+        }
+        
+        function closeCreateSubsetModal() {
+            document.getElementById('createSubsetModalOverlay').style.display = 'none';
+        }
+        
+        async function confirmCreateSubset() {
+            const name = document.getElementById('newDatasetName').value.trim();
+            if (!name) {
+                alert('请输入数据集名称');
+                return;
+            }
+            
+            // Show loading state
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '生成中...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/dataset/create_subset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_path: currentProject.path,
+                        source_dataset: currentDatasetName,
+                        new_dataset_name: name,
+                        image_paths: Array.from(selectedImages)
+                    })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message);
+                    closeCreateSubsetModal();
+                    // Reload datasets list
+                    loadProjectDetails();
+                    // Clear selection
+                    clearSelection();
+                    toggleSelectionMode(); // Exit selection mode
+                } else {
+                    alert('生成失败: ' + data.error);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('生成失败: ' + e.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
         }
 
         async function onSplitChange(){
@@ -823,10 +1525,12 @@
             try{
                 const sel = document.getElementById('classFilter');
                 const modeEl = document.getElementById('classFilterMode');
+                const uaEl = document.getElementById('unannotatedFilter');
                 const values = [];
                 if (sel){ for (const opt of sel.options){ if (opt.selected) values.push(opt.value); } }
-                window.classFilter = values;
-                window.classFilterMode = modeEl ? modeEl.value : 'include';
+                window.selectedClassFilter = values;
+                window.selectedClassFilterMode = modeEl ? modeEl.value : 'include';
+                window.unannotatedOnly = uaEl ? uaEl.checked : false;
                 previewOffset = 0;
                 renderDatasetPreview();
             }catch(e){ console.error('应用类别筛选失败', e); }
@@ -850,9 +1554,20 @@
         function showImagePreview(u) {
             const ov = document.getElementById('imagePreviewOverlay');
             const img = document.getElementById('imagePreviewLarge');
-            img.src = u; ov.classList.add('show');
+            img.src = u; 
+            
+            // Hide annotation controls for simple preview
+            const controls = ov.querySelector('.annot-controls');
+            if(controls) controls.style.display = 'none';
+            const canvas = document.getElementById('annotCanvas');
+            if(canvas) canvas.style.display = 'none';
+            const delBtn = document.getElementById('annotDeleteBtn');
+            if(delBtn) delBtn.style.display = 'none';
+            
+            ov.classList.add('show');
+            ov.style.display = 'flex'; // Ensure display flex is set
         }
-        function hideImagePreview() { document.getElementById('imagePreviewOverlay').classList.remove('show'); }
+        function hideImagePreview() { document.getElementById('imagePreviewOverlay').classList.remove('show'); document.getElementById('imagePreviewOverlay').style.display='none'; }
 
         async function openAnnotator(split, path, index) {
             try {
@@ -869,6 +1584,13 @@
                 const ov = document.getElementById('imagePreviewOverlay');
                 const img = document.getElementById('imagePreviewLarge');
                 ov.style.display='flex'; ov.classList.add('show');
+                
+                // Show annotation controls
+                const controls = ov.querySelector('.annot-controls');
+                if(controls) controls.style.display = 'flex';
+                const canvas = document.getElementById('annotCanvas');
+                if(canvas) canvas.style.display = 'block';
+                
                 img.src = `/api/file?path=${path}`;
                 await new Promise(r => { if (img.complete) r(); else img.onload = r; });
                 // 拉取标签
@@ -1131,13 +1853,10 @@
                 if (data.success) {
                     const runs = (data.history || []).map(h => ({ training_id: h.training_id })).reverse();
                     const runSel = document.getElementById('runSelector');
-                    const expSel = document.getElementById('exportRunSelector');
                     const opts = runs.map(r => `<option value="${r.training_id}">${r.training_id}</option>`).join('');
                     runSel.innerHTML = opts;
-                    expSel.innerHTML = opts;
                     if (runs.length > 0) {
                         runSel.value = runs[0].training_id;
-                        expSel.value = runs[0].training_id;
                         onRunChange();
                     }
                 }
@@ -1158,6 +1877,26 @@
                 if (data.success) {
                     const metrics = data.metrics || {};
                     document.getElementById('metricsSummary').textContent = formatMetricsText(metrics);
+                    
+                    // Render Metadata & Delete Button
+                    const meta = data.metadata || {};
+                    const metaEl = document.getElementById('artifactMetadata');
+                    if (metaEl) {
+                        const items = [];
+                        if (meta.dataset_name) items.push(`<div><b>所属数据集:</b> ${meta.dataset_name}</div>`);
+                        if (meta.model_path) items.push(`<div><b>预训练模型:</b> ${meta.model_path.split('/').pop()}</div>`);
+                        if (meta.start_time) items.push(`<div><b>训练时间:</b> ${meta.start_time.replace('T', ' ').split('.')[0]}</div>`);
+                        
+                        metaEl.innerHTML = `
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                <div style="line-height:1.6;">${items.length > 0 ? items.join('') : '<div>暂无元数据</div>'}</div>
+                                <div>
+                                    <button class="btn btn-danger" style="padding:4px 10px; font-size:12px;" onclick="deleteArtifact('${rid}')">🗑️ 删除</button>
+                                </div>
+                            </div>`;
+                        metaEl.style.display = 'block';
+                    }
+
                     const images = [];
                     const a = data.artifacts || {};
                     ['results_png', 'confusion_matrix', 'pr_curve', 'f1_curve'].forEach(k => { if (a[k]) images.push(a[k]); });
@@ -1171,9 +1910,193 @@
                         best ? `<div>最佳模型: <a href="${best}" download>下载</a>（${formatSize(bsz)}）</div>` : '',
                         last ? `<div>最后模型: <a href="${last}" download>下载</a>（${formatSize(lsz)}）</div>` : ''
                     ].filter(Boolean).join('');
-                    document.getElementById('trainingDownload').innerHTML = html || '<div style="color:#6c757d;">暂无可下载模型</div>';
+                    
+                    const actionHtml = `
+                        <div style="margin-top:10px; padding-top:10px; border-top:1px solid #eee; display:flex; gap:10px;">
+                            <button class="btn btn-sm btn-primary" onclick="openExportModal('${rid}')">📦 导出模型</button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteArtifact('${rid}')">🗑️ 删除记录</button>
+                        </div>
+                    `;
+                    
+                    document.getElementById('trainingDownload').innerHTML = (html || '<div style="color:#6c757d;">暂无可下载模型</div>') + actionHtml;
+                    
+                    // Refresh export list for this run
+                    document.getElementById('exportStatusText').textContent = '';
+                    document.getElementById('diagnoseInfo').innerHTML = '';
+                    listExports(rid);
                 }
             } catch (e) { console.error('加载指定版本产物失败', e); }
+        }
+
+        let exportPollingInterval = null;
+
+        function openExportModal(trainingId) {
+            document.getElementById('modalExportTrainingId').value = trainingId;
+            document.getElementById('exportModalTitle').textContent = `导出模型: ${trainingId}`;
+            document.getElementById('exportModal').style.display = 'flex';
+            document.getElementById('exportResult').innerHTML = '';
+            document.getElementById('exportStatus').textContent = '';
+            document.getElementById('exportBtn').disabled = false;
+            // Load existing exports if any
+            checkExistingExports(trainingId);
+        }
+
+        function closeExportModal() {
+            document.getElementById('exportModal').style.display = 'none';
+            if (exportPollingInterval) {
+                clearInterval(exportPollingInterval);
+                exportPollingInterval = null;
+            }
+        }
+
+        async function checkExistingExports(trainingId) {
+            try {
+                const res = await fetch(`/api/model/exports?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(trainingId)}`);
+                const data = await res.json();
+                if (data.success && data.exports && data.exports.length > 0) {
+                    renderExportResult(data.exports[0]);
+                }
+            } catch (e) {}
+        }
+
+        async function doExport() {
+            const trainingId = document.getElementById('modalExportTrainingId').value;
+            const format = document.getElementById('mExportFormat').value;
+            const half = document.getElementById('mExportHalf').checked;
+            const int8 = document.getElementById('mExportInt8').checked;
+            const imgsz = parseInt(document.getElementById('mExportImgsz').value || '0', 10) || null;
+            const perClass = parseInt(document.getElementById('mExportPerClass').value || '20', 10);
+            const maxImages = parseInt(document.getElementById('mExportMaxImages').value || '200', 10);
+
+            const btn = document.getElementById('exportBtn');
+            const status = document.getElementById('exportStatus');
+            
+            btn.disabled = true;
+            status.textContent = '正在启动导出...';
+            
+            // Diagnose first (silently, or show error)
+            try {
+                const dRes = await fetch(`/api/dataset/diagnose?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(trainingId)}`);
+                const dData = await dRes.json();
+                if (dData.success && dData.diagnose) {
+                     if (!dData.diagnose.exists_images_train) {
+                         throw new Error('缺少 images/train，无法进行校准或导出');
+                     }
+                }
+            } catch(e) {
+                status.textContent = '诊断失败: ' + e.message;
+                btn.disabled = false;
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/model/export', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        project_path: currentProject.path, 
+                        training_id: trainingId, 
+                        format, 
+                        half_precision: half, 
+                        int8_quant: int8, 
+                        imgsz, 
+                        per_class: perClass, 
+                        max_images: maxImages 
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    status.textContent = '导出任务运行中...';
+                    pollExportInModal(trainingId);
+                } else {
+                    status.textContent = '启动失败: ' + (data.error || '未知错误');
+                    btn.disabled = false;
+                }
+            } catch (e) { 
+                console.error('导出错误', e); 
+                status.textContent = '请求失败';
+                btn.disabled = false;
+            }
+        }
+
+        function pollExportInModal(trainingId) {
+            if (exportPollingInterval) clearInterval(exportPollingInterval);
+            exportPollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/model/export/status');
+                    const data = await res.json();
+                    if (data.success) {
+                        const st = data.status || {};
+                        const msg = (st.message || '') + (st.progress ? ` (${st.progress}%)` : '');
+                        document.getElementById('exportStatus').textContent = msg;
+                        
+                        if (!st.is_running) {
+                            clearInterval(exportPollingInterval);
+                            exportPollingInterval = null;
+                            document.getElementById('exportBtn').disabled = false;
+                            checkExistingExports(trainingId);
+                        }
+                    }
+                } catch (e) {}
+            }, 1000);
+        }
+
+        function renderExportResult(item) {
+            const container = document.getElementById('exportResult');
+            if (!item) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            let zipLink = '';
+            if (item.zip_url) {
+                const fname = item.export_dir ? item.export_dir.split('/').pop() + '.zip' : 'model_export.zip';
+                zipLink = `<a href="${item.zip_url}" class="btn btn-sm" style="background-color: #2f855a; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;" download="${fname}" target="_blank">📦 打包下载全部产物 (ZIP)</a>`;
+            }
+
+            const links = (item.files || []).map(f => {
+                try {
+                    const pathParam = f.split('path=')[1];
+                    const decoded = decodeURIComponent(pathParam);
+                    const fname = decoded.split('/').pop();
+                    return `<a href="${f}" class="btn btn-sm btn-outline" download="${fname}" target="_blank">📄 ${fname}</a>`;
+                } catch(e) {
+                    return `<a href="${f}" class="btn btn-sm btn-outline" download target="_blank">⬇️ 下载文件</a>`;
+                }
+            }).join(' ');
+            
+            if (!zipLink && !links) {
+                container.innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = `
+                <div style="margin-top:15px; padding:10px; background:#f0fff4; border:1px solid #48bb78; border-radius:6px;">
+                    <div style="font-weight:bold; color:#2f855a; margin-bottom:10px;">✅ 导出成功</div>
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                        ${zipLink ? `<div>${zipLink}</div>` : ''}
+                        ${links ? `<div style="display:flex; flex-wrap:wrap; gap:8px;">${links}</div>` : ''}
+                    </div>
+                    <div style="margin-top:5px; font-size:12px; color:#666;">导出位置: ${item.export_dir}</div>
+                </div>
+            `;
+        }
+
+        async function deleteArtifact(rid) {
+            if (!confirm(`确定要删除训练记录 ${rid} 及其所有产物吗？\n此操作不可恢复！`)) return;
+            try {
+                const url = `/api/training/artifact?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(rid)}`;
+                const res = await fetch(url, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    alert('删除成功');
+                    loadRuns(); // Refresh list
+                } else {
+                    alert('删除失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                console.error('删除请求失败', e);
+                alert('删除请求失败');
+            }
         }
 
         async function loadModels() {
@@ -1203,14 +2126,27 @@
             modelSelector.innerHTML = models.map(model => {
                 const label = model.name || (model.path ? model.path.split('/').pop() : '未知模型');
                 const path = model.path || '';
-                const desc = model.description || (path ? '项目训练产物' : '预训练模型');
                 const onclick = path ? `selectModel('${path}')` : `selectModel('${label}')`;
-                const short = label.length > 22 ? label.slice(0, 19) + '...' : label;
-                return `
-                <div class="model-option" onclick="${onclick}" title="${label}">
-                    <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" aria-label="${label}">${short}</div>
-                    <div style="font-size: 12px; color: #6c757d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${desc}">${desc}</div>
-                </div>`;
+                
+                if (model.type === 'artifact') {
+                    // Custom Artifact Card
+                    return `
+                    <div class="model-option" onclick="${onclick}" title="${label}" style="display:flex; flex-direction:column; gap:4px; padding:12px; height:100%;">
+                        <div style="font-weight: 600; font-size:14px; color:#2c3e50; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📦 ${model.dataset}</div>
+                        <div style="font-size: 12px; color: #555;">🕒 ${model.training_time || '-'}</div>
+                        <div style="font-size: 11px; color: #999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">ID: ${model.training_id || label}</div>
+                        <div style="position:absolute; top:6px; right:6px; font-size:10px; background:#e3f2fd; color:#1565c0; padding:2px 6px; border-radius:4px;">训练产物</div>
+                    </div>`;
+                } else {
+                    // Standard Pretrained Model Card
+                    const desc = model.description || (path ? '项目训练产物' : '预训练模型');
+                    const short = label.length > 22 ? label.slice(0, 19) + '...' : label;
+                    return `
+                    <div class="model-option" onclick="${onclick}" title="${label}" style="display:flex; flex-direction:column; justify-content:center; padding:12px; height:100%;">
+                        <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" aria-label="${label}">${short}</div>
+                        <div style="font-size: 12px; color: #6c757d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${desc}">${desc}</div>
+                    </div>`;
+                }
             }).join('');
         }
 
@@ -1251,7 +2187,9 @@
                             batch: parseInt(document.getElementById('cfgBatch')?.value||'',10) || '',
                             imgsz: parseInt(document.getElementById('cfgImgsz')?.value||'',10) || '',
                             freeze: document.getElementById('cfgFreeze')?.value||'',
-                            lr0: parseFloat(document.getElementById('cfgLr0')?.value||'') || ''
+                            lr0: parseFloat(document.getElementById('cfgLr0')?.value||'') || '',
+                            mosaic: parseFloat(document.getElementById('cfgMosaic')?.value||'') || '',
+                            mixup: parseFloat(document.getElementById('cfgMixup')?.value||'') || ''
                         }
                     })
                 });
@@ -1396,7 +2334,7 @@
 
         async function startExport() {
             if (!currentProject) { alert('请先选择项目'); return; }
-            const trainingId = document.getElementById('exportRunSelector').value;
+            const trainingId = document.getElementById('runSelector').value;
             if (!trainingId) { alert('请选择来源训练版本'); return; }
             await diagnoseDataset(trainingId);
             const format = document.getElementById('exportFormat').value;
@@ -1448,29 +2386,61 @@
                 if (data.success) {
                     const st = data.status || {};
                     document.getElementById('exportStatusText').textContent = (st.message || '') + (st.progress ? (' ' + st.progress + '%') : '');
-                    if (!st.is_running) { await listExports(); if (document.getElementById('exportAutoDownload').checked) { autoDownloadLatestExport(); } }
-                    else { setTimeout(pollExportStatus, 1000); }
+                    if (!st.is_running) { 
+                        const rid = document.getElementById('runSelector').value;
+                        await listExports(rid); 
+                    } else { 
+                        setTimeout(pollExportStatus, 1000); 
+                    }
                 }
             } catch (e) { console.error('导出状态错误', e); }
         }
 
-        async function listExports() {
+        async function listExports(trainingId) {
             try {
-                const url = `/api/model/exports?project_path=${encodeURIComponent(currentProject.path)}`;
+                if (!trainingId) trainingId = document.getElementById('runSelector').value;
+                if (!trainingId) return;
+
+                const url = `/api/model/exports?project_path=${encodeURIComponent(currentProject.path)}&training_id=${encodeURIComponent(trainingId)}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 if (data.success) {
                     const items = (data.exports || []).sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
-                    const it = items[0];
-                    if (!it) {
-                        document.getElementById('exportList').innerHTML = '<div style="color:#6c757d;">暂无最新导出产物</div>';
+                    if (items.length === 0) {
+                        document.getElementById('exportList').innerHTML = '<div style="color:#6c757d;">暂无导出产物</div>';
                         return;
                     }
-                        const links = it.files.map(f => `<a href="${f}" download>下载</a>`).join(' | ');
+                    const it = items[0]; // Show latest
+                    const links = it.files.map(f => {
+                        const fname = f.split('path=')[1].split('/').pop();
+                        return `<a href="${f}" download>${fname}</a>`;
+                    }).join(' | ');
+                    
                     const totalSize = it.total_size_bytes ? `（总大小: ${formatSize(it.total_size_bytes)}）` : '';
-                    const primary = it.primary_model_path ? `<div>主模型: <a href="/api/file?path=${it.primary_model_path}" target="_blank">${basename(it.primary_model_path)}</a></div>` : '<div style="color:#6c757d;">主模型未识别</div>';
+                    
+                    let primaryHtml = '<div style="color:#6c757d;">主模型未识别</div>';
+                    if (it.primary_model_path) {
+                        const pName = basename(it.primary_model_path);
+                        const pUrl = `/api/file?path=${it.primary_model_path}`;
+                        primaryHtml = `
+                            <div style="margin-bottom:8px;">
+                                <a href="${pUrl}" class="btn btn-sm btn-success" download>⬇️ 下载模型文件 (${pName})</a>
+                            </div>
+                        `;
+                    }
+
                     const netron = `<a href="https://netron.app" target="_blank">可视化(Netron)</a>`;
-                    document.getElementById('exportList').innerHTML = `<div>导出目录: ${it.export_dir} ${totalSize}<br/>${primary}<div>文件: ${links} | ${netron}</div></div>`;
+                    
+                    document.getElementById('exportList').innerHTML = `
+                        <div style="background:#f0fff4; border:1px solid #48bb78; border-radius:6px; padding:10px;">
+                            <div style="font-weight:bold; color:#2f855a; margin-bottom:5px;">✅ 最新导出 (${it.format})</div>
+                            ${primaryHtml}
+                            <div style="font-size:12px; color:#555;">
+                                <div>导出目录: ${it.export_dir} ${totalSize}</div>
+                                <div style="margin-top:4px;">所有文件: ${links} | ${netron}</div>
+                            </div>
+                        </div>
+                    `;
                 }
             } catch (e) { console.error('列出导出失败', e); }
         }
@@ -1629,7 +2599,12 @@
                 const res = await fetch('/api/training/continue', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_path: currentProject.path, dataset_name: 'training', use_best: useBest, training_config: {} })
+                    body: JSON.stringify({ 
+                        project_path: currentProject.path, 
+                        dataset_name: selectedDataset ? selectedDataset.name : 'training', 
+                        use_best: useBest, 
+                        training_config: {} 
+                    })
                 });
                 const data = await res.json();
                 if (data.success) {
@@ -1654,7 +2629,10 @@
                 const res = await fetch('/api/training/resume', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_path: currentProject.path, dataset_name: 'training' })
+                    body: JSON.stringify({ 
+                        project_path: currentProject.path, 
+                        dataset_name: selectedDataset ? selectedDataset.name : 'training'
+                    })
                 });
                 const data = await res.json();
                 if (data.success) {
@@ -1690,6 +2668,135 @@
             const modal = document.getElementById('imageModal');
             modal.style.display = 'none';
             document.getElementById('modalImg').src = '';
+        }
+    </script>
+    <!-- Split Dataset Modal -->
+    <div id="splitDatasetModal" class="modal-overlay hidden" style="z-index: 10002;">
+        <div class="modal-content" style="max-width: 500px; padding: 24px;">
+            <div class="modal-header">
+                <h3>✂️ 分割数据集</h3>
+                <button class="close-btn" onclick="closeSplitDatasetModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 20px;">
+                    <label class="form-label">数据集名称</label>
+                    <input type="text" class="form-input" id="splitDatasetName" readonly disabled style="background: #f7fafc;">
+                </div>
+                
+                <div style="margin-bottom: 24px;">
+                    <label class="form-label">分割策略 (训练集 : 验证集 : 测试集)</label>
+                    
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <input type="range" id="splitSlider" min="0" max="100" value="80" style="flex: 1;" oninput="updateSplitLabels()">
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; font-size: 14px; color: #4a5568;">
+                        <div>
+                            <span style="display: inline-block; width: 12px; height: 12px; background: #48bb78; border-radius: 2px;"></span>
+                            训练集: <span id="trainSplitLabel">80%</span>
+                        </div>
+                        <div>
+                            <span style="display: inline-block; width: 12px; height: 12px; background: #ecc94b; border-radius: 2px;"></span>
+                            验证集: <span id="valSplitLabel">20%</span>
+                        </div>
+                        <div>
+                            <span style="display: inline-block; width: 12px; height: 12px; background: #4299e1; border-radius: 2px;"></span>
+                            测试集: <span id="testSplitLabel">0%</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                        <input type="checkbox" id="enableTestSplit" onchange="updateSplitLabels()">
+                        <label for="enableTestSplit">包含测试集 (固定 10%)</label>
+                    </div>
+                </div>
+                
+                <div class="modal-actions" style="justify-content: flex-end;">
+                    <button class="btn btn-secondary" onclick="closeSplitDatasetModal()">取消</button>
+                    <button class="btn btn-primary" onclick="confirmSplitDataset()">确认分割</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let splitTargetDataset = '';
+        
+        function openSplitDatasetModal(dsName) {
+            splitTargetDataset = dsName;
+            document.getElementById('splitDatasetName').value = dsName;
+            document.getElementById('splitDatasetModal').classList.remove('hidden');
+            document.getElementById('splitDatasetModal').style.display = 'flex';
+            updateSplitLabels();
+        }
+        
+        function closeSplitDatasetModal() {
+            document.getElementById('splitDatasetModal').classList.add('hidden');
+            document.getElementById('splitDatasetModal').style.display = 'none';
+        }
+        
+        function updateSplitLabels() {
+            const slider = document.getElementById('splitSlider');
+            const enableTest = document.getElementById('enableTestSplit').checked;
+            
+            let val = parseInt(slider.value);
+            let test = enableTest ? 10 : 0;
+            
+            // Adjust slider logic: slider controls Train %
+            // Max train % is 100 - test
+            
+            let maxTrain = 100 - test;
+            if (val > maxTrain) {
+                val = maxTrain;
+                slider.value = val;
+            }
+            
+            let trainPct = val;
+            let testPct = test;
+            let valPct = 100 - trainPct - testPct;
+            
+            if (valPct < 0) {
+                // This shouldn't happen if we cap val, but just in case
+                valPct = 0;
+                trainPct = 100 - testPct;
+            }
+            
+            document.getElementById('trainSplitLabel').textContent = trainPct + '%';
+            document.getElementById('valSplitLabel').textContent = valPct + '%';
+            document.getElementById('testSplitLabel').textContent = testPct + '%';
+        }
+        
+        async function confirmSplitDataset() {
+            if (!confirm('确定要重新分割数据集吗？\n这将打乱并重新分配所有图片和标签，且不可撤销！')) return;
+            
+            const trainPct = parseInt(document.getElementById('trainSplitLabel').textContent);
+            const valPct = parseInt(document.getElementById('valSplitLabel').textContent);
+            const testPct = parseInt(document.getElementById('testSplitLabel').textContent);
+            
+            try {
+                const res = await fetch('/api/dataset/split', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_path: currentProject.path,
+                        dataset_name: splitTargetDataset,
+                        val_ratio: valPct / 100,
+                        test_ratio: testPct / 100
+                    })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    alert(`分割成功！\n训练集: ${data.counts.train}\n验证集: ${data.counts.val}\n测试集: ${data.counts.test}`);
+                    closeSplitDatasetModal();
+                    loadProjectDetails();
+                } else {
+                    alert('分割失败: ' + (data.error || '未知错误'));
+                }
+            } catch(e) {
+                console.error('分割请求失败', e);
+                alert('请求失败');
+            }
         }
     </script>
 </body>

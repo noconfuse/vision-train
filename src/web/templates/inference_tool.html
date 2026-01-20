@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>推理与标注工具</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji"; margin: 0; background: #f7fafc; color: #1a202c; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+        h1 { font-size: 20px; margin: 0 0 10px; }
+        .btn { display: inline-flex; align-items: center; justify-content: center; background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: background .2s; }
+        .btn:hover { background: #1d4ed8; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+        .btn.secondary { background: #64748b; }
+        .btn.secondary:hover { background: #475569; }
+        .btn.success { background: #16a34a; }
+        .btn.success:hover { background: #15803d; }
+        label { font-size: 14px; color: #374151; display: block; margin-bottom: 8px; font-weight: 500; }
+        select, input[type="file"], input[type="number"], input[type="text"] { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; }
+        .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 16px; }
+        .thumb { position: relative; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #f8fafc; aspect-ratio: 1; }
+        .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .thumb .name { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); color: #fff; padding: 4px 8px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; }
+        .result { border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .canvas-wrap { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; background: #f1f5f9; }
+        .canvas-wrap img { display: block; width: 100%; user-select: none; }
+        .canvas-wrap canvas { position: absolute; left: 0; top: 0; }
+        .tools { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9; }
+        .info { font-size: 13px; color: #64748b; line-height: 1.5; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .title { font-size: 18px; font-weight: 700; color: #0f172a; }
+        .status { font-size: 13px; color: #64748b; }
+        .pill { background: #eef2ff; color: #3730a3; font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 500; }
+        .stepper { display: flex; gap: 4px; background: #fff; padding: 4px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 24px; }
+        .step { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; color: #64748b; font-size: 13px; font-weight: 500; transition: all .2s; }
+        .step.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+        .step.done { color: #16a34a; }
+        .step span:first-child { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; background: #f1f5f9; border-radius: 50%; font-size: 11px; }
+        .step.active span:first-child { background: #2563eb; color: #fff; }
+        .step.done span:first-child { background: #dcfce7; color: #166534; }
+        .step-section { display: none; animation: fadeIn .3s; }
+        .step-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        .action-bar { margin-top: 24px; padding-top: 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+        .edit-input { position: absolute; z-index: 20; padding: 4px 8px; border: 1px solid #2563eb; border-radius: 4px; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); outline: none; transform: translate(0, -50%); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <div class="title">🛠️ 推理与标注工具</div>
+                <div class="status">独立页面 · 分布式引导流程</div>
+            </div>
+            <a href="/" class="btn secondary" style="padding: 6px 12px; font-size: 13px;">返回首页</a>
+        </div>
+
+        <div class="stepper" id="stepper">
+            <div class="step" data-step="1"><span>1</span><span>选择模型</span></div>
+            <div class="step" data-step="2"><span>2</span><span>上传图片</span></div>
+            <div class="step" data-step="3"><span>3</span><span>设置参数</span></div>
+            <div class="step" data-step="4"><span>4</span><span>开始推理</span></div>
+            <div class="step" data-step="5"><span>5</span><span>校正保存</span></div>
+        </div>
+
+        <!-- Step 1: Model -->
+        <div id="step1" class="card step-section">
+            <div class="title" style="margin-bottom: 20px;">第一步：选择预训练模型</div>
+            <div style="max-width: 600px;">
+                <label>模型列表</label>
+                <select id="modelSelect" style="font-size: 16px; padding: 12px;"></select>
+                <div id="modelDesc" class="info" style="margin-top: 12px; padding: 12px; background: #f8fafc; border-radius: 8px;">请选择模型以查看详细信息</div>
+                <div id="classesArea" class="info" style="margin-top: 8px;"></div>
+            </div>
+            <div class="action-bar">
+                <div></div>
+                <button onclick="nextStep()" class="btn">下一步</button>
+            </div>
+        </div>
+
+        <!-- Step 2: Upload -->
+        <div id="step2" class="card step-section">
+            <div class="title" style="margin-bottom: 20px;">第二步：上传图片</div>
+            <div style="padding: 40px; border: 2px dashed #e2e8f0; border-radius: 12px; text-align: center; background: #f8fafc; cursor: pointer;" onclick="document.getElementById('fileInput').click()">
+                <div style="font-size: 48px; margin-bottom: 16px;">📷</div>
+                <div style="font-weight: 500; margin-bottom: 8px;">点击上传图片</div>
+                <div class="info">支持批量选择 · JPG/PNG</div>
+                <input id="fileInput" type="file" accept="image/*" multiple style="display: none;" onchange="handleFiles(this.files)"/>
+            </div>
+            <div class="header" style="margin-top: 24px;">
+                <div class="title" style="font-size: 16px;">已上传图片</div>
+                <span class="pill" id="countPill">0 张</span>
+            </div>
+            <div class="thumbs" id="thumbs"></div>
+            <div class="action-bar">
+                <button onclick="prevStep()" class="btn secondary">上一步</button>
+                <button onclick="nextStep()" class="btn" id="step2NextBtn" disabled>下一步</button>
+            </div>
+        </div>
+
+        <!-- Step 3: Params -->
+        <div id="step3" class="card step-section">
+            <div class="title" style="margin-bottom: 20px;">第三步：设置推理参数</div>
+            <div style="max-width: 600px;">
+                <label>置信度阈值 (Confidence Threshold)</label>
+                <div style="display: flex; gap: 16px; align-items: center;">
+                    <input id="confInput" type="range" min="0" max="1" step="0.05" value="0.25" style="flex: 1;" oninput="document.getElementById('confVal').textContent=this.value"/>
+                    <span id="confVal" style="font-weight: 600; width: 40px;">0.25</span>
+                </div>
+                <div class="info" style="margin-top: 8px;">阈值越高，检测越严格，但可能漏检；阈值越低，检测越灵敏，但可能误检。</div>
+            </div>
+            <div class="action-bar">
+                <button onclick="prevStep()" class="btn secondary">上一步</button>
+                <button onclick="nextStep()" class="btn">下一步</button>
+            </div>
+        </div>
+
+        <!-- Step 4: Inference -->
+        <div id="step4" class="card step-section">
+            <div class="title" style="margin-bottom: 20px;">第四步：执行推理</div>
+            <div style="text-align: center; padding: 60px 0;">
+                <div style="font-size: 64px; margin-bottom: 24px;">🚀</div>
+                <div style="font-size: 18px; font-weight: 500; margin-bottom: 8px;">准备就绪</div>
+                <div class="info" style="margin-bottom: 32px;">将使用选定的模型对上传的图片进行批量推理</div>
+                <button id="inferBtn" class="btn" style="font-size: 16px; padding: 12px 32px;">开始推理</button>
+            </div>
+            <div class="action-bar">
+                <button onclick="prevStep()" class="btn secondary">上一步</button>
+            </div>
+        </div>
+
+        <!-- Step 5: Results -->
+        <div id="step5" class="card step-section" style="max-width: none;">
+            <div class="header">
+                <div>
+                    <div class="title">第五步：校正与保存</div>
+                    <div class="info">双击标签可修改文本 · 拖动框边缘调整大小 · 拖动框体移动</div>
+                </div>
+                <div style="display: flex; gap: 12px;">
+                    <button onclick="state.step=4; updateStepUI();" class="btn secondary">返回推理</button>
+                    <button id="saveBtn" class="btn success">保存结果</button>
+                </div>
+            </div>
+            <div id="resultsGrid" class="grid"></div>
+        </div>
+    </div>
+
+    <script>
+        const state = {
+            sessionId: null,
+            files: [],
+            models: {},
+            classes: [],
+            results: [],
+            edited: {}, // name -> annotations
+            selectedBox: null,
+            step: 1,
+        };
+        
+        let activeContext = null; // { deleteActive: fn, deselect: fn }
+        const allContexts = []; // List of all canvas contexts
+
+        // Global Keydown for Delete
+        document.addEventListener('keydown', (e)=>{
+            if ((e.key === 'Delete' || e.key === 'Backspace') && activeContext) {
+                // Ignore if editing text
+                if (document.activeElement.tagName === 'INPUT') return;
+                activeContext.deleteActive();
+            }
+        });
+
+        async function loadModels(){
+            const res = await fetch('/api/models');
+            const data = await res.json();
+            const sel = document.getElementById('modelSelect');
+            sel.innerHTML = '';
+            if (data.success){
+                state.models = data.models || {};
+                const opt0 = document.createElement('option');
+                opt0.value = '';
+                opt0.textContent = '请选择模型';
+                sel.appendChild(opt0);
+                Object.values(state.models).forEach(m=>{
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = m.name;
+                    sel.appendChild(opt);
+                });
+            } else {
+                sel.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        async function loadClasses(){
+            const sel = document.getElementById('modelSelect');
+            const id = sel.value;
+            const area = document.getElementById('classesArea');
+            const desc = document.getElementById('modelDesc');
+            if (!id){ area.textContent = ''; desc.textContent = '请选择模型以查看类别'; return; }
+            const modelInfo = state.models[id];
+            desc.textContent = modelInfo?.description || '';
+            try{
+                const r = await fetch(`/api/models/${encodeURIComponent(id)}/classes`);
+                const d = await r.json();
+                if (d.success){
+                    state.classes = d.classes || [];
+                    area.textContent = `类别数：${state.classes.length}`;
+                } else {
+                    area.textContent = '类别加载失败';
+                }
+            }catch(e){ area.textContent = '类别加载失败'; }
+        }
+
+        function renderThumbs(){
+            const t = document.getElementById('thumbs');
+            t.innerHTML = '';
+            document.getElementById('countPill').textContent = `${state.files.length} 张`;
+            state.files.forEach(f=>{
+                const div = document.createElement('div');
+                div.className = 'thumb';
+                const img = document.createElement('img');
+                img.src = f.url;
+                const name = document.createElement('div');
+                name.className = 'name';
+                name.textContent = f.name;
+                div.appendChild(img);
+                div.appendChild(name);
+                t.appendChild(div);
+            });
+        }
+
+        async function uploadFiles(files){
+            if (!files || files.length===0) return;
+            
+            // Show loading
+            const area = document.querySelector('#step2 > div:nth-child(2)');
+            const originalContent = area.innerHTML;
+            area.innerHTML = '<div style="padding: 40px; font-size: 18px; color: #2563eb;">⏳ 正在上传...</div>';
+            
+            const fd = new FormData();
+            for (const f of files) fd.append('files', f);
+            if (state.sessionId) fd.append('session_id', state.sessionId);
+            
+            try {
+                const r = await fetch('/api/upload', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.success){
+                    state.sessionId = d.session_id;
+                    state.files = d.files; // Backend now returns full list
+                    renderThumbs();
+                    state.step = Math.max(state.step, 3);
+                    updateStepUI();
+                } else {
+                    alert('上传失败: ' + (d.error||''));
+                }
+            } catch(e) {
+                alert('上传错误: ' + e.message);
+            } finally {
+                // Restore upload area (or keep it if you want, but user might want to upload more)
+                area.innerHTML = originalContent;
+            }
+        }
+
+        function clsNameById(id){
+            const x = state.classes.find(c=>parseInt(c.id)===parseInt(id));
+            return x ? x.name : String(id);
+        }
+
+        function handleFiles(files){
+            uploadFiles(files);
+        }
+
+        function nextStep(){
+            if (state.step < 5) {
+                state.step++;
+                updateStepUI();
+            }
+        }
+
+        function prevStep(){
+            if (state.step > 1) {
+                state.step--;
+                updateStepUI();
+            }
+        }
+
+        function updateStepUI(){
+            // Update stepper bar
+            document.querySelectorAll('.stepper .step').forEach(el=>{
+                const s = parseInt(el.dataset.step);
+                el.classList.remove('active', 'done');
+                if (s === state.step) el.classList.add('active');
+                else if (s < state.step) el.classList.add('done');
+            });
+
+            // Show/Hide sections (Strict single step visibility)
+            document.querySelectorAll('.step-section').forEach(el=>{
+                el.classList.remove('active');
+            });
+            const curr = document.getElementById(`step${state.step}`);
+            if(curr) curr.classList.add('active');
+
+            // Button states
+            const s2next = document.getElementById('step2NextBtn');
+            if(s2next) s2next.disabled = state.files.length === 0;
+        }
+
+        function saveEdited(name, boxes){
+            const item = state.results.find(r=>r.name===name);
+            if (!item) return;
+            // Update local state
+            if (boxes) item.predictions = boxes;
+            // Record for save
+            state.edited[name] = (item.predictions||[]).map(p=>({
+                class_id: p.class_id,
+                class_name: p.class_name || clsNameById(p.class_id), // Use edited name or default
+                bbox_xyxy: p.bbox_xyxy,
+                color: p.color
+            }));
+        }
+
+        function renderResults(){
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '';
+            allContexts.length = 0;
+            const results = state.results || [];
+            results.forEach((it, idx)=>{
+                const card = document.createElement('div');
+                card.className = 'result';
+                const header = document.createElement('div');
+                header.className = 'header';
+                const title = document.createElement('div');
+                title.className = 'title';
+                title.textContent = it.name;
+                header.appendChild(title);
+                card.appendChild(header);
+
+                const wrap = document.createElement('div');
+                wrap.className = 'canvas-wrap';
+                const img = document.createElement('img');
+                img.src = it.image_url;
+                const canvas = document.createElement('canvas');
+                
+                const tools = document.createElement('div');
+                tools.className = 'tools';
+                
+                const addBtn = document.createElement('button');
+                addBtn.className = 'btn';
+                addBtn.textContent = '添加框';
+                addBtn.onclick = () => {
+                   // Add a default box in center
+                   const w = img.naturalWidth;
+                   const h = img.naturalHeight;
+                   const cx = w/2, cy = h/2;
+                   const bw = w * 0.2, bh = h * 0.2;
+                   boxes.push({
+                       class_id: 0,
+                       class_name: state.classes[0]?.name || 'new',
+                       bbox_xyxy: [cx-bw/2, cy-bh/2, cx+bw/2, cy+bh/2],
+                       color: '#2563eb'
+                   });
+                   active = boxes.length - 1;
+                   saveEdited(it.name, boxes);
+                   draw();
+                };
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'btn secondary';
+                delBtn.textContent = '删除选中';
+                delBtn.onclick = () => {
+                    if (active >= 0 && active < boxes.length) {
+                        boxes.splice(active, 1);
+                        active = -1;
+                        saveEdited(it.name, boxes);
+                        draw();
+                    }
+                };
+
+                // Color Picker
+                const colorWrap = document.createElement('div');
+                colorWrap.style.display = 'flex';
+                colorWrap.style.gap = '4px';
+                colorWrap.style.marginLeft = '12px';
+                
+                const colors = [
+                    {n:'Green', c:'#16a34a'},
+                    {n:'Red', c:'#dc2626'},
+                    {n:'Yellow', c:'#facc15'}
+                ];
+                colors.forEach(co => {
+                    const cbtn = document.createElement('div');
+                    cbtn.style.width = '20px';
+                    cbtn.style.height = '20px';
+                    cbtn.style.borderRadius = '50%';
+                    cbtn.style.background = co.c;
+                    cbtn.style.cursor = 'pointer';
+                    cbtn.style.border = '2px solid transparent';
+                    cbtn.title = co.n;
+                    cbtn.onclick = () => {
+                        if (active >= 0 && active < boxes.length) {
+                            boxes[active].color = co.c;
+                            saveEdited(it.name, boxes);
+                            draw();
+                        }
+                    };
+                    colorWrap.appendChild(cbtn);
+                });
+                
+                tools.appendChild(addBtn);
+                tools.appendChild(delBtn);
+                tools.appendChild(colorWrap);
+                
+                card.appendChild(wrap);
+                card.appendChild(tools);
+                wrap.appendChild(img);
+                wrap.appendChild(canvas);
+                grid.appendChild(card); // Append to grid
+
+                // Data logic
+                let boxes = JSON.parse(JSON.stringify(it.predictions||[]));
+                boxes.forEach(b => {
+                    if (!b.class_name) b.class_name = clsNameById(b.class_id);
+                });
+
+                let active = -1;
+                
+                // Context Object for Global Management
+                const ctxObj = {
+                    name: it.name,
+                    deselect: () => {
+                        if (active !== -1) {
+                            active = -1;
+                            draw();
+                        }
+                    },
+                    deleteActive: () => {
+                        if (active >= 0 && active < boxes.length) {
+                            boxes.splice(active, 1);
+                            active = -1;
+                            saveEdited(it.name, boxes);
+                            draw();
+                        }
+                    }
+                };
+                allContexts.push(ctxObj);
+
+                let dragging = false;
+                let dragStart = {x:0,y:0};
+                let dragAction = null; // 'move', 'nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'
+                let originalBox = null;
+                let labelRects = []; 
+
+                function syncCanvasSize(){
+                    canvas.width = img.clientWidth;
+                    canvas.height = img.clientHeight;
+                    draw();
+                }
+                img.onload = syncCanvasSize;
+                // Observer for resize
+                new ResizeObserver(syncCanvasSize).observe(wrap);
+
+                function getBoxCoords(b) {
+                    // Use natural dimensions for drawing to avoid scaling artifacts during interaction, 
+                    // but we need to map mouse events correctly.
+                    // Actually, simpler to just use displayed size for interaction canvas.
+                    // If we want high quality export, that's backend's job (which we fixed).
+                    // Frontend interaction: Map natural coords to canvas size.
+                    const scaleX = canvas.width / img.naturalWidth;
+                    const scaleY = canvas.height / img.naturalHeight;
+                    const [x1,y1,x2,y2] = b.bbox_xyxy || [0,0,0,0];
+                    return {
+                        x1: x1 * scaleX, y1: y1 * scaleY,
+                        x2: x2 * scaleX, y2: y2 * scaleY,
+                        scaleX, scaleY
+                    };
+                }
+
+                function draw(){
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0,0,canvas.width,canvas.height);
+                    
+                    labelRects = [];
+                    boxes.forEach((b,i)=>{
+                        const c = getBoxCoords(b);
+                        const w = c.x2 - c.x1;
+                        const h = c.y2 - c.y1;
+                        const isActive = (i === active);
+                        
+                        // Box Color
+                        let color = '#2563eb';
+                        if (b.color) color = b.color;
+                        else if (isActive) color = '#facc15'; // Active default yellow-ish if no color set
+                        
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = isActive ? 3 : 2;
+                        ctx.strokeRect(c.x1, c.y1, w, h);
+                        
+                        // Active handles (only corners? User said no corners needed for display, 
+                        // but for editing 8-direction needed. User said: "框的四个角的点不需要")
+                        // But we need to show it's active. Border thickness is enough.
+                        
+                        // Label - Top Right Outside (上边框的外，右边框内)
+                        const label = b.class_name || clsNameById(b.class_id);
+                        ctx.font = '12px system-ui';
+                        const tm = ctx.measureText(label);
+                        const padding = 6;
+                        const lw = tm.width + padding*2;
+                        const lh = 20;
+                        
+                        // "上边框的外" -> y = c.y1 - lh
+                        // "右边框内" -> x = c.x2 - lw
+                        const lx = c.x2 - lw;
+                        const ly = c.y1 - lh;
+                        
+                        // Draw label bg
+                        ctx.fillStyle = color;
+                        ctx.fillRect(lx, ly, lw, lh);
+                        
+                        // Draw text
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(label, lx + padding, ly + 14);
+                        
+                        labelRects.push({i, x: lx, y: ly, w: lw, h: lh});
+                    });
+                }
+
+
+                function getCursorAction(x, y) {
+                    const margin = 8;
+                    // Check active box handles first
+                    if (active >= 0 && active < boxes.length) {
+                        const c = getBoxCoords(boxes[active]);
+                        // Expand touch area for handles
+                        const nearX1 = Math.abs(x - c.x1) < margin;
+                        const nearX2 = Math.abs(x - c.x2) < margin;
+                        const nearY1 = Math.abs(y - c.y1) < margin;
+                        const nearY2 = Math.abs(y - c.y2) < margin;
+                        
+                        const insideX = x > c.x1 + margin && x < c.x2 - margin;
+                        const insideY = y > c.y1 + margin && y < c.y2 - margin;
+
+                        if (nearX1 && nearY1) return 'nw-resize';
+                        if (nearX2 && nearY1) return 'ne-resize';
+                        if (nearX2 && nearY2) return 'se-resize';
+                        if (nearX1 && nearY2) return 'sw-resize';
+                        
+                        if (nearY1 && insideX) return 'n-resize';
+                        if (nearY2 && insideX) return 's-resize';
+                        if (nearX1 && insideY) return 'w-resize';
+                        if (nearX2 && insideY) return 'e-resize';
+                    }
+                    
+                    // Check move
+                    for (let i = boxes.length - 1; i >= 0; i--) {
+                        const c = getBoxCoords(boxes[i]);
+                        if (x >= c.x1 && x <= c.x2 && y >= c.y1 && y <= c.y2) {
+                            return 'move';
+                        }
+                    }
+                    return 'default';
+                }
+
+                canvas.addEventListener('mousemove', (e)=>{
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    if (dragging && active >= 0) {
+                        const c = getBoxCoords(boxes[active]);
+                        const scaleX = img.naturalWidth / canvas.width;
+                        const scaleY = img.naturalHeight / canvas.height;
+                        
+                        const dx = (x - dragStart.x) * scaleX;
+                        const dy = (y - dragStart.y) * scaleY;
+                        
+                        let [bx1, by1, bx2, by2] = originalBox.bbox_xyxy;
+
+                        if (dragAction === 'move') {
+                            const w = bx2 - bx1;
+                            const h = by2 - by1;
+                            bx1 += dx; by1 += dy;
+                            bx2 = bx1 + w; by2 = by1 + h;
+                        } else {
+                            if (dragAction.includes('w')) bx1 += dx;
+                            if (dragAction.includes('e')) bx2 += dx;
+                            if (dragAction.includes('n')) by1 += dy;
+                            if (dragAction.includes('s')) by2 += dy;
+                        }
+                        
+                        // Normalize
+                        const nx1 = Math.min(bx1, bx2);
+                        const nx2 = Math.max(bx1, bx2);
+                        const ny1 = Math.min(by1, by2);
+                        const ny2 = Math.max(by1, by2);
+                        
+                        boxes[active].bbox_xyxy = [nx1, ny1, nx2, ny2];
+                        saveEdited(it.name, boxes);
+                        draw();
+                    } else {
+                        const action = getCursorAction(x, y);
+                        canvas.style.cursor = action;
+                    }
+                });
+
+                canvas.addEventListener('mousedown', (e)=>{
+                    // Set Global Active Context
+                    activeContext = ctxObj;
+                    allContexts.forEach(c => { if(c !== ctxObj) c.deselect(); });
+
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    dragAction = getCursorAction(x, y);
+                    
+                    if (dragAction !== 'default') {
+                        if (dragAction === 'move') {
+                            // Find which box
+                            for (let i = boxes.length - 1; i >= 0; i--) {
+                                const c = getBoxCoords(boxes[i]);
+                                if (x >= c.x1 && x <= c.x2 && y >= c.y1 && y <= c.y2) {
+                                    active = i;
+                                    break;
+                                }
+                            }
+                        }
+                        // If resizing, active is already set or should be checked? 
+                        // Actually getCursorAction relies on 'active' for resize handles.
+                        // So if we click a handle, active is already correct.
+                        
+                        if (active >= 0) {
+                            dragging = true;
+                            dragStart = {x, y};
+                            originalBox = JSON.parse(JSON.stringify(boxes[active]));
+                            draw();
+                        }
+                    } else {
+                        // Clicked empty space
+                        active = -1;
+                        draw();
+                    }
+                });
+
+                canvas.addEventListener('mouseup', ()=>{
+                    dragging = false;
+                    dragAction = null;
+                    originalBox = null;
+                });
+                
+                canvas.addEventListener('mouseleave', ()=>{
+                    dragging = false;
+                });
+
+                canvas.addEventListener('dblclick', (e)=>{
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    const labelHit = labelRects.find(l => x >= l.x && x <= l.x + l.w && y >= l.y && y <= l.y + l.h);
+                    if (labelHit) {
+                        const box = boxes[labelHit.i];
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.className = 'edit-input';
+                        input.value = box.class_name || '';
+                        input.style.left = (rect.left + labelHit.x) + 'px';
+                        input.style.top = (rect.top + labelHit.y + labelHit.h/2) + 'px'; // Center vertically
+                        input.style.width = Math.max(100, labelHit.w + 20) + 'px';
+                        
+                        document.body.appendChild(input);
+                        input.focus();
+                        
+                        function commit(){
+                            if (input.value.trim()) {
+                                box.class_name = input.value.trim();
+                                // Try to match existing class ID if possible
+                                const matched = state.classes.find(c => c.name === box.class_name);
+                                if (matched) box.class_id = parseInt(matched.id);
+                                saveEdited(it.name, boxes);
+                                draw();
+                            }
+                            input.remove();
+                        }
+                        
+                        input.onblur = commit;
+                        input.onkeydown = (ev) => { if(ev.key==='Enter') commit(); };
+                    }
+                });
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', ()=>{
+            loadModels();
+            document.getElementById('modelSelect').addEventListener('change', ()=>{
+                loadClasses();
+                const sel = document.getElementById('modelSelect');
+                if (sel.value){ state.step = Math.max(state.step, 2); updateStepUI(); }
+            });
+            
+            document.getElementById('inferBtn').addEventListener('click', async ()=>{
+                const modelId = document.getElementById('modelSelect').value;
+                const conf = document.getElementById('confInput').value;
+                if (!modelId){ alert('请选择模型'); return; }
+                if (!state.sessionId){ alert('请先上传图片'); return; }
+                
+                const btn = document.getElementById('inferBtn');
+                btn.disabled = true;
+                btn.textContent = '推理中...';
+                
+                try {
+                    const r = await fetch('/api/infer', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            session_id: state.sessionId,
+                            model_id: modelId,
+                            conf: conf
+                        })
+                    });
+                    const d = await r.json();
+                    if (d.success){
+                        state.results = d.results;
+                        state.step = 5;
+                        updateStepUI();
+                        renderResults();
+                    } else {
+                        alert('推理失败: ' + d.error);
+                    }
+                } catch(e){
+                    alert('请求错误: ' + e.message);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '开始推理';
+                }
+            });
+
+            document.getElementById('saveBtn').addEventListener('click', async ()=>{
+                // Collect ALL results for saving
+                const editList = state.results.map(r => ({
+                    name: r.name,
+                    annotations: (r.predictions||[]).map(p=>({
+                        class_id: p.class_id,
+                        class_name: p.class_name || clsNameById(p.class_id),
+                        bbox_xyxy: p.bbox_xyxy,
+                        color: p.color
+                    }))
+                }));
+
+                const btn = document.getElementById('saveBtn');
+                btn.disabled = true;
+                btn.textContent = '保存中...';
+                try {
+                    const r = await fetch('/api/save', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            session_id: state.sessionId,
+                            edits: editList
+                        })
+                    });
+                    const d = await r.json();
+                    if (d.success) {
+                        // Direct download logic
+                        if (d.download_url) {
+                            const link = document.createElement('a');
+                            link.href = d.download_url;
+                            link.download = `results_${state.sessionId}.zip`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            alert(`保存成功！结果已打包下载。`);
+                        } else {
+                            alert(`保存成功！共保存 ${d.saved.length} 张图片和标注。`);
+                        }
+                    } else {
+                        alert('保存失败: ' + d.error);
+                    }
+                } catch (e) {
+                    alert('保存错误: ' + e.message);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '保存结果';
+                }
+            });
+
+            updateStepUI();
+        });
+    </script>
+</body>
+</html>
