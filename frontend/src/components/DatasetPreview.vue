@@ -30,8 +30,15 @@
       </div>
 
       <div v-if="datasetInfo" class="mt-4">
-        <div class="text-sm text-gray-700 mb-2">
-          分类统计（总目标数：<span class="font-mono">{{ datasetInfo.total_objects || 0 }}</span>）
+        <div class="text-sm text-gray-700 mb-2 flex items-center gap-2">
+          <span>分类统计（总目标数：<span class="font-mono">{{ datasetInfo.total_objects || 0 }}</span>）</span>
+          <button
+            class="px-2 py-1 rounded-lg text-xs border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            :disabled="reorderingLabels || !canReorderLabels"
+            @click="openReorderLabels"
+          >
+            {{ reorderingLabels ? '处理中...' : '调整标签顺序' }}
+          </button>
         </div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -241,6 +248,48 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showReorderLabelsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeReorderLabels">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+        <h3 class="text-lg font-bold mb-4">调整标签顺序</h3>
+        <div class="mb-3 text-sm text-gray-600">该操作会批量重写当前数据集的标注文件（train/val/test 及 auto_labels）。</div>
+
+        <div class="max-h-[420px] overflow-auto border border-gray-200 rounded-lg">
+          <div
+            v-for="(it, idx) in reorderItems"
+            :key="it.oldIndex"
+            class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0"
+          >
+            <div class="w-10 text-right font-mono text-sm text-gray-500">{{ idx }}</div>
+            <div class="flex-1 text-sm text-gray-800 truncate">{{ it.name }}</div>
+            <div class="flex gap-1">
+              <button
+                class="px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 text-xs"
+                :disabled="idx === 0 || reorderingLabels"
+                @click="moveReorderItem(idx, -1)"
+              >
+                上移
+              </button>
+              <button
+                class="px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 text-xs"
+                :disabled="idx === reorderItems.length - 1 || reorderingLabels"
+                @click="moveReorderItem(idx, 1)"
+              >
+                下移
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-4">
+          <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="reorderingLabels" @click="closeReorderLabels">取消</button>
+          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-50" :disabled="reorderingLabels || reorderItems.length === 0" @click="applyReorderLabels">
+            {{ reorderingLabels ? '处理中...' : '应用' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -268,6 +317,9 @@ const showCreateSubsetModal = ref(false);
 const subsetName = ref('');
 const creatingSubset = ref(false);
 const deleting = ref(false);
+const showReorderLabelsModal = ref(false);
+const reorderItems = ref([]);
+const reorderingLabels = ref(false);
 const pageInput = ref(1);
 
 const filters = reactive({
@@ -283,6 +335,12 @@ const openAnnotator = (img) => {
 };
 
 const selectedCount = computed(() => Object.keys(selectedMap.value).length);
+const canReorderLabels = computed(() => {
+  const v = classList.value;
+  if (Array.isArray(v)) return v.length > 0;
+  if (v && typeof v === 'object') return Object.keys(v).length > 0;
+  return false;
+});
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (filters.limit || 1))));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor((filters.offset || 0) / (filters.limit || 1)) + 1));
 
@@ -464,6 +522,68 @@ const openCreateSubset = () => {
 const closeCreateSubset = () => {
   showCreateSubsetModal.value = false;
   subsetName.value = '';
+};
+
+const openReorderLabels = () => {
+  const v = classList.value;
+  let names = [];
+  if (Array.isArray(v)) {
+    names = v;
+  } else if (v && typeof v === 'object') {
+    names = Object.keys(v)
+      .map(k => ({ k: Number(k), name: v[k] }))
+      .sort((a, b) => a.k - b.k)
+      .map(x => x.name);
+  }
+  reorderItems.value = (names || []).map((name, idx) => ({ oldIndex: idx, name }));
+  showReorderLabelsModal.value = true;
+};
+
+const closeReorderLabels = () => {
+  showReorderLabelsModal.value = false;
+  reorderItems.value = [];
+};
+
+const moveReorderItem = (idx, dir) => {
+  const nextIdx = idx + dir;
+  if (nextIdx < 0 || nextIdx >= reorderItems.value.length) return;
+  const arr = [...reorderItems.value];
+  const tmp = arr[idx];
+  arr[idx] = arr[nextIdx];
+  arr[nextIdx] = tmp;
+  reorderItems.value = arr;
+};
+
+const applyReorderLabels = async () => {
+  const order = reorderItems.value.map(it => it.oldIndex);
+  if (order.length === 0) return;
+  if (!confirm('确定要应用当前标签顺序吗？这会批量修改标注文件。')) return;
+  reorderingLabels.value = true;
+  try {
+    const res = await api.reorderDatasetLabels({
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      order
+    });
+    if (res.data.success) {
+      const map = {};
+      order.forEach((oldIdx, newIdx) => { map[oldIdx] = newIdx; });
+      selectedClassIds.value = (selectedClassIds.value || [])
+        .map(oldIdx => map[oldIdx])
+        .filter(v => v !== undefined && v !== null);
+      closeReorderLabels();
+      await fetchDatasetInfo();
+      applyFilters();
+      alert(`已更新：文件 ${res.data.updated_files || 0} 个，行 ${res.data.updated_lines || 0} 行`);
+    } else {
+      alert(res.data.error || '处理失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    reorderingLabels.value = false;
+  }
 };
 
 const createSubset = async () => {

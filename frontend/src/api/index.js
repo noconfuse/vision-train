@@ -31,8 +31,14 @@ export default {
   getDatasetImages(params) {
     return api.get('/dataset/images', { params });
   },
+  downloadDatasetZip(params) {
+    return api.get('/dataset/download', { params, responseType: 'blob' });
+  },
   batchDeleteDatasetImages(data) {
     return api.post('/dataset/batch_delete', data);
+  },
+  reorderDatasetLabels(data) {
+    return api.post('/dataset/reorder_labels', data);
   },
   autoAnnotate(data) {
     return api.post('/auto_annotate/batch', data);

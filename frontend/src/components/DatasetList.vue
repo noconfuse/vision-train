@@ -45,6 +45,9 @@
             <button @click="openTags(ds)" class="px-3 py-1.5 text-xs font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
               🏷️ 标签
             </button>
+            <button @click="downloadDataset(ds)" class="px-3 py-1.5 text-xs font-medium bg-sky-50 text-sky-700 hover:bg-sky-100 rounded-lg transition-colors disabled:opacity-50" :disabled="!!downloadingMap[ds.path]">
+              {{ downloadingMap[ds.path] ? '⏳ 打包中...' : '⬇️ 下载' }}
+            </button>
             <button @click="confirmDelete(ds)" class="px-3 py-1.5 text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg transition-colors">
               🗑️ 删除
             </button>
@@ -95,6 +98,9 @@
             </button>
             <button @click="openTags(ds)" class="px-3 py-1.5 text-xs font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
               🏷️ 标签
+            </button>
+            <button @click="downloadDataset(ds)" class="px-3 py-1.5 text-xs font-medium bg-sky-50 text-sky-700 hover:bg-sky-100 rounded-lg transition-colors disabled:opacity-50" :disabled="!!downloadingMap[ds.path]">
+              {{ downloadingMap[ds.path] ? '⏳ 打包中...' : '⬇️ 下载' }}
             </button>
             <button @click="confirmDelete(ds)" class="px-3 py-1.5 text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg transition-colors">
               🗑️ 删除
@@ -247,6 +253,8 @@ const tagsSaving = ref(false);
 const deleteDataset = ref(null);
 const deleteLoading = ref(false);
 
+const downloadingMap = ref({});
+
 const refreshProjectsKeepSelection = async () => {
   const cur = store.currentProject;
   const selectedPath = store.selectedDataset?.path;
@@ -263,6 +271,56 @@ const refreshProjectsKeepSelection = async () => {
     } else {
       store.selectedDataset = null;
     }
+  }
+};
+
+const parseDownloadFilename = (contentDisposition, fallback) => {
+  if (!contentDisposition || typeof contentDisposition !== 'string') return fallback;
+  const parts = contentDisposition.split(';').map(s => s.trim());
+  const star = parts.find(p => p.toLowerCase().startsWith('filename*='));
+  if (star) {
+    const v = star.split('=', 2)[1] || '';
+    const s = v.replace(/^utf-8''/i, '').trim();
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s || fallback;
+    }
+  }
+  const normal = parts.find(p => p.toLowerCase().startsWith('filename='));
+  if (normal) {
+    const v = normal.split('=', 2)[1] || '';
+    return v.trim().replace(/^\"|\"$/g, '') || fallback;
+  }
+  return fallback;
+};
+
+const downloadDataset = async (ds) => {
+  if (!ds) return;
+  downloadingMap.value = { ...downloadingMap.value, [ds.path]: true };
+  try {
+    const res = await api.downloadDatasetZip({
+      project_path: store.currentProject.path,
+      dataset_name: ds.name
+    });
+    const disp = res?.headers?.['content-disposition'];
+    const filename = parseDownloadFilename(disp, `${ds.name}.zip`);
+    const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+    alert('下载失败');
+  } finally {
+    const next = { ...downloadingMap.value };
+    delete next[ds.path];
+    downloadingMap.value = next;
   }
 };
 

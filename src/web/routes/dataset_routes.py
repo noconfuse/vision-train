@@ -1,9 +1,11 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file, after_this_request
 import os
 import sys
 import json
 import yaml
 import shutil
+import zipfile
+import tempfile
 
 # Ensure parent directory is in sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,6 +45,60 @@ def api_dataset_info():
         info['name'] = dataset_name
         info['path'] = p
         return jsonify({'success': True, 'info': info})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/dataset/download')
+def api_dataset_download():
+    try:
+        project_path = request.args.get('project_path')
+        dataset_name = request.args.get('dataset_name')
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        project_real = os.path.realpath(project_path)
+        ds_candidates = [
+            os.path.join(project_path, 'training', dataset_name),
+            os.path.join(project_path, 'datasets', dataset_name),
+        ]
+        ds_root = None
+        for p in ds_candidates:
+            if p and os.path.isdir(p):
+                ds_root = p
+                break
+        if not ds_root:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        ds_root_real = os.path.realpath(ds_root)
+        if not (ds_root_real == project_real or ds_root_real.startswith(project_real + os.sep)):
+            return jsonify({'success': False, 'error': '非法路径'})
+
+        fd, tmp_zip = tempfile.mkstemp(prefix=f'{dataset_name}_', suffix='.zip')
+        os.close(fd)
+
+        @after_this_request
+        def cleanup(response):
+            try:
+                if os.path.exists(tmp_zip):
+                    os.remove(tmp_zip)
+            except Exception:
+                pass
+            return response
+
+        base_prefix = dataset_name.strip().replace(os.sep, '_') or 'dataset'
+        with zipfile.ZipFile(tmp_zip, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(ds_root_real):
+                dirs[:] = [d for d in dirs if d not in ('__pycache__', '.git')]
+                for fn in files:
+                    fp = os.path.join(root, fn)
+                    rel = os.path.relpath(fp, ds_root_real)
+                    arcname = os.path.join(base_prefix, rel)
+                    zf.write(fp, arcname)
+
+        try:
+            return send_file(tmp_zip, mimetype='application/zip', as_attachment=True, download_name=f'{base_prefix}.zip')
+        except TypeError:
+            return send_file(tmp_zip, mimetype='application/zip', as_attachment=True, attachment_filename=f'{base_prefix}.zip')
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -303,6 +359,167 @@ def api_dataset_batch_delete():
                 results.append({'path': image_path, 'success': False, 'error': str(e), 'deleted': deleted})
 
         return jsonify({'success': True, 'deleted_count': deleted_count, 'results': results})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/dataset/reorder_labels', methods=['POST'])
+def api_dataset_reorder_labels():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        dataset_name = data.get('dataset_name')
+        order = data.get('order')
+        splits = data.get('splits')
+
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+        if not isinstance(order, list) or len(order) == 0:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        ds_candidates = [
+            os.path.join(project_path, 'training', dataset_name),
+            os.path.join(project_path, 'datasets', dataset_name),
+        ]
+        ds_root = None
+        for p in ds_candidates:
+            if p and os.path.isdir(p):
+                ds_root = p
+                break
+        if not ds_root:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        yaml_path = os.path.join(ds_root, 'data.yaml')
+        if not os.path.exists(yaml_path):
+            return jsonify({'success': False, 'error': '未找到 data.yaml'})
+
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            y = yaml.safe_load(f) or {}
+
+        original_names = y.get('names')
+        if isinstance(original_names, dict):
+            pairs = []
+            for k, v in original_names.items():
+                try:
+                    kk = int(k)
+                except Exception:
+                    continue
+                pairs.append((kk, v))
+            if pairs:
+                old_names = [v for _, v in sorted(pairs, key=lambda x: x[0])]
+            else:
+                old_names = list(original_names.values())
+        elif isinstance(original_names, list):
+            old_names = list(original_names)
+        else:
+            return jsonify({'success': False, 'error': 'data.yaml 缺少 names'})
+
+        n = len(old_names)
+        try:
+            order_ints = [int(x) for x in order]
+        except Exception:
+            return jsonify({'success': False, 'error': 'order 参数无效'})
+
+        if len(order_ints) != n:
+            return jsonify({'success': False, 'error': 'order 长度必须等于类别数'})
+        if len(set(order_ints)) != n:
+            return jsonify({'success': False, 'error': 'order 不能包含重复项'})
+        if any((i < 0 or i >= n) for i in order_ints):
+            return jsonify({'success': False, 'error': 'order 存在越界索引'})
+
+        new_names = [old_names[i] for i in order_ints]
+        id_map = {old_idx: new_idx for new_idx, old_idx in enumerate(order_ints)}
+
+        if isinstance(original_names, dict):
+            y['names'] = {i: name for i, name in enumerate(new_names)}
+        else:
+            y['names'] = new_names
+        y['nc'] = len(new_names)
+
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
+
+        if splits is None:
+            split_list = ['train', 'val', 'test']
+        elif isinstance(splits, list):
+            split_list = [str(s).strip() for s in splits if str(s).strip()]
+        else:
+            return jsonify({'success': False, 'error': 'splits 参数无效'})
+
+        updated_files = 0
+        updated_lines = 0
+        skipped_files = 0
+
+        def rewrite_label_file(fp):
+            nonlocal updated_lines
+            changed = False
+            try:
+                with open(fp, 'r', encoding='utf-8') as rf:
+                    lines = rf.readlines()
+            except Exception:
+                return False
+
+            out = []
+            for line in lines:
+                s = line.strip()
+                if not s:
+                    out.append(line)
+                    continue
+                parts = s.split()
+                if not parts:
+                    out.append(line)
+                    continue
+                try:
+                    cid = int(float(parts[0]))
+                except Exception:
+                    out.append(line)
+                    continue
+
+                if cid in id_map:
+                    new_cid = id_map[cid]
+                    if new_cid != cid:
+                        parts[0] = str(new_cid)
+                        changed = True
+                        updated_lines += 1
+                    out.append(' '.join(parts) + '\n')
+                else:
+                    out.append(line if line.endswith('\n') else (line + '\n'))
+
+            if not changed:
+                return False
+
+            try:
+                with open(fp, 'w', encoding='utf-8') as wf:
+                    wf.writelines(out)
+                return True
+            except Exception:
+                return False
+
+        for split in split_list:
+            lbl_dir = os.path.join(ds_root, split, 'labels')
+            auto_dir = os.path.join(ds_root, 'auto_labels', split)
+            for base in (lbl_dir, auto_dir):
+                if not os.path.isdir(base):
+                    continue
+                for root, _, files in os.walk(base):
+                    for fn in files:
+                        if not fn.lower().endswith('.txt'):
+                            continue
+                        fp = os.path.join(root, fn)
+                        ok = rewrite_label_file(fp)
+                        if ok:
+                            updated_files += 1
+                        else:
+                            skipped_files += 1
+
+        return jsonify({
+            'success': True,
+            'dataset_root': ds_root,
+            'yaml_path': yaml_path,
+            'updated_files': updated_files,
+            'updated_lines': updated_lines,
+            'skipped_files': skipped_files,
+            'order': order_ints,
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
