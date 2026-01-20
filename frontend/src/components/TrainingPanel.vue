@@ -24,13 +24,23 @@
     </div>
 
     <!-- Hyperparameters -->
-    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
-      <div v-for="field in configFields" :key="field.key">
-        <label class="block text-xs font-medium mb-1 opacity-80">{{ field.label }}</label>
-        <input type="number" 
-               v-model="config[field.key]" 
-               class="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none focus:border-white focus:bg-white/20 transition-colors placeholder-white/30"
-               :placeholder="field.placeholder">
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6">
+      <div v-for="field in configFields" :key="field.key" :class="field.type === 'checkbox' ? 'flex items-end' : ''">
+        <template v-if="field.type === 'checkbox'">
+          <label class="flex items-center space-x-2 cursor-pointer bg-white/10 border border-white/20 rounded px-2 py-1.5 hover:bg-white/20 transition-colors w-full h-[30px] mt-auto">
+            <input type="checkbox" 
+                   v-model="config[field.key]" 
+                   class="form-checkbox text-indigo-500 rounded focus:ring-0 bg-transparent border-white/40 w-4 h-4">
+            <span class="text-xs font-medium opacity-90 select-none">{{ field.label }}</span>
+          </label>
+        </template>
+        <template v-else>
+          <label class="block text-xs font-medium mb-1 opacity-80">{{ field.label }}</label>
+          <input type="number" 
+                 v-model="config[field.key]" 
+                 class="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none focus:border-white focus:bg-white/20 transition-colors placeholder-white/30"
+                 :placeholder="field.placeholder">
+        </template>
       </div>
     </div>
 
@@ -77,7 +87,10 @@ const config = reactive({
   freeze: '',
   lr0: '',
   mosaic: '',
-  mixup: ''
+  mixup: '',
+  scale: '',
+  close_mosaic: '',
+  rect: false
 });
 
 const configFields = [
@@ -88,6 +101,9 @@ const configFields = [
   { key: 'lr0', label: '初始学习率', placeholder: '0.01' },
   { key: 'mosaic', label: 'Mosaic增强', placeholder: '1.0' },
   { key: 'mixup', label: 'Mixup增强', placeholder: '0.0' },
+  { key: 'scale', label: '缩放(Scale)', placeholder: '0.5' },
+  { key: 'close_mosaic', label: '关闭Mosaic', placeholder: '10' },
+  { key: 'rect', label: '矩形训练', type: 'checkbox' },
 ];
 
 const isValid = computed(() => {
@@ -109,7 +125,10 @@ const startTraining = async () => {
       freeze: config.freeze, // might be string or int
       lr0: parseFloat(config.lr0) || null,
       mosaic: parseFloat(config.mosaic) || null,
-      mixup: parseFloat(config.mixup) || null
+      mixup: parseFloat(config.mixup) || null,
+      scale: parseFloat(config.scale) || null,
+      close_mosaic: parseInt(config.close_mosaic) || null,
+      rect: config.rect || false
     }
   };
   

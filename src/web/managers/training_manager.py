@@ -146,9 +146,28 @@ class TrainingManager:
                     'name': os.path.basename(save_dir),
                     'exist_ok': True,
                     'patience': 50,
-                    'save': True
+                    'save': True,
+                    'rect': training_config.get('rect', False),
+                    'scale': float(training_config.get('scale', 0.5)),
+                    'mosaic': float(training_config.get('mosaic', 1.0)),
+                    'mixup': float(training_config.get('mixup', 0.0)),
+                    'close_mosaic': int(training_config.get('close_mosaic', 10)),
                 }
+
+                # Optional parameters
+                if training_config.get('lr0'):
+                    args['lr0'] = float(training_config.get('lr0'))
                 
+                if training_config.get('freeze'):
+                    val = training_config.get('freeze')
+                    if isinstance(val, str) and val.lower() == 'backbone':
+                        args['freeze'] = 10
+                    else:
+                        try:
+                            args['freeze'] = int(val)
+                        except ValueError:
+                            pass
+
                 model.train(**args)
                 
                 training_status['message'] = '训练完成'
