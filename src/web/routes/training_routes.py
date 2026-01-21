@@ -36,7 +36,10 @@ def api_stop_training():
 
 @bp.route('/api/training/status')
 def api_training_status():
-    return jsonify({'success': True, 'status': dict(training_status), 'log': list(training_status['log'])})
+    # Convert deque to list for JSON serialization
+    status = dict(training_status)
+    status['log'] = list(status['log'])
+    return jsonify({'success': True, 'status': status, 'log': status['log']})
 
 @bp.route('/api/training/history')
 def api_training_history():

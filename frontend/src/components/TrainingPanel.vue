@@ -44,6 +44,15 @@
       </div>
     </div>
 
+    <!-- Error Message -->
+    <div v-if="store.trainingStatus.error" class="mb-6 bg-red-500/20 border border-red-500/50 rounded-lg p-3 text-sm text-red-100">
+      <div class="font-bold mb-1">Training Error</div>
+      <div>{{ store.trainingStatus.error }}</div>
+      <div v-if="store.trainingStatus.log && store.trainingStatus.log.length > 0" class="mt-2 text-xs opacity-80 font-mono max-h-32 overflow-y-auto bg-black/20 p-2 rounded">
+        {{ store.trainingStatus.log[store.trainingStatus.log.length - 1] }}
+      </div>
+    </div>
+
     <!-- Progress -->
     <div v-if="store.trainingStatus.is_running || store.trainingStatus.progress > 0" class="mb-6">
       <div class="flex justify-between text-sm mb-2">

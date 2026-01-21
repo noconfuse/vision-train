@@ -86,19 +86,20 @@ class TrainingManager:
                     json.dump(config_save, f, indent=2)
 
                 # 准备 data.yaml
-                if not dataset_path:
+                final_dataset_path = dataset_path
+                if not final_dataset_path:
                     # 默认路径
-                    dataset_path = os.path.join(project_path, "training", dataset_name)
+                    final_dataset_path = os.path.join(project_path, "training", dataset_name)
                     
-                data_yaml = os.path.join(dataset_path, "data.yaml")
+                data_yaml = os.path.join(final_dataset_path, "data.yaml")
                 if not os.path.exists(data_yaml):
                     # Check for dataset.yaml
-                    dataset_yaml_candidate = os.path.join(dataset_path, "dataset.yaml")
+                    dataset_yaml_candidate = os.path.join(final_dataset_path, "dataset.yaml")
                     if os.path.exists(dataset_yaml_candidate):
                         data_yaml = dataset_yaml_candidate
                     else:
                         # 尝试自动生成
-                        TrainingManager.generate_data_yaml(dataset_path, save_dir)
+                        TrainingManager.generate_data_yaml(final_dataset_path, save_dir)
                         data_yaml = os.path.join(save_dir, "data.yaml")
                     
                 # 记录使用的 dataset.yaml
@@ -132,6 +133,7 @@ class TrainingManager:
                     # 记录日志
                     msg = f"Epoch {trainer.epoch+1}/{trainer.epochs} box_loss:{training_status['box_loss']:.4f} mAP50:{training_status['map50']:.4f}"
                     training_status['log'].append(msg)
+                    training_status['message'] = msg  # Update status message for frontend display
 
                 model.add_callback("on_train_epoch_end", on_train_epoch_end)
                 

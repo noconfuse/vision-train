@@ -59,9 +59,11 @@ export const useMainStore = defineStore('main', {
       if (!this.trainingStatus.is_running) return;
       try {
         const res = await api.getTrainingStatus();
-        this.trainingStatus = res.data;
-        if (this.trainingStatus.is_running) {
-          setTimeout(() => this.pollTrainingStatus(), 1000);
+        if (res.data.success) {
+          this.trainingStatus = res.data.status;
+          if (this.trainingStatus.is_running) {
+            setTimeout(() => this.pollTrainingStatus(), 1000);
+          }
         }
       } catch (e) {
         console.error(e);

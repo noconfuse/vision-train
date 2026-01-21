@@ -37,10 +37,4 @@ if __name__ == '__main__':
     print("🎯 数据集工具启动中...")
     print("🌐 请在浏览器中打开: http://localhost:5001")
     
-    # 检查 dist 目录是否存在
-    dist_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dist')
-    if not os.path.exists(dist_dir):
-        print(f"⚠️ 警告: 前端静态文件目录 {dist_dir} 不存在。")
-        print("   请确保已运行前端构建 (cd frontend && npm run build) 并将产物复制到 src/web/dist")
-    
     app.run(host='0.0.0.0', port=5001, debug=True)
