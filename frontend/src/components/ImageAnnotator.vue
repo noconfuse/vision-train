@@ -320,7 +320,6 @@ const save = async () => {
       split: props.split,
       image_path: props.image.path,
       labels: boxes.value
-        .filter(b => !b.is_auto)
         .map((b) => ({
           class: b.class,
           x1: b.x1 * w,

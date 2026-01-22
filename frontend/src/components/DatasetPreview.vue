@@ -1,9 +1,18 @@
 <template>
-  <div class="bg-white rounded-xl shadow-sm p-6 mb-6 flex flex-col h-[800px]">
+  <div 
+    class="bg-white shadow-sm flex flex-col transition-all duration-300"
+    :class="isFullScreen ? 'fixed inset-0 z-40 rounded-none h-screen mb-0 p-6' : 'rounded-xl p-6 mb-6 h-[800px]'"
+  >
     <div class="mb-4">
       <div class="flex items-center justify-between gap-4">
         <h2 class="text-xl font-semibold text-slate-800">数据集预览：{{ store.selectedDataset.name }}</h2>
         <div class="flex items-center gap-2">
+          <button
+            class="px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white hover:bg-gray-50"
+            @click="isFullScreen = !isFullScreen"
+          >
+            {{ isFullScreen ? '退出全屏' : '全屏' }}
+          </button>
           <button
             class="px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white hover:bg-gray-50"
             @click="toggleSelectionMode"
@@ -144,7 +153,7 @@
         <p>暂无图片</p>
       </div>
 
-      <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+      <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10 gap-4">
         <div 
           v-for="img in images" 
           :key="img.path" 
@@ -354,6 +363,7 @@ const showReorderLabelsModal = ref(false);
 const reorderItems = ref([]);
 const reorderingLabels = ref(false);
 const pageInput = ref(1);
+const isFullScreen = ref(false);
 
 const autoAnnotating = ref(false);
 const autoAnnotateStatus = ref({ progress: 0, message: '', added: 0, pending: 0 });
