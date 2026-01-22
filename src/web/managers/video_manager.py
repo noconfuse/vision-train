@@ -146,6 +146,24 @@ class VideoManager:
         return task_id
 
     @staticmethod
+    def _should_use_robust_mode(cap, fps, total_frames, strategy, value):
+        try:
+            if fps <= 0 or total_frames <= 0:
+                return True
+
+            probe = [0, min(total_frames - 1, int(max(1.0, fps)))]
+            for frame_idx in probe:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                if (not ret) or frame is None:
+                    return True
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            return False
+        except Exception:
+            return True
+
+    @staticmethod
     def _extraction_worker(project_path, video_name, task_id, strategy, value):
         video_path = os.path.join(project_path, 'videos', video_name)
         task_dir = VideoManager._get_task_dir(project_path, task_id)
@@ -157,42 +175,130 @@ class VideoManager:
                 raise Exception("Failed to open video")
                 
             fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0:
+                fps = 25.0
+            
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
             with VideoManager._lock:
                 if task_id in VideoManager._tasks:
                     VideoManager._tasks[task_id]['total_frames'] = total_frames
                     VideoManager._write_task_meta(project_path, VideoManager._tasks[task_id])
             
-            # Calculate indices
-            frame_indices = []
-            if strategy == 'interval':
-                interval_frames = int(float(value) * fps)
-                if interval_frames < 1: interval_frames = 1
-                frame_indices = range(0, total_frames, interval_frames)
-            elif strategy == 'count':
-                count = int(value)
-                if count > total_frames: count = total_frames
-                if count > 0:
-                    frame_indices = np.linspace(0, total_frames-1, count, dtype=int)
-                    frame_indices = np.unique(frame_indices)
-            
-            total_to_extract = len(frame_indices)
             video_basename = os.path.splitext(video_name)[0]
-            
             extracted_count = 0
-            for idx, frame_idx in enumerate(frame_indices):
-                # Update progress
-                with VideoManager._lock:
-                    if task_id in VideoManager._tasks:
-                        VideoManager._tasks[task_id]['progress'] = int((idx / total_to_extract) * 100)
-                
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ret, frame = cap.read()
-                if ret:
-                    frame_name = f"{video_basename}_f{frame_idx:06d}.jpg"
-                    save_path = os.path.join(images_dir, frame_name)
-                    cv2.imwrite(save_path, frame)
-                    extracted_count += 1
+
+            def robust_extract(cap_obj):
+                nonlocal extracted_count
+                interval_frames = 1
+                if strategy == 'interval':
+                    interval_frames = int(float(value) * fps)
+                elif strategy == 'count':
+                    count = int(value)
+                    if count > 0 and total_frames > 0:
+                        interval_frames = int(total_frames / count)
+                    else:
+                        interval_frames = int(fps)
+
+                if interval_frames < 1:
+                    interval_frames = 1
+
+                frame_idx = 0
+                consecutive_failures = 0
+                while True:
+                    try:
+                        if frame_idx % interval_frames != 0:
+                            ok = cap_obj.grab()
+                            if ok:
+                                consecutive_failures = 0
+                                frame_idx += 1
+                                continue
+
+                            ret, frame = cap_obj.read()
+                            if ret and frame is not None:
+                                consecutive_failures = 0
+                                frame_idx += 1
+                                continue
+
+                            consecutive_failures += 1
+                            frame_idx += 1
+                            if consecutive_failures >= 300:
+                                break
+                            continue
+                        else:
+                            ret, frame = cap_obj.read()
+                            if not ret or frame is None:
+                                consecutive_failures += 1
+                                frame_idx += 1
+                                if consecutive_failures >= 300:
+                                    break
+                                continue
+
+                            frame_name = f"{video_basename}_f{frame_idx:06d}.jpg"
+                            save_path = os.path.join(images_dir, frame_name)
+                            cv2.imwrite(save_path, frame)
+                            extracted_count += 1
+                            consecutive_failures = 0
+
+                            if total_frames > 0 and frame_idx % 100 == 0:
+                                with VideoManager._lock:
+                                    if task_id in VideoManager._tasks:
+                                        VideoManager._tasks[task_id]['progress'] = int((frame_idx / total_frames) * 100)
+
+                        frame_idx += 1
+                    except Exception:
+                        consecutive_failures += 1
+                        frame_idx += 1
+                        if consecutive_failures >= 300:
+                            break
+
+            use_robust = VideoManager._should_use_robust_mode(cap, fps, total_frames, strategy, value)
+
+            if use_robust:
+                robust_extract(cap)
+            else:
+                frame_indices = []
+                if strategy == 'interval':
+                    interval_frames = int(float(value) * fps)
+                    if interval_frames < 1:
+                        interval_frames = 1
+                    frame_indices = range(0, total_frames, interval_frames)
+                elif strategy == 'count':
+                    count = int(value)
+                    if count > total_frames:
+                        count = total_frames
+                    if count > 0:
+                        frame_indices = np.linspace(0, total_frames - 1, count, dtype=int)
+                        frame_indices = np.unique(frame_indices)
+
+                total_to_extract = len(frame_indices)
+                consecutive_failures = 0
+                fallback_to_robust = False
+
+                for idx, frame_idx in enumerate(frame_indices):
+                    with VideoManager._lock:
+                        if task_id in VideoManager._tasks:
+                            VideoManager._tasks[task_id]['progress'] = int((idx / total_to_extract) * 100)
+
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        frame_name = f"{video_basename}_f{frame_idx:06d}.jpg"
+                        save_path = os.path.join(images_dir, frame_name)
+                        cv2.imwrite(save_path, frame)
+                        extracted_count += 1
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                        if idx < min(10, total_to_extract) and consecutive_failures >= 3:
+                            fallback_to_robust = True
+                            break
+
+                if fallback_to_robust and extracted_count == 0:
+                    cap.release()
+                    cap = cv2.VideoCapture(video_path)
+                    if cap.isOpened():
+                        robust_extract(cap)
             
             cap.release()
             

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useMainStore } from '../stores/main';
 import api from '../api';
 
@@ -35,6 +35,22 @@ const importForm = ref({
   existingDataset: ''
 });
 const importing = ref(false);
+
+const reviewMaximized = ref(false);
+const reviewScrollEl = ref(null);
+const displayCount = ref(0);
+const displayBatch = 200;
+
+const showImagePreview = ref(false);
+const previewIndex = ref(0);
+const previewScale = ref(1);
+const previewOffsetX = ref(0);
+const previewOffsetY = ref(0);
+const previewPanning = ref(false);
+const previewPanStartX = ref(0);
+const previewPanStartY = ref(0);
+const previewPanOriginX = ref(0);
+const previewPanOriginY = ref(0);
 
 // Methods
 const fetchVideos = async () => {
@@ -121,8 +137,10 @@ const startExtraction = async () => {
 const reviewTask = async (task) => {
   currentTask.value = task;
   showReview.value = true;
+  reviewMaximized.value = false;
   taskImages.value = [];
   selectedImages.value.clear();
+  displayCount.value = 0;
   
   // Fetch images
   try {
@@ -134,6 +152,9 @@ const reviewTask = async (task) => {
       taskImages.value = res.data.images;
       selectedImages.value.clear();
       taskImages.value.forEach(img => selectedImages.value.add(img.name));
+      displayCount.value = Math.min(displayBatch, taskImages.value.length);
+      await nextTick();
+      if (reviewScrollEl.value) reviewScrollEl.value.scrollTop = 0;
     }
   } catch (err) {
     console.error(err);
@@ -147,6 +168,73 @@ const toggleImage = (imgName) => {
   } else {
     selectedImages.value.add(imgName);
   }
+};
+
+const loadMoreImages = () => {
+  if (displayCount.value >= taskImages.value.length) return;
+  displayCount.value = Math.min(taskImages.value.length, displayCount.value + displayBatch);
+};
+
+const onReviewScroll = (e) => {
+  const el = e?.target;
+  if (!el) return;
+  const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+  if (remaining < 900) loadMoreImages();
+};
+
+const openPreview = (imgName) => {
+  const idx = taskImages.value.findIndex(x => x?.name === imgName);
+  previewIndex.value = idx >= 0 ? idx : 0;
+  previewScale.value = 1;
+  previewOffsetX.value = 0;
+  previewOffsetY.value = 0;
+  showImagePreview.value = true;
+};
+
+const closePreview = () => {
+  showImagePreview.value = false;
+  previewPanning.value = false;
+};
+
+const navPreview = (dir) => {
+  const total = taskImages.value.length;
+  if (!total) return;
+  const next = previewIndex.value + dir;
+  if (next < 0 || next >= total) return;
+  previewIndex.value = next;
+  previewScale.value = 1;
+  previewOffsetX.value = 0;
+  previewOffsetY.value = 0;
+};
+
+const setPreviewScale = (next) => {
+  previewScale.value = Math.max(0.2, Math.min(6, next));
+};
+
+const onPreviewWheel = (e) => {
+  e.preventDefault();
+  const delta = e.deltaY || 0;
+  const factor = delta > 0 ? 0.9 : 1.1;
+  setPreviewScale(previewScale.value * factor);
+};
+
+const onPreviewMouseDown = (e) => {
+  if (e.button !== 0) return;
+  previewPanning.value = true;
+  previewPanStartX.value = e.clientX;
+  previewPanStartY.value = e.clientY;
+  previewPanOriginX.value = previewOffsetX.value;
+  previewPanOriginY.value = previewOffsetY.value;
+};
+
+const onPreviewMouseMove = (e) => {
+  if (!previewPanning.value) return;
+  previewOffsetX.value = previewPanOriginX.value + (e.clientX - previewPanStartX.value);
+  previewOffsetY.value = previewPanOriginY.value + (e.clientY - previewPanStartY.value);
+};
+
+const onPreviewMouseUp = () => {
+  previewPanning.value = false;
 };
 
 const selectAll = () => {
@@ -225,6 +313,41 @@ const existingDatasets = computed(() => {
   return Array.from(byName.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 });
 
+const visibleTaskImages = computed(() => taskImages.value.slice(0, displayCount.value));
+
+const reviewGridClass = computed(() => {
+  return reviewMaximized.value
+    ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3'
+    : 'grid grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3';
+});
+
+const previewImage = computed(() => taskImages.value[previewIndex.value] || null);
+
+const handleGlobalKeydown = (e) => {
+  if (!showImagePreview.value) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closePreview();
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    navPreview(-1);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    navPreview(1);
+  } else if (e.key === '+' || e.key === '=') {
+    e.preventDefault();
+    setPreviewScale(previewScale.value * 1.1);
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault();
+    setPreviewScale(previewScale.value * 0.9);
+  } else if (e.key === '0') {
+    e.preventDefault();
+    previewScale.value = 1;
+    previewOffsetX.value = 0;
+    previewOffsetY.value = 0;
+  }
+};
+
 watch(() => store.currentProject, (val) => {
   if (val) {
     fetchVideos();
@@ -239,10 +362,12 @@ onMounted(() => {
     fetchVideos();
     startPolling();
   }
+  window.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onUnmounted(() => {
   stopPolling();
+  window.removeEventListener('keydown', handleGlobalKeydown);
 });
 </script>
 
@@ -413,40 +538,59 @@ onUnmounted(() => {
     
     <!-- Review Modal -->
     <div v-if="showReview" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-6xl h-[90vh] flex flex-col">
+      <div
+        class="bg-white rounded-lg shadow-xl flex flex-col"
+        :class="reviewMaximized ? 'w-[98vw] max-w-none h-[95vh]' : 'w-full max-w-6xl h-[90vh]'"
+      >
         <!-- Header -->
         <div class="p-4 border-b border-gray-200 flex justify-between items-center">
           <div>
             <h3 class="text-lg font-bold">抽帧结果审查</h3>
             <p class="text-sm text-gray-500">任务 ID: {{ currentTask?.id.slice(0, 8) }}...</p>
           </div>
-          <button @click="showReview = false" class="text-gray-400 hover:text-gray-600">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              @click="reviewMaximized = !reviewMaximized"
+              class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50"
+            >
+              {{ reviewMaximized ? '还原' : '放大' }}
+            </button>
+            <button @click="showReview = false" class="text-gray-400 hover:text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
         
         <!-- Main Content -->
         <div class="flex-1 flex min-h-0">
           <!-- Image Grid -->
-          <div class="flex-1 p-4 overflow-y-auto bg-gray-50">
-            <div class="flex justify-between items-center mb-4">
-              <span class="text-sm text-gray-600">共 {{ taskImages.length }} 张，已选 <span class="font-bold text-blue-600">{{ selectedImages.size }}</span> 张</span>
+          <div ref="reviewScrollEl" class="flex-1 p-4 overflow-y-auto bg-gray-50" @scroll="onReviewScroll">
+            <div class="flex justify-between items-center mb-4 gap-3">
+              <span class="text-sm text-gray-600">
+                共 {{ taskImages.length }} 张，已显示 {{ visibleTaskImages.length }} 张，已选 <span class="font-bold text-blue-600">{{ selectedImages.size }}</span> 张
+              </span>
               <button @click="selectAll" class="text-blue-600 text-sm hover:underline">
                 {{ selectedImages.size === taskImages.length ? '取消全选' : '全选' }}
               </button>
             </div>
             
-            <div class="grid grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+            <div :class="reviewGridClass">
               <div 
-                v-for="img in taskImages" 
+                v-for="img in visibleTaskImages" 
                 :key="img.name" 
                 class="aspect-square relative group cursor-pointer border-2 rounded-lg overflow-hidden"
                 :class="selectedImages.has(img.name) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-gray-300'"
                 @click="toggleImage(img.name)"
               >
                 <img :src="img.url" class="w-full h-full object-cover" loading="lazy" />
+                <button
+                  class="absolute bottom-1 left-1 px-2 py-1 rounded-md bg-black/40 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                  @click.stop="openPreview(img.name)"
+                >
+                  放大
+                </button>
                 <!-- Selection Overlay -->
                 <div class="absolute top-1 right-1">
                   <div class="w-5 h-5 rounded-full border border-white shadow-sm flex items-center justify-center transition-colors"
@@ -458,6 +602,15 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div v-if="displayCount < taskImages.length" class="flex justify-center py-6">
+              <button
+                class="px-4 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50"
+                @click="loadMoreImages"
+              >
+                加载更多
+              </button>
             </div>
           </div>
           
@@ -508,6 +661,47 @@ onUnmounted(() => {
                 {{ importing ? '导入中...' : '确认导入' }}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showImagePreview" class="fixed inset-0 bg-black/90 z-[60]" @click.self="closePreview">
+      <div class="h-full w-full flex flex-col">
+        <div class="px-4 py-3 flex items-center justify-between text-white">
+          <div class="min-w-0">
+            <div class="font-medium truncate">{{ previewImage?.name }}</div>
+            <div class="text-xs text-white/70">{{ previewIndex + 1 }} / {{ taskImages.length }}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="setPreviewScale(previewScale * 0.9)">-</button>
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="previewScale = 1; previewOffsetX = 0; previewOffsetY = 0">100%</button>
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="setPreviewScale(previewScale * 1.1)">+</button>
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" :disabled="previewIndex <= 0" @click="navPreview(-1)">上一张</button>
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" :disabled="previewIndex >= taskImages.length - 1" @click="navPreview(1)">下一张</button>
+            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="closePreview">关闭</button>
+          </div>
+        </div>
+
+        <div
+          class="flex-1 overflow-hidden select-none cursor-grab active:cursor-grabbing"
+          @wheel="onPreviewWheel"
+          @mousedown="onPreviewMouseDown"
+          @mousemove="onPreviewMouseMove"
+          @mouseup="onPreviewMouseUp"
+          @mouseleave="onPreviewMouseUp"
+        >
+          <div class="h-full w-full flex items-center justify-center">
+            <img
+              v-if="previewImage"
+              :src="previewImage.url"
+              class="max-w-none max-h-none"
+              :style="{
+                transform: `translate(${previewOffsetX}px, ${previewOffsetY}px) scale(${previewScale})`,
+                transformOrigin: 'center center'
+              }"
+              draggable="false"
+            />
           </div>
         </div>
       </div>
