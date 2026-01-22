@@ -201,7 +201,7 @@
           </div>
           
           <select v-if="autoAnnotateType === 'pretrained'" v-model="selectedModelPath" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-             <option v-for="m in store.pretrainedModels" :key="m.path" :value="m.path">{{ m.name }}</option>
+             <option v-for="m in pretrainedModelOptions" :key="m.path" :value="m.path">{{ m.name }}</option>
           </select>
           
           <select v-else v-model="selectedModelPath" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
@@ -344,6 +344,10 @@ const canReorderLabels = computed(() => {
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (filters.limit || 1))));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor((filters.offset || 0) / (filters.limit || 1)) + 1));
 
+const pretrainedModelOptions = computed(() => {
+  return (store.pretrainedModels || []).filter(m => m.type === 'pretrained');
+});
+
 const trainedModelOptions = computed(() => {
   return (trainingRuns.value || [])
     .map(r => {
@@ -357,8 +361,13 @@ const trainedModelOptions = computed(() => {
       const hasBest = true; // Simplified assumption or check r.status === 'completed'
       const value = `${weightsDir}/best.pt`; // Default to best.pt
       
-      const labelParts = [r.id, r.config?.model_name || null].filter(Boolean);
-      return { key: `${r.id}:${value}`, value, label: labelParts.join(' | ') };
+      const dataset = r.dataset || r.config?.dataset_name || 'Unknown Dataset';
+      const modelPath = r.config?.model_name || '';
+      const modelName = modelPath.split('/').pop(); // Get basename
+      const map50 = r.metrics?.mAP50 ? ` mAP50:${(r.metrics.mAP50 * 100).toFixed(1)}%` : '';
+      
+      const label = `[${dataset}] ${r.id} (Base: ${modelName})${map50}`;
+      return { key: `${r.id}:${value}`, value, label };
     })
     .filter(Boolean);
 });
