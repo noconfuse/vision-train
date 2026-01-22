@@ -425,6 +425,59 @@ class VideoManager:
         return success_count
 
     @staticmethod
+    def delete_task_images(project_path, task_id, selected_images):
+        task_dir = VideoManager._get_task_dir(project_path, task_id)
+        images_dir = os.path.join(task_dir, 'images')
+
+        if not isinstance(selected_images, list) or len(selected_images) == 0:
+            raise ValueError('Missing selected_images')
+
+        project_real = os.path.realpath(project_path)
+        images_dir_real = os.path.realpath(images_dir)
+        images_dir_prefix = images_dir_real + os.sep
+        if not (images_dir_real == project_real or images_dir_real.startswith(project_real + os.sep)):
+            raise ValueError('Invalid project_path')
+
+        deleted = []
+        for img_name in selected_images:
+            if not isinstance(img_name, str):
+                continue
+            safe_name = os.path.basename(img_name)
+            if safe_name != img_name:
+                continue
+            img_path = os.path.join(images_dir, safe_name)
+            img_real = os.path.realpath(img_path)
+            if not img_real.startswith(images_dir_prefix):
+                continue
+            try:
+                if os.path.exists(img_real):
+                    os.remove(img_real)
+                    deleted.append(safe_name)
+            except Exception:
+                pass
+
+        remaining_count = None
+        try:
+            if os.path.isdir(images_dir_real):
+                remaining = [f for f in os.listdir(images_dir_real) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                remaining_count = len(remaining)
+        except Exception:
+            remaining_count = None
+
+        if remaining_count is not None:
+            meta = VideoManager._read_task_meta(project_path, task_id)
+            if meta is not None:
+                meta['id'] = task_id
+                meta['extracted_count'] = remaining_count
+                VideoManager._write_task_meta(project_path, meta)
+
+            with VideoManager._lock:
+                if task_id in VideoManager._tasks:
+                    VideoManager._tasks[task_id]['extracted_count'] = remaining_count
+
+        return deleted
+
+    @staticmethod
     def delete_task(project_path, task_id):
         """删除任务及临时文件"""
         task_dir = VideoManager._get_task_dir(project_path, task_id)

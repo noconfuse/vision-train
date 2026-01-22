@@ -41,6 +41,14 @@ const reviewScrollEl = ref(null);
 const displayCount = ref(0);
 const displayBatch = 200;
 
+const boxSelecting = ref(false);
+const boxStartX = ref(0);
+const boxStartY = ref(0);
+const boxCurrentX = ref(0);
+const boxCurrentY = ref(0);
+
+const deletingImages = ref(false);
+
 const showImagePreview = ref(false);
 const previewIndex = ref(0);
 const previewScale = ref(1);
@@ -245,6 +253,112 @@ const selectAll = () => {
   }
 };
 
+const getReviewContentPoint = (e) => {
+  const el = reviewScrollEl.value;
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left + el.scrollLeft,
+    y: e.clientY - rect.top + el.scrollTop
+  };
+};
+
+const onBoxSelectMove = (e) => {
+  if (!boxSelecting.value) return;
+  const pt = getReviewContentPoint(e);
+  if (!pt) return;
+  boxCurrentX.value = pt.x;
+  boxCurrentY.value = pt.y;
+};
+
+const onBoxSelectEnd = () => {
+  if (!boxSelecting.value) return;
+  boxSelecting.value = false;
+  window.removeEventListener('mousemove', onBoxSelectMove);
+  window.removeEventListener('mouseup', onBoxSelectEnd);
+
+  const left = Math.min(boxStartX.value, boxCurrentX.value);
+  const right = Math.max(boxStartX.value, boxCurrentX.value);
+  const top = Math.min(boxStartY.value, boxCurrentY.value);
+  const bottom = Math.max(boxStartY.value, boxCurrentY.value);
+
+  if ((right - left) < 6 && (bottom - top) < 6) return;
+
+  const el = reviewScrollEl.value;
+  if (!el) return;
+  const containerRect = el.getBoundingClientRect();
+  const tiles = el.querySelectorAll('[data-img-tile="1"]');
+
+  const nextSelected = new Set();
+  for (const tile of tiles) {
+    const name = tile?.getAttribute?.('data-img-name');
+    if (!name) continue;
+    const r = tile.getBoundingClientRect();
+    const tileLeft = r.left - containerRect.left + el.scrollLeft;
+    const tileRight = tileLeft + r.width;
+    const tileTop = r.top - containerRect.top + el.scrollTop;
+    const tileBottom = tileTop + r.height;
+    const intersects = !(tileRight < left || tileLeft > right || tileBottom < top || tileTop > bottom);
+    if (intersects) nextSelected.add(name);
+  }
+
+  if (nextSelected.size > 0) {
+    selectedImages.value.clear();
+    nextSelected.forEach((n) => selectedImages.value.add(n));
+  }
+};
+
+const onReviewMouseDown = (e) => {
+  if (e.button !== 0) return;
+  if (e.target?.closest?.('[data-img-tile="1"]')) return;
+  if (e.target?.closest?.('button, input, select, textarea, a')) return;
+  const pt = getReviewContentPoint(e);
+  if (!pt) return;
+  e.preventDefault();
+  boxSelecting.value = true;
+  boxStartX.value = pt.x;
+  boxStartY.value = pt.y;
+  boxCurrentX.value = pt.x;
+  boxCurrentY.value = pt.y;
+  window.addEventListener('mousemove', onBoxSelectMove);
+  window.addEventListener('mouseup', onBoxSelectEnd);
+};
+
+const batchDeleteSelected = async () => {
+  if (deletingImages.value) return;
+  const selectedList = Array.from(selectedImages.value);
+  if (selectedList.length === 0) {
+    alert('请选择要删除的图片');
+    return;
+  }
+  if (!confirm(`确定要删除选中的 ${selectedList.length} 张图片吗？`)) return;
+
+  deletingImages.value = true;
+  try {
+    const res = await api.batchDeleteTaskImages({
+      project_path: store.currentProject.path,
+      task_id: currentTask.value.id,
+      selected_images: selectedList
+    });
+    if (!res.data?.success) {
+      alert('删除失败: ' + (res.data?.error || 'unknown error'));
+      return;
+    }
+
+    const deleted = new Set(res.data.deleted_images || selectedList);
+    taskImages.value = taskImages.value.filter((img) => !deleted.has(img.name));
+    for (const n of deleted) selectedImages.value.delete(n);
+    displayCount.value = Math.min(displayCount.value, taskImages.value.length);
+    if (showImagePreview.value && deleted.has(previewImage.value?.name)) closePreview();
+    fetchTasks();
+  } catch (err) {
+    console.error(err);
+    alert('删除请求失败');
+  } finally {
+    deletingImages.value = false;
+  }
+};
+
 const deleteTask = async (task) => {
   if (!confirm('确定要删除这个任务及其临时文件吗？')) return;
   try {
@@ -274,11 +388,14 @@ const importImages = async () => {
     }
   }
   
+  const selectedList = Array.from(selectedImages.value);
+  if (selectedList.length === 0) {
+    alert('请选择要导入的图片');
+    return;
+  }
+
   importing.value = true;
   try {
-    const selectedList = selectedImages.value.size === 0 
-      ? taskImages.value.map(img => img.name) 
-      : Array.from(selectedImages.value);
     const res = await api.importTaskImages({
       project_path: store.currentProject.path,
       task_id: currentTask.value.id,
@@ -314,6 +431,20 @@ const existingDatasets = computed(() => {
 });
 
 const visibleTaskImages = computed(() => taskImages.value.slice(0, displayCount.value));
+
+const boxStyle = computed(() => {
+  if (!boxSelecting.value) return null;
+  const left = Math.min(boxStartX.value, boxCurrentX.value);
+  const top = Math.min(boxStartY.value, boxCurrentY.value);
+  const width = Math.abs(boxCurrentX.value - boxStartX.value);
+  const height = Math.abs(boxCurrentY.value - boxStartY.value);
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`
+  };
+});
 
 const reviewGridClass = computed(() => {
   return reviewMaximized.value
@@ -368,6 +499,8 @@ onMounted(() => {
 onUnmounted(() => {
   stopPolling();
   window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('mousemove', onBoxSelectMove);
+  window.removeEventListener('mouseup', onBoxSelectEnd);
 });
 </script>
 
@@ -566,20 +699,29 @@ onUnmounted(() => {
         <!-- Main Content -->
         <div class="flex-1 flex min-h-0">
           <!-- Image Grid -->
-          <div ref="reviewScrollEl" class="flex-1 p-4 overflow-y-auto bg-gray-50" @scroll="onReviewScroll">
+          <div ref="reviewScrollEl" class="flex-1 p-4 overflow-y-auto bg-gray-50 relative" @scroll="onReviewScroll" @mousedown="onReviewMouseDown">
             <div class="flex justify-between items-center mb-4 gap-3">
               <span class="text-sm text-gray-600">
                 共 {{ taskImages.length }} 张，已显示 {{ visibleTaskImages.length }} 张，已选 <span class="font-bold text-blue-600">{{ selectedImages.size }}</span> 张
               </span>
-              <button @click="selectAll" class="text-blue-600 text-sm hover:underline">
-                {{ selectedImages.size === taskImages.length ? '取消全选' : '全选' }}
-              </button>
+              <div class="flex items-center gap-3">
+                <button @click="batchDeleteSelected" class="text-red-600 text-sm hover:underline disabled:opacity-50" :disabled="deletingImages || selectedImages.size === 0">
+                  {{ deletingImages ? '删除中...' : '批量删除' }}
+                </button>
+                <button @click="selectAll" class="text-blue-600 text-sm hover:underline">
+                  {{ selectedImages.size === taskImages.length ? '取消全选' : '全选' }}
+                </button>
+              </div>
             </div>
+
+            <div v-if="boxSelecting" class="absolute border-2 border-blue-500 bg-blue-200/20 pointer-events-none z-20" :style="boxStyle"></div>
             
             <div :class="reviewGridClass">
               <div 
                 v-for="img in visibleTaskImages" 
                 :key="img.name" 
+                data-img-tile="1"
+                :data-img-name="img.name"
                 class="aspect-square relative group cursor-pointer border-2 rounded-lg overflow-hidden"
                 :class="selectedImages.has(img.name) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-gray-300'"
                 @click="toggleImage(img.name)"
@@ -656,7 +798,7 @@ onUnmounted(() => {
               <button 
                 @click="importImages" 
                 class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="importing || taskImages.length === 0 || (importForm.targetType === 'new' && !importForm.newDatasetName.trim()) || (importForm.targetType === 'existing' && !importForm.existingDataset)"
+                :disabled="importing || taskImages.length === 0 || selectedImages.size === 0 || (importForm.targetType === 'new' && !importForm.newDatasetName.trim()) || (importForm.targetType === 'existing' && !importForm.existingDataset)"
               >
                 {{ importing ? '导入中...' : '确认导入' }}
               </button>

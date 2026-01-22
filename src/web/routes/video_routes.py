@@ -125,6 +125,24 @@ def import_task_images():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@bp.route('/api/video/task/batch_delete', methods=['POST'])
+def batch_delete_task_images():
+    data = request.get_json() or {}
+    project_path = data.get('project_path')
+    task_id = data.get('task_id')
+    selected_images = data.get('selected_images') or []
+
+    if not project_path or not task_id:
+        return jsonify({'success': False, 'error': 'Missing parameters'})
+    if not isinstance(selected_images, list) or len(selected_images) == 0:
+        return jsonify({'success': False, 'error': 'Missing parameters'})
+
+    try:
+        deleted = VideoManager.delete_task_images(project_path, task_id, selected_images)
+        return jsonify({'success': True, 'deleted_count': len(deleted), 'deleted_images': deleted})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/video/task/delete', methods=['POST'])
 def delete_task():
     data = request.get_json()

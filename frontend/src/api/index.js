@@ -97,6 +97,12 @@ export default {
   importTaskImages(data) {
     return api.post('/video/task/import', data);
   },
+  batchDeleteTaskImages(data) {
+    return api.post('/video/task/batch_delete', data);
+  },
+  deleteTaskImages(data) {
+    return api.post('/video/task/images/delete', data);
+  },
   deleteTask(data) {
     return api.post('/video/task/delete', data);
   }
