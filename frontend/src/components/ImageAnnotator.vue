@@ -11,7 +11,7 @@
           <img 
             ref="imgRef" 
             :src="image.url" 
-            class="max-w-none block" 
+            class="block w-full h-full" 
             @load="onImageLoad" 
             draggable="false"
           />
@@ -19,6 +19,8 @@
           <!-- SVG Overlay for drawing -->
           <svg 
             class="absolute inset-0 w-full h-full cursor-crosshair"
+            :viewBox="`0 0 ${imgWidth} ${imgHeight}`"
+            preserveAspectRatio="none"
             @mousedown="onMouseDown"
             @mousemove="onMouseMove"
             @mouseup="onMouseUp"
@@ -33,33 +35,33 @@
                 :width="(box.x2 - box.x1) * imgWidth" 
                 :height="(box.y2 - box.y1) * imgHeight" 
                 :stroke="getColor(box.class)" 
-                stroke-width="2" 
+                :stroke-width="selectedBoxIdx === idx ? 3 / scale : 2 / scale" 
                 :stroke-opacity="box.is_auto ? 0.55 : 0.9"
                 :stroke-dasharray="box.is_auto ? '4' : '0'"
                 fill="transparent"
                 class="transition-all"
-                :class="selectedBoxIdx === idx ? 'stroke-[3px] opacity-100' : 'opacity-80 hover:opacity-100'"
+                :class="selectedBoxIdx === idx ? 'opacity-100' : 'opacity-80 hover:opacity-100'"
                 @mousedown.stop="startMove(idx, $event)"
               />
               
               <!-- Resize Handles (only if selected) -->
               <g v-if="selectedBoxIdx === idx">
                 <!-- TL -->
-                <rect :x="box.x1 * imgWidth - 4" :y="box.y1 * imgHeight - 4" width="8" height="8" fill="white" stroke="black" class="cursor-nw-resize" @mousedown.stop="startResize(idx, 'tl', $event)" />
+                <rect :x="box.x1 * imgWidth - 4 / scale" :y="box.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" class="cursor-nw-resize" @mousedown.stop="startResize(idx, 'tl', $event)" />
                 <!-- TR -->
-                <rect :x="box.x2 * imgWidth - 4" :y="box.y1 * imgHeight - 4" width="8" height="8" fill="white" stroke="black" class="cursor-ne-resize" @mousedown.stop="startResize(idx, 'tr', $event)" />
+                <rect :x="box.x2 * imgWidth - 4 / scale" :y="box.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" class="cursor-ne-resize" @mousedown.stop="startResize(idx, 'tr', $event)" />
                 <!-- BL -->
-                <rect :x="box.x1 * imgWidth - 4" :y="box.y2 * imgHeight - 4" width="8" height="8" fill="white" stroke="black" class="cursor-sw-resize" @mousedown.stop="startResize(idx, 'bl', $event)" />
+                <rect :x="box.x1 * imgWidth - 4 / scale" :y="box.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" class="cursor-sw-resize" @mousedown.stop="startResize(idx, 'bl', $event)" />
                 <!-- BR -->
-                <rect :x="box.x2 * imgWidth - 4" :y="box.y2 * imgHeight - 4" width="8" height="8" fill="white" stroke="black" class="cursor-se-resize" @mousedown.stop="startResize(idx, 'br', $event)" />
+                <rect :x="box.x2 * imgWidth - 4 / scale" :y="box.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" class="cursor-se-resize" @mousedown.stop="startResize(idx, 'br', $event)" />
               </g>
 
               <!-- Label -->
               <text 
                 :x="box.x1 * imgWidth" 
-                :y="Math.max(12, box.y1 * imgHeight - 5)" 
+                :y="Math.max(12 / scale, box.y1 * imgHeight - 5 / scale)" 
                 :fill="getColor(box.class)" 
-                font-size="12" 
+                :font-size="12 / scale" 
                 font-weight="bold"
                 :opacity="box.is_auto ? 0.8 : 1"
                 style="text-shadow: 1px 1px 1px black; pointer-events: none;"
@@ -76,7 +78,7 @@
               :width="Math.abs(currentPos.x - startPos.x)" 
               :height="Math.abs(currentPos.y - startPos.y)" 
               :stroke="getColor(currentClass)" 
-              stroke-width="2" 
+              :stroke-width="2 / scale" 
               stroke-dasharray="4"
               fill="transparent"
             />
@@ -176,6 +178,9 @@ const dragStartBox = ref(null); // Snapshot of box before drag
 const imgWidth = ref(1);
 const imgHeight = ref(1);
 const scale = ref(1);
+const containerWidth = ref(0);
+const containerHeight = ref(0);
+let resizeObserver = null;
 
 // Colors for classes
 const colors = [
@@ -188,8 +193,54 @@ const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
 
 // Image layout logic
 const imageStyle = computed(() => {
-  if (!imgWidth.value || !imgHeight.value) return {};
-  return {}; 
+  if (!imgWidth.value || !imgHeight.value || !containerWidth.value || !containerHeight.value) return {};
+  
+  const imgRatio = imgWidth.value / imgHeight.value;
+  const containerRatio = containerWidth.value / containerHeight.value;
+  
+  let w, h;
+  if (imgRatio > containerRatio) {
+    // Image is wider than container -> Fit to width
+    w = containerWidth.value - 40; // minus padding
+    h = w / imgRatio;
+  } else {
+    // Image is taller -> Fit to height
+    h = containerHeight.value - 40; // minus padding
+    w = h * imgRatio;
+  }
+
+  // Update scale for reference
+  scale.value = w / imgWidth.value;
+  
+  return {
+    width: `${w}px`,
+    height: `${h}px`
+  };
+});
+
+const updateContainerSize = () => {
+  if (containerRef.value) {
+    containerWidth.value = containerRef.value.clientWidth;
+    containerHeight.value = containerRef.value.clientHeight;
+  }
+};
+
+onMounted(() => {
+  updateContainerSize();
+  resizeObserver = new ResizeObserver(updateContainerSize);
+  if (containerRef.value) {
+    resizeObserver.observe(containerRef.value);
+  }
+  // Check if image is already loaded (cached)
+  if (imgRef.value && imgRef.value.complete) {
+    onImageLoad();
+  }
+});
+
+onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+  }
 });
 
 const onImageLoad = () => {
@@ -294,9 +345,11 @@ const save = async () => {
 // Interaction Logic
 const getRelativePos = (e) => {
   const rect = imgRef.value.getBoundingClientRect();
+  const scaleX = imgWidth.value / rect.width;
+  const scaleY = imgHeight.value / rect.height;
   return {
-    x: Math.max(0, Math.min(rect.width, e.clientX - rect.left)),
-    y: Math.max(0, Math.min(rect.height, e.clientY - rect.top))
+    x: Math.max(0, Math.min(imgWidth.value, (e.clientX - rect.left) * scaleX)),
+    y: Math.max(0, Math.min(imgHeight.value, (e.clientY - rect.top) * scaleY))
   };
 };
 
@@ -346,8 +399,9 @@ const onMouseMove = (e) => {
   } else if (interactionMode.value === 'move') {
     if (selectedBoxIdx.value === -1 || !dragStartBox.value) return;
     
-    const dx = (pos.x - startPos.value.x) / imgRef.value.offsetWidth;
-    const dy = (pos.y - startPos.value.y) / imgRef.value.offsetHeight;
+    // pos is in natural coordinates, so we divide by natural dimensions
+    const dx = (pos.x - startPos.value.x) / imgWidth.value;
+    const dy = (pos.y - startPos.value.y) / imgHeight.value;
     
     const box = boxes.value[selectedBoxIdx.value];
     const newX1 = Math.max(0, Math.min(1, dragStartBox.value.x1 + dx));
@@ -359,36 +413,55 @@ const onMouseMove = (e) => {
     if (newX1 + w <= 1) {
       box.x1 = newX1;
       box.x2 = newX1 + w;
+    } else {
+       // stick to right/bottom edge if overflow
+       if (newX1 + w > 1) {
+          box.x2 = 1;
+          box.x1 = 1 - w;
+       }
     }
+    
     if (newY1 + h <= 1) {
       box.y1 = newY1;
       box.y2 = newY1 + h;
+    } else {
+       if (newY1 + h > 1) {
+          box.y2 = 1;
+          box.y1 = 1 - h;
+       }
     }
+
     hasChanges.value = true;
     
   } else if (interactionMode.value === 'resize') {
     if (selectedBoxIdx.value === -1 || !dragStartBox.value) return;
     
     const box = boxes.value[selectedBoxIdx.value];
-    const w = imgRef.value.offsetWidth;
-    const h = imgRef.value.offsetHeight;
-    const normX = pos.x / w;
-    const normY = pos.y / h;
+    // Normalize using natural dimensions
+    const normX = Math.max(0, Math.min(1, pos.x / imgWidth.value));
+    const normY = Math.max(0, Math.min(1, pos.y / imgHeight.value));
     
     // Based on handle, update coords
-    // We update box in place
     if (resizeHandle.value === 'tl') {
-      box.x1 = Math.min(normX, box.x2 - 0.01);
-      box.y1 = Math.min(normY, box.y2 - 0.01);
+      const newX1 = Math.min(normX, box.x2 - 0.005);
+      const newY1 = Math.min(normY, box.y2 - 0.005);
+      box.x1 = newX1;
+      box.y1 = newY1;
     } else if (resizeHandle.value === 'tr') {
-      box.x2 = Math.max(normX, box.x1 + 0.01);
-      box.y1 = Math.min(normY, box.y2 - 0.01);
+      const newX2 = Math.max(normX, box.x1 + 0.005);
+      const newY1 = Math.min(normY, box.y2 - 0.005);
+      box.x2 = newX2;
+      box.y1 = newY1;
     } else if (resizeHandle.value === 'bl') {
-      box.x1 = Math.min(normX, box.x2 - 0.01);
-      box.y2 = Math.max(normY, box.y1 + 0.01);
+      const newX1 = Math.min(normX, box.x2 - 0.005);
+      const newY2 = Math.max(normY, box.y1 + 0.005);
+      box.x1 = newX1;
+      box.y2 = newY2;
     } else if (resizeHandle.value === 'br') {
-      box.x2 = Math.max(normX, box.x1 + 0.01);
-      box.y2 = Math.max(normY, box.y1 + 0.01);
+      const newX2 = Math.max(normX, box.x1 + 0.005);
+      const newY2 = Math.max(normY, box.y1 + 0.005);
+      box.x2 = newX2;
+      box.y2 = newY2;
     }
     hasChanges.value = true;
   }
@@ -396,16 +469,13 @@ const onMouseMove = (e) => {
 
 const onMouseUp = () => {
   if (interactionMode.value === 'draw') {
-    const rect = imgRef.value.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
+    // Normalize using natural dimensions
+    const x1 = Math.min(startPos.value.x, currentPos.value.x) / imgWidth.value;
+    const y1 = Math.min(startPos.value.y, currentPos.value.y) / imgHeight.value;
+    const x2 = Math.max(startPos.value.x, currentPos.value.x) / imgWidth.value;
+    const y2 = Math.max(startPos.value.y, currentPos.value.y) / imgHeight.value;
     
-    const x1 = Math.min(startPos.value.x, currentPos.value.x) / w;
-    const y1 = Math.min(startPos.value.y, currentPos.value.y) / h;
-    const x2 = Math.max(startPos.value.x, currentPos.value.x) / w;
-    const y2 = Math.max(startPos.value.y, currentPos.value.y) / h;
-    
-    if ((x2 - x1) > 0.01 && (y2 - y1) > 0.01) {
+    if ((x2 - x1) * imgWidth.value > 5 && (y2 - y1) * imgHeight.value > 5) { // Min 5px size
       boxes.value.push({
         class: currentClass.value,
         x1, y1, x2, y2,
