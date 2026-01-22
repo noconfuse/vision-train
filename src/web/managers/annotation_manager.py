@@ -10,7 +10,9 @@ from managers.model_manager import ModelManager
 batch_status = {
     'is_running': False,
     'progress': 0,
-    'message': ''
+    'message': '',
+    'added': 0,
+    'pending': 0
 }
 
 class AnnotationManager:
@@ -26,7 +28,13 @@ class AnnotationManager:
         if batch_status['is_running']:
             return {'success': False, 'error': '已有批量标注任务正在运行'}
             
-        batch_status.update({'is_running': True, 'progress': 0, 'message': '初始化...'})
+        batch_status.update({
+            'is_running': True, 
+            'progress': 0, 
+            'message': '初始化...',
+            'added': 0,
+            'pending': 0
+        })
         
         def run_batch():
             try:
@@ -174,8 +182,14 @@ class AnnotationManager:
                             pass
                             
                     batch_status['progress'] = int((i + len(batch)) / total * 100) if total else 100
+                    batch_status.update({'added': added, 'pending': pending})
                     
-                batch_status.update({'is_running': False, 'message': '完成'})
+                batch_status.update({
+                    'is_running': False, 
+                    'message': '完成',
+                    'added': added,
+                    'pending': pending
+                })
                 
             except Exception as e:
                 batch_status.update({'is_running': False, 'message': f'出错: {str(e)}'})

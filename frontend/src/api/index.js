@@ -43,6 +43,9 @@ export default {
   autoAnnotate(data) {
     return api.post('/auto_annotate/batch', data);
   },
+  getAutoAnnotateStatus() {
+    return api.get('/auto_annotate/batch/status');
+  },
   getAnnotation(params) {
     return api.get('/annotation/get', { params });
   },

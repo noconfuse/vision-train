@@ -180,6 +180,34 @@
        </div>
     </div>
     
+    <!-- Auto Annotate Progress Modal -->
+    <div v-if="autoAnnotating" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 text-center">
+        <h3 class="text-lg font-bold mb-4">自动标注中...</h3>
+        
+        <div class="mb-4">
+          <div class="flex justify-between text-sm mb-1 text-gray-600">
+            <span>{{ autoAnnotateStatus.message }}</span>
+            <span>{{ autoAnnotateStatus.progress }}%</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2.5">
+            <div class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" :style="{ width: `${autoAnnotateStatus.progress}%` }"></div>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div class="bg-gray-50 p-3 rounded-lg">
+            <div class="text-gray-500 mb-1">新增标注</div>
+            <div class="font-mono font-bold text-lg text-green-600">{{ autoAnnotateStatus.added }}</div>
+          </div>
+          <div class="bg-gray-50 p-3 rounded-lg">
+            <div class="text-gray-500 mb-1">待复核</div>
+            <div class="font-mono font-bold text-lg text-orange-500">{{ autoAnnotateStatus.pending }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Auto Annotate Modal -->
     <div v-if="showAutoAnnotateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
@@ -321,6 +349,9 @@ const showReorderLabelsModal = ref(false);
 const reorderItems = ref([]);
 const reorderingLabels = ref(false);
 const pageInput = ref(1);
+
+const autoAnnotating = ref(false);
+const autoAnnotateStatus = ref({ progress: 0, message: '', added: 0, pending: 0 });
 
 const filters = reactive({
   split: 'train',
@@ -670,7 +701,7 @@ const batchDelete = async () => {
 
 const runAutoAnnotate = async () => {
   showAutoAnnotateModal.value = false;
-  loading.value = true;
+  
   try {
     const res = await api.autoAnnotate({
       project_path: store.currentProject.path,
@@ -682,17 +713,38 @@ const runAutoAnnotate = async () => {
     });
     
     if (res.data.success) {
-      alert(`自动标注完成！\n新增标注: ${res.data.added_boxes}\n待复核: ${res.data.pending_count}`);
-      fetchImages(true);
+      autoAnnotating.value = true;
+      autoAnnotateStatus.value = { progress: 0, message: '初始化...', added: 0, pending: 0 };
+      pollAutoAnnotateStatus();
     } else {
-      alert('自动标注失败: ' + res.data.error);
+      alert('自动标注启动失败: ' + res.data.error);
     }
   } catch (err) {
     console.error(err);
     alert('请求失败');
-  } finally {
-    loading.value = false;
   }
+};
+
+const pollAutoAnnotateStatus = () => {
+  const timer = setInterval(async () => {
+    try {
+      const res = await api.getAutoAnnotateStatus();
+      if (res.data.success) {
+        const s = res.data.status;
+        autoAnnotateStatus.value = s;
+        if (!s.is_running) {
+          clearInterval(timer);
+          autoAnnotating.value = false;
+          setTimeout(() => {
+             alert(`自动标注完成！\n新增标注: ${s.added || 0}\n待复核: ${s.pending || 0}`);
+             fetchImages(true);
+          }, 300);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, 1000);
 };
 
 watch(() => store.selectedDataset, () => {
