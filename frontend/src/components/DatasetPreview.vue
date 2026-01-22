@@ -21,6 +21,13 @@
           </button>
           <button
             v-if="selectionMode"
+            class="px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white hover:bg-gray-50"
+            @click="selectAllCurrentPage"
+          >
+            全选本页
+          </button>
+          <button
+            v-if="selectionMode"
             class="px-3 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
             :disabled="selectedCount === 0"
             @click="openCreateSubset"
@@ -189,7 +196,7 @@
        <span class="text-sm text-gray-500">共 {{ total }} 张图片</span>
        <div class="flex gap-2 relative">
          <button @click="showAutoAnnotateModal = true" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
-           自动标注当前页...
+           自动标注 (整张表)...
          </button>
        </div>
     </div>
@@ -431,6 +438,14 @@ const isSelected = (path) => !!selectedMap.value[path];
 const toggleSelectionMode = () => {
   selectionMode.value = !selectionMode.value;
   selectedMap.value = {};
+};
+
+const selectAllCurrentPage = () => {
+  const next = { ...selectedMap.value };
+  images.value.forEach(img => {
+    next[img.path] = true;
+  });
+  selectedMap.value = next;
 };
 
 const toggleClass = (id) => {
