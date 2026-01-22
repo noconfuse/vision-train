@@ -89,6 +89,11 @@
           仅看未标注
         </label>
 
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" v-model="filters.has_auto_label" class="rounded border-gray-300">
+          仅看待复核
+        </label>
+
         <button
           class="px-3 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-800 text-white"
           @click="applyFilters"
@@ -357,6 +362,7 @@ const filters = reactive({
   split: 'train',
   mode: 'include',
   unannotated: false,
+  has_auto_label: false,
   offset: 0,
   limit: 60
 });
@@ -510,7 +516,8 @@ const fetchImages = async (reset = false) => {
       limit: filters.limit,
       classes: selectedClassIds.value.length > 0 ? selectedClassIds.value.join(',') : undefined,
       mode: filters.mode,
-      unannotated: filters.unannotated
+      unannotated: filters.unannotated,
+      has_auto_label: filters.has_auto_label
     });
     
     if (res.data.success) {

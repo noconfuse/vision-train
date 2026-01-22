@@ -113,6 +113,7 @@ def api_dataset_images():
         classes_raw = request.args.get('classes') or request.args.get('class')
         mode = (request.args.get('mode') or 'include').strip().lower()
         unannotated_raw = request.args.get('unannotated')
+        has_auto_label_raw = request.args.get('has_auto_label')
         
         if not project_path or not dataset_name:
             return jsonify({'success': False, 'error': '缺少必要参数'})
@@ -120,6 +121,7 @@ def api_dataset_images():
         ds_root = os.path.join(project_path, 'training', dataset_name)
         img_dir = os.path.join(ds_root, split, 'images')
         lbl_dir = os.path.join(ds_root, split, 'labels')
+        auto_dir = os.path.join(ds_root, 'auto_labels', split)
         
         if not os.path.exists(img_dir):
             return jsonify({'success': True, 'images': [], 'total': 0})
@@ -132,6 +134,7 @@ def api_dataset_images():
             return str(v).strip().lower() in ('1', 'true', 'yes', 'y', 'on')
 
         unannotated = parse_bool(unannotated_raw)
+        has_auto_label = parse_bool(has_auto_label_raw)
 
         class_ids = []
         if classes_raw is not None and str(classes_raw).strip() != '':
@@ -155,6 +158,11 @@ def api_dataset_images():
                     lp = os.path.join(lbl_dir, os.path.splitext(rel)[0] + '.txt')
                     label_exists = os.path.exists(lp)
                     label_has_content = label_exists and os.path.getsize(lp) > 0
+
+                    if has_auto_label:
+                        auto_lbl_path = os.path.join(auto_dir, os.path.splitext(rel)[0] + '.txt')
+                        if not os.path.exists(auto_lbl_path):
+                            continue
 
                     if unannotated:
                         if label_exists:
