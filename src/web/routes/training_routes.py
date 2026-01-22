@@ -100,6 +100,56 @@ def api_training_resume():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@bp.route('/api/training/delete', methods=['POST'])
+def api_training_delete():
+    try:
+        data = request.get_json()
+        project_path = data.get('project_path')
+        dataset_name = data.get('dataset_name')
+        training_id = data.get('training_id')
+        
+        if not all([project_path, dataset_name, training_id]):
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+            
+        result = TrainingManager.delete_training_run(project_path, dataset_name, training_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/training/run/artifacts')
+def api_training_run_artifacts():
+    try:
+        project_path = request.args.get('project_path')
+        dataset_name = request.args.get('dataset_name')
+        training_id = request.args.get('training_id')
+        
+        if not all([project_path, dataset_name, training_id]):
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+            
+        artifacts = TrainingManager.get_run_artifacts(project_path, dataset_name, training_id)
+        
+        # 转换为 URL
+        res = {'images': [], 'weights': [], 'config': None}
+        
+        for img in artifacts.get('images', []):
+            res['images'].append({
+                'name': os.path.basename(img),
+                'url': f"/api/file?path={img}"
+            })
+            
+        for w in artifacts.get('weights', []):
+            res['weights'].append({
+                'name': os.path.basename(w),
+                'url': f"/api/file?path={w}"
+            })
+            
+        if artifacts.get('config'):
+             res['config'] = f"/api/file?path={artifacts['config']}"
+             
+        return jsonify({'success': True, 'artifacts': res})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/training/artifacts')
 def api_training_artifacts():
     try:

@@ -639,6 +639,140 @@ def api_validate_dataset():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@bp.route('/api/dataset/split', methods=['POST'])
+def api_dataset_split():
+    import random
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        dataset_name = data.get('dataset_name')
+        val_ratio = float(data.get('val_ratio', 0.1))
+        test_ratio = float(data.get('test_ratio', 0))
+
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        # Find dataset root
+        ds_candidates = [
+            os.path.join(project_path, 'training', dataset_name),
+            os.path.join(project_path, 'datasets', dataset_name),
+        ]
+        ds_root = None
+        for p in ds_candidates:
+            if p and os.path.isdir(p):
+                ds_root = p
+                break
+        if not ds_root:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        # Validation
+        if val_ratio + test_ratio >= 1.0:
+             return jsonify({'success': False, 'error': '验证集和测试集比例之和必须小于1'})
+
+        # Collect all images and labels
+        pairs = [] 
+        
+        subsets = ['train', 'val', 'test']
+        for subset in subsets:
+            img_dir = os.path.join(ds_root, subset, 'images')
+            lbl_dir = os.path.join(ds_root, subset, 'labels')
+            
+            if not os.path.exists(img_dir):
+                continue
+                
+            for f in os.listdir(img_dir):
+                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                    img_path = os.path.join(img_dir, f)
+                    name_no_ext = os.path.splitext(f)[0]
+                    lbl_path = None
+                    if os.path.exists(lbl_dir):
+                        p = os.path.join(lbl_dir, name_no_ext + '.txt')
+                        if os.path.exists(p):
+                            lbl_path = p
+                    
+                    pairs.append({
+                        'img': img_path,
+                        'lbl': lbl_path,
+                        'base': f,
+                        'name_no_ext': name_no_ext
+                    })
+
+        if not pairs:
+            return jsonify({'success': False, 'error': '未找到图片文件'})
+
+        # Shuffle
+        random.shuffle(pairs)
+        
+        total = len(pairs)
+        n_val = int(total * val_ratio)
+        n_test = int(total * test_ratio)
+        n_train = total - n_val - n_test
+        
+        # Split
+        train_set = pairs[:n_train]
+        val_set = pairs[n_train:n_train+n_val]
+        test_set = pairs[n_train+n_val:]
+        
+        # Use a temporary directory for safe moving
+        with tempfile.TemporaryDirectory(dir=ds_root) as tmp_dir:
+            # 1. Move all to temp staging
+            for p in pairs:
+                # Move image
+                dst_img = os.path.join(tmp_dir, f"img_{p['base']}") 
+                shutil.move(p['img'], dst_img)
+                p['current_img'] = dst_img
+                
+                # Move label
+                if p['lbl']:
+                    dst_lbl = os.path.join(tmp_dir, f"lbl_{p['name_no_ext']}.txt")
+                    shutil.move(p['lbl'], dst_lbl)
+                    p['current_lbl'] = dst_lbl
+                else:
+                    p['current_lbl'] = None
+            
+            # 2. Clear/Re-create target directories
+            for subset in subsets:
+                # We don't remove the root subset dir to preserve other files (like cache), 
+                # but we clean images/labels dirs.
+                # Actually, simpler to just ensure they exist. 
+                # Since we moved files OUT, they should be clean of the files we moved.
+                # But there might be leftover files (e.g. non-images in images dir?).
+                # Let's just ensure dirs exist.
+                os.makedirs(os.path.join(ds_root, subset, 'images'), exist_ok=True)
+                os.makedirs(os.path.join(ds_root, subset, 'labels'), exist_ok=True)
+                
+            # 3. Move from staging to targets
+            def move_to_subset(items, subset):
+                for item in items:
+                    # Image
+                    dst_img = os.path.join(ds_root, subset, 'images', item['base'])
+                    if os.path.exists(dst_img): # Should not happen if names are unique
+                        base, ext = os.path.splitext(item['base'])
+                        dst_img = os.path.join(ds_root, subset, 'images', f"{base}_{random.randint(1000,9999)}{ext}")
+                    shutil.move(item['current_img'], dst_img)
+                    
+                    # Label
+                    if item['current_lbl']:
+                        # Match the image name if we renamed image? 
+                        # Assuming we didn't rename image or if we did we should rename label too.
+                        # For now assume unique names.
+                        dst_lbl = os.path.join(ds_root, subset, 'labels', item['name_no_ext'] + '.txt')
+                        shutil.move(item['current_lbl'], dst_lbl)
+
+            move_to_subset(train_set, 'train')
+            move_to_subset(val_set, 'val')
+            move_to_subset(test_set, 'test')
+
+        return jsonify({
+            'success': True, 
+            'message': f'划分完成: 训练集 {len(train_set)}, 验证集 {len(val_set)}, 测试集 {len(test_set)}'
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/dataset/diagnose')
 def api_dataset_diagnose():
     try:

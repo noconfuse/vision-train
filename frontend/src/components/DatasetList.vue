@@ -146,6 +146,7 @@
               <th class="text-left px-4 py-2 font-medium">mAP50</th>
               <th class="text-left px-4 py-2 font-medium">mAP50-95</th>
               <th class="text-left px-4 py-2 font-medium">产物</th>
+              <th class="text-left px-4 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
@@ -156,9 +157,15 @@
               <td class="px-4 py-2 text-gray-700">{{ r.config?.imgsz ?? '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ metric(r, 'mAP50') ?? metric(r, 'map50') ?? '-' }}</td>
               <td class="px-4 py-2 text-gray-700">{{ metric(r, 'mAP50-95') ?? metric(r, 'map') ?? '-' }}</td>
-              <td class="px-4 py-2 text-gray-700 text-xs space-x-2">
-                <a :href="`/api/file?path=${encodePath(r.path + '/weights/best.pt')}`" target="_blank" class="text-blue-600 hover:underline">best.pt</a>
-                <a :href="`/api/file?path=${encodePath(r.path + '/confusion_matrix.png')}`" target="_blank" class="text-blue-600 hover:underline">matrix</a>
+              <td class="px-4 py-2 text-gray-700 text-xs">
+                <button @click="openArtifacts(r)" class="text-blue-600 hover:underline">
+                  可视化
+                </button>
+              </td>
+              <td class="px-4 py-2 text-gray-700 text-xs">
+                <button @click="deleteRun(r)" class="text-rose-600 hover:underline">
+                  删除
+                </button>
               </td>
             </tr>
           </tbody>
@@ -223,6 +230,58 @@
     </div>
   </div>
 
+  <div v-if="artifactsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeArtifacts">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-5xl p-6 h-[85vh] flex flex-col">
+      <div class="flex items-center justify-between mb-4 shrink-0">
+        <h3 class="text-lg font-bold">训练产物：{{ currentRun?.training_id }}</h3>
+        <button class="text-gray-500 hover:text-gray-700" @click="closeArtifacts">关闭</button>
+      </div>
+      
+      <div v-if="artifactsLoading" class="flex-1 flex items-center justify-center text-gray-500">
+        加载中...
+      </div>
+      <div v-else class="flex-1 overflow-y-auto space-y-6">
+        <!-- Images -->
+        <div v-if="currentArtifacts.images && currentArtifacts.images.length > 0">
+          <h4 class="font-bold text-gray-700 mb-2 sticky top-0 bg-white py-2 z-10 border-b">可视化图片</h4>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div v-for="img in currentArtifacts.images" :key="img.name" class="border rounded-lg p-2">
+              <div class="text-xs font-mono mb-1 text-gray-600 truncate" :title="img.name">{{ img.name }}</div>
+              <a :href="img.url" target="_blank" class="block bg-gray-50 rounded overflow-hidden">
+                <img :src="img.url" loading="lazy" class="w-full h-auto object-contain hover:scale-105 transition-transform" />
+              </a>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Weights -->
+        <div v-if="currentArtifacts.weights && currentArtifacts.weights.length > 0">
+          <h4 class="font-bold text-gray-700 mb-2 sticky top-0 bg-white py-2 z-10 border-b">权重文件</h4>
+          <div class="flex flex-wrap gap-3">
+            <a v-for="w in currentArtifacts.weights" :key="w.name" 
+               :href="w.url" 
+               class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 hover:bg-indigo-100 flex items-center gap-2">
+               <span>📦 {{ w.name }}</span>
+               <span class="text-indigo-400 text-xs">⬇️</span>
+            </a>
+          </div>
+        </div>
+        
+        <!-- Config -->
+        <div v-if="currentArtifacts.config">
+          <h4 class="font-bold text-gray-700 mb-2 sticky top-0 bg-white py-2 z-10 border-b">配置文件</h4>
+          <a :href="currentArtifacts.config" target="_blank" class="text-blue-600 hover:underline">
+            📄 查看 training_config.json
+          </a>
+        </div>
+
+        <div v-if="(!currentArtifacts.images || !currentArtifacts.images.length) && (!currentArtifacts.weights || !currentArtifacts.weights.length) && !currentArtifacts.config" class="text-center py-10 text-gray-400">
+          未找到相关产物
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div v-if="deleteDataset" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeDelete">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
       <h3 class="text-lg font-bold mb-2 text-rose-700">删除数据集</h3>
@@ -271,6 +330,11 @@ const tagsSaving = ref(false);
 
 const deleteDataset = ref(null);
 const deleteLoading = ref(false);
+
+const artifactsModal = ref(false);
+const artifactsLoading = ref(false);
+const currentArtifacts = ref({ images: [], weights: [], config: null });
+const currentRun = ref(null);
 
 const downloadingMap = ref({});
 
@@ -485,6 +549,59 @@ const runDelete = async () => {
     alert('请求失败');
   } finally {
     deleteLoading.value = false;
+  }
+};
+
+const openArtifacts = async (run) => {
+  currentRun.value = run;
+  artifactsModal.value = true;
+  artifactsLoading.value = true;
+  currentArtifacts.value = { images: [], weights: [], config: null };
+  
+  try {
+    const res = await api.getTrainingRunArtifacts({
+      project_path: store.currentProject.path,
+      dataset_name: historyDataset.value.name,
+      training_id: run.training_id || run.id
+    });
+    if (res.data.success) {
+      currentArtifacts.value = res.data.artifacts;
+    } else {
+      alert(res.data.error || '获取产物失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    artifactsLoading.value = false;
+  }
+};
+
+const closeArtifacts = () => {
+  artifactsModal.value = false;
+  currentArtifacts.value = { images: [], weights: [], config: null };
+  currentRun.value = null;
+};
+
+const deleteRun = async (run) => {
+  if (!confirm(`确定要删除训练记录 ${run.training_id || run.id} 吗？`)) return;
+  
+  try {
+    const res = await api.deleteTrainingRun({
+      project_path: store.currentProject.path,
+      dataset_name: historyDataset.value.name,
+      training_id: run.training_id || run.id
+    });
+    
+    if (res.data.success) {
+      // Refresh history
+      await openHistory(historyDataset.value);
+    } else {
+      alert(res.data.error || '删除失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
   }
 };
 </script>

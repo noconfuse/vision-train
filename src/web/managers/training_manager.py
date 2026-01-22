@@ -107,12 +107,62 @@ class TrainingManager:
                 with open(os.path.join(save_dir, 'training_config.json'), 'w') as f:
                     json.dump(config_save, f, indent=2)
 
+                # 验证并自动修复 data.yaml (处理 val 缺失情况)
+                try:
+                    with open(data_yaml, 'r') as f:
+                        yaml_content = yaml.safe_load(f)
+                    
+                    needs_fix = False
+                    # 获取数据集根路径
+                    ds_base = yaml_content.get('path', final_dataset_path)
+                    
+                    # 检查 val 路径
+                    val_rel = yaml_content.get('val')
+                    if val_rel:
+                        # 处理路径拼接
+                        if os.path.isabs(val_rel):
+                            val_full = val_rel
+                        else:
+                            val_full = os.path.join(ds_base, val_rel)
+                            
+                        if not os.path.exists(val_full):
+                            training_status['log'].append(f"警告: 验证集目录不存在: {val_full}")
+                            # 尝试使用 train 作为 fallback
+                            train_rel = yaml_content.get('train')
+                            if train_rel:
+                                training_status['log'].append("自动修复: 将使用训练集作为验证集")
+                                yaml_content['val'] = train_rel
+                                needs_fix = True
+                    
+                    if needs_fix:
+                        fixed_yaml_path = os.path.join(save_dir, "data_fixed.yaml")
+                        with open(fixed_yaml_path, 'w') as f:
+                            yaml.dump(yaml_content, f)
+                        data_yaml = fixed_yaml_path
+                        training_status['log'].append(f"已生成修复后的配置文件: {data_yaml}")
+                        
+                except Exception as e:
+                    training_status['log'].append(f"配置文件检查警告: {str(e)}")
+
                 training_status['message'] = f'开始训练 {model_name}...'
                 training_status['log'].append(f"训练输出目录: {save_dir}")
                 
+                # 解析模型路径
+                model_path = model_name
+                try:
+                    from managers.model_manager import ModelManager
+                    models = ModelManager.scan_models(project_path)
+                    for m in models:
+                        if m['name'] == model_name:
+                            model_path = m['path']
+                            training_status['log'].append(f"使用本地模型路径: {model_path}")
+                            break
+                except Exception as e:
+                    training_status['log'].append(f"模型路径解析警告: {str(e)}")
+
                 # 调用 YOLO
                 from ultralytics import YOLO
-                model = YOLO(model_name)
+                model = YOLO(model_path)
                 
                 # 自定义回调更新状态
                 def on_train_epoch_end(trainer):
@@ -137,37 +187,46 @@ class TrainingManager:
 
                 model.add_callback("on_train_epoch_end", on_train_epoch_end)
                 
-                # 训练参数
+                # 基础参数
                 args = {
                     'data': data_yaml,
-                    'epochs': int(training_config.get('epochs', 100)),
-                    'imgsz': int(training_config.get('imgsz', 640)),
-                    'batch': int(training_config.get('batch', 16)),
                     'device': get_device(),
                     'project': os.path.dirname(save_dir),
                     'name': os.path.basename(save_dir),
                     'exist_ok': True,
                     'patience': 50,
                     'save': True,
-                    'rect': training_config.get('rect', False),
-                    'scale': float(training_config.get('scale', 0.5)),
-                    'mosaic': float(training_config.get('mosaic', 1.0)),
-                    'mixup': float(training_config.get('mixup', 0.0)),
-                    'close_mosaic': int(training_config.get('close_mosaic', 10)),
                 }
 
-                # Optional parameters
-                if training_config.get('lr0'):
-                    args['lr0'] = float(training_config.get('lr0'))
-                
-                if training_config.get('freeze'):
-                    val = training_config.get('freeze')
-                    if isinstance(val, str) and val.lower() == 'backbone':
+                # 辅助函数：仅在参数有效时添加到 args
+                def add_arg(key, type_func):
+                    val = training_config.get(key)
+                    if val not in (None, ''):
+                        try:
+                            args[key] = type_func(val)
+                        except (ValueError, TypeError):
+                            pass
+
+                # 动态添加参数
+                add_arg('epochs', int)
+                add_arg('imgsz', int)
+                add_arg('batch', int)
+                add_arg('rect', bool)
+                add_arg('scale', float)
+                add_arg('mosaic', float)
+                add_arg('mixup', float)
+                add_arg('close_mosaic', int)
+                add_arg('lr0', float)
+
+                # 特殊处理 freeze
+                freeze_val = training_config.get('freeze')
+                if freeze_val not in (None, ''):
+                    if isinstance(freeze_val, str) and freeze_val.lower() == 'backbone':
                         args['freeze'] = 10
                     else:
                         try:
-                            args['freeze'] = int(val)
-                        except ValueError:
+                            args['freeze'] = int(freeze_val)
+                        except (ValueError, TypeError):
                             pass
 
                 model.train(**args)
@@ -305,6 +364,47 @@ class TrainingManager:
                 })
                 
         return sorted(runs, key=lambda x: x['id'], reverse=True)
+
+    @staticmethod
+    def delete_training_run(project_path, dataset_name, training_id):
+        """删除训练记录"""
+        base = os.path.join(project_path, "training_outputs", dataset_name, training_id)
+        if os.path.exists(base) and os.path.isdir(base):
+            shutil.rmtree(base)
+            return {'success': True, 'message': '删除成功'}
+        return {'success': False, 'error': '训练记录不存在'}
+
+    @staticmethod
+    def get_run_artifacts(project_path, dataset_name, training_id):
+        """获取指定训练的所有产物（包括可视化图片）"""
+        base = os.path.join(project_path, "training_outputs", dataset_name, training_id)
+        if not os.path.exists(base):
+            return {}
+            
+        artifacts = {
+            'images': [],
+            'weights': [],
+            'config': None
+        }
+        
+        # 扫描图片
+        for f in sorted(os.listdir(base)):
+            if f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                artifacts['images'].append(os.path.join(base, f))
+                
+        # 扫描权重
+        weights_dir = os.path.join(base, 'weights')
+        if os.path.exists(weights_dir):
+            for f in sorted(os.listdir(weights_dir)):
+                if f.endswith('.pt'):
+                    artifacts['weights'].append(os.path.join(weights_dir, f))
+                    
+        # 配置文件
+        cfg = os.path.join(base, 'training_config.json')
+        if os.path.exists(cfg):
+            artifacts['config'] = cfg
+            
+        return artifacts
 
     @staticmethod
     def get_latest_artifacts(project_path):

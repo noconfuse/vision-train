@@ -71,6 +71,12 @@ export default {
   getTrainingRuns(params) {
     return api.get('/training/runs', { params });
   },
+  deleteTrainingRun(data) {
+    return api.post('/training/delete', data);
+  },
+  getTrainingRunArtifacts(params) {
+    return api.get('/training/run/artifacts', { params });
+  },
   
   // Videos
   getVideos(params) {
