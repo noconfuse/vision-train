@@ -151,8 +151,14 @@ class VideoManager:
             if fps <= 0 or total_frames <= 0:
                 return True
 
-            probe = [0, min(total_frames - 1, int(max(1.0, fps)))]
-            for frame_idx in probe:
+            # Check start, middle, and near end
+            probe_indices = [
+                0, 
+                int(total_frames * 0.5), 
+                max(0, total_frames - int(fps) - 1)
+            ]
+            
+            for frame_idx in probe_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                 ret, frame = cap.read()
                 if (not ret) or frame is None:
@@ -164,21 +170,185 @@ class VideoManager:
             return True
 
     @staticmethod
+    def _get_video_info_ffprobe(video_path):
+        """Use ffprobe to get accurate video info (duration, frames, fps) for broken containers"""
+        try:
+            import subprocess
+            
+            # Get frame count by counting packets (most accurate for broken streams)
+            cmd = [
+                'ffprobe', 
+                '-v', 'error', 
+                '-select_streams', 'v:0', 
+                '-count_packets', 
+                '-show_entries', 'stream=nb_read_packets', 
+                '-of', 'csv=p=0', 
+                video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                try:
+                    frames = int(result.stdout.strip())
+                    return frames
+                except ValueError:
+                    pass
+            return 0
+        except Exception as e:
+            print(f"FFprobe failed: {e}")
+            return 0
+
+    @staticmethod
+    def _extract_using_ffmpeg(project_path, video_path, images_dir, task_id, strategy, value, total_frames, fps, video_basename):
+        """Use ffmpeg command line for extraction (more robust for broken videos)"""
+        import subprocess
+        import time
+        from collections import deque
+        
+        try:
+            # Build filter
+            vf_filter = ""
+            target_count_est = 0
+            
+            if strategy == 'interval':
+                # value is seconds. fps = 1/value
+                if value <= 0: value = 1
+                vf_filter = f"fps=1/{value}"
+                duration = total_frames / fps if fps > 0 else 0
+                target_count_est = int(duration / value)
+            elif strategy == 'count':
+                # value is total count.
+                target_count_est = int(value)
+                duration = total_frames / fps if fps > 0 else 0
+                if duration > 0:
+                    rate = value / duration
+                    vf_filter = f"fps={rate}"
+                else:
+                    vf_filter = "fps=1"
+            
+            # Output pattern: video_name_f000001.jpg
+            # Note: ffmpeg numbering will be sequential (1, 2, 3...) not original frame index.
+            # This is a trade-off for robustness.
+            output_pattern = os.path.join(images_dir, f"{video_basename}_f%06d.jpg")
+            
+            cmd = [
+                'ffmpeg',
+                '-y', # Overwrite
+                '-i', video_path,
+                '-vf', vf_filter,
+                '-q:v', '2', # High quality
+                '-start_number', '0',
+                output_pattern
+            ]
+            
+            print(f"Starting ffmpeg extraction: {' '.join(cmd)}")
+            
+            stderr_tail = deque(maxlen=80)
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+            )
+
+            def _drain_stderr():
+                try:
+                    if process.stderr is None:
+                        return
+                    for line in process.stderr:
+                        stderr_tail.append(line.rstrip('\n'))
+                except Exception:
+                    pass
+
+            drain_thread = threading.Thread(target=_drain_stderr, daemon=True)
+            drain_thread.start()
+            
+            # Monitor progress
+            last_count = -1
+            last_change_ts = time.time()
+            while process.poll() is None:
+                try:
+                    # Count files to estimate progress
+                    # This is lightweight enough for 1s sleep
+                    files = [f for f in os.listdir(images_dir) if f.endswith('.jpg')]
+                    current_count = len(files)
+
+                    if current_count != last_count:
+                        last_count = current_count
+                        last_change_ts = time.time()
+                    else:
+                        if time.time() - last_change_ts > 60:
+                            try:
+                                process.terminate()
+                            except Exception:
+                                pass
+                            time.sleep(2)
+                            try:
+                                if process.poll() is None:
+                                    process.kill()
+                            except Exception:
+                                pass
+                            with VideoManager._lock:
+                                if task_id in VideoManager._tasks:
+                                    VideoManager._tasks[task_id]['error'] = 'ffmpeg 抽帧长时间无进展，可能视频已损坏/无法继续解码'
+                            break
+                    
+                    if target_count_est > 0:
+                        progress = int((current_count / target_count_est) * 100)
+                        progress = max(0, min(99, progress))
+                        
+                        with VideoManager._lock:
+                            if task_id in VideoManager._tasks:
+                                VideoManager._tasks[task_id]['progress'] = progress
+                except Exception:
+                    pass
+                time.sleep(1)
+            
+            if process.returncode != 0:
+                tail = '\n'.join(list(stderr_tail)[-40:])
+                if tail:
+                    print(f"FFmpeg failed: {tail}")
+                files = [f for f in os.listdir(images_dir) if f.endswith('.jpg')]
+                extracted = len(files)
+                if extracted > 0:
+                    with VideoManager._lock:
+                        if task_id in VideoManager._tasks and not VideoManager._tasks[task_id].get('error'):
+                            VideoManager._tasks[task_id]['error'] = 'ffmpeg 退出异常，但已产出部分图片（视频可能损坏）'
+                    return True, extracted
+                return False, 0
+            
+            # Final count
+            files = [f for f in os.listdir(images_dir) if f.endswith('.jpg')]
+            return True, len(files)
+            
+        except Exception as e:
+            print(f"FFmpeg extraction exception: {e}")
+            return False, 0
+
+    @staticmethod
     def _extraction_worker(project_path, video_name, task_id, strategy, value):
         video_path = os.path.join(project_path, 'videos', video_name)
         task_dir = VideoManager._get_task_dir(project_path, task_id)
         images_dir = os.path.join(task_dir, 'images')
         
         try:
+            # 1. Get Video Info (Robust)
             cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise Exception("Failed to open video")
-                
             fps = cap.get(cv2.CAP_PROP_FPS)
-            if fps <= 0:
-                fps = 25.0
-            
+            if fps <= 0: fps = 25.0
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            
+            # Fix for broken header
+            if total_frames <= 0:
+                ff_frames = VideoManager._get_video_info_ffprobe(video_path)
+                if ff_frames > 0:
+                    total_frames = ff_frames
+                else:
+                    # Fallback to some default if unknown, or let ffmpeg handle it
+                    total_frames = 0 
             
             with VideoManager._lock:
                 if task_id in VideoManager._tasks:
@@ -186,7 +356,39 @@ class VideoManager:
                     VideoManager._write_task_meta(project_path, VideoManager._tasks[task_id])
             
             video_basename = os.path.splitext(video_name)[0]
-            extracted_count = 0
+            
+            # 2. Try FFmpeg Extraction first (More robust for broken videos)
+            success, extracted_count = VideoManager._extract_using_ffmpeg(
+                project_path, video_path, images_dir, task_id, strategy, value, total_frames, fps, video_basename
+            )
+            
+            if success and extracted_count > 0:
+                with VideoManager._lock:
+                    if task_id in VideoManager._tasks:
+                        VideoManager._tasks[task_id]['status'] = 'completed'
+                        VideoManager._tasks[task_id]['progress'] = 100
+                        VideoManager._tasks[task_id]['extracted_count'] = extracted_count
+                        VideoManager._tasks[task_id]['total_frames'] = total_frames
+                        VideoManager._write_task_meta(project_path, VideoManager._tasks[task_id])
+                return
+            else:
+                # 3. Fallback to OpenCV (Original Logic)
+                print("FFmpeg failed or produced 0 images, falling back to OpenCV...")
+                
+                # Re-open cap for OpenCV logic
+                cap = cv2.VideoCapture(video_path)
+                if not cap.isOpened():
+                    raise Exception("Failed to open video for OpenCV fallback")
+                
+                # Re-ensure fps/total_frames
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                if fps <= 0: fps = 25.0
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames <= 0:
+                     # Simple manual scan fallback if needed, but we rely on previous scan result if possible
+                     # Actually we already scanned it above and saved to total_frames var.
+                     # But cap.get returns 0.
+                     pass
 
             def robust_extract(cap_obj):
                 nonlocal extracted_count
@@ -334,10 +536,23 @@ class VideoManager:
                     meta.setdefault('id', tid)
                     meta.setdefault('created_at', datetime.fromtimestamp(os.path.getmtime(task_dir)).strftime('%Y-%m-%d %H:%M:%S'))
                     meta.setdefault('status', 'completed')
-                    meta.setdefault('progress', 100 if meta.get('status') == 'completed' else 0)
                     meta.setdefault('extracted_count', 0)
                     meta.setdefault('total_frames', 0)
                     meta.setdefault('error', None)
+                    images_dir = os.path.join(task_dir, 'images')
+                    if meta.get('status') == 'running' and tid not in VideoManager._tasks and os.path.exists(images_dir):
+                        try:
+                            images = [f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                            images.sort()
+                            extracted_count = len(images)
+                            if extracted_count > 0:
+                                meta['status'] = 'completed'
+                                meta['progress'] = 100
+                                meta['extracted_count'] = extracted_count
+                                VideoManager._write_task_meta(project_path, meta)
+                        except Exception:
+                            pass
+                    meta.setdefault('progress', 100 if meta.get('status') == 'completed' else 0)
                     tasks_by_id[tid] = meta
                     continue
 
@@ -479,11 +694,28 @@ class VideoManager:
 
     @staticmethod
     def delete_task(project_path, task_id):
-        """删除任务及临时文件"""
-        task_dir = VideoManager._get_task_dir(project_path, task_id)
-        if os.path.exists(task_dir):
-            shutil.rmtree(task_dir)
-            
+        """删除任务"""
         with VideoManager._lock:
             if task_id in VideoManager._tasks:
                 del VideoManager._tasks[task_id]
+        
+        task_dir = VideoManager._get_task_dir(project_path, task_id)
+        if os.path.exists(task_dir):
+            shutil.rmtree(task_dir)
+
+    @staticmethod
+    def delete_task_images(project_path, task_id, image_names):
+        """删除任务中的指定图片"""
+        task_dir = VideoManager._get_task_dir(project_path, task_id)
+        images_dir = os.path.join(task_dir, 'images')
+        
+        deleted_count = 0
+        for name in image_names:
+            try:
+                p = os.path.join(images_dir, name)
+                if os.path.exists(p):
+                    os.remove(p)
+                    deleted_count += 1
+            except Exception:
+                pass
+        return deleted_count
