@@ -25,6 +25,121 @@ def api_datasets():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@bp.route('/api/dataset/create_subset', methods=['POST'])
+def api_dataset_create_subset():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        source_dataset = data.get('source_dataset')
+        new_dataset_name = data.get('new_dataset_name')
+        image_paths = data.get('image_paths') or []
+
+        if not project_path or not source_dataset or not new_dataset_name or not image_paths:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        # 1. 确定目标路径
+        target_root = os.path.join(project_path, 'training', new_dataset_name)
+        if os.path.exists(target_root):
+             return jsonify({'success': False, 'error': f'数据集 {new_dataset_name} 已存在'})
+
+        # 2. 准备目录结构
+        target_images_dir = os.path.join(target_root, 'train', 'images')
+        target_labels_dir = os.path.join(target_root, 'train', 'labels')
+        os.makedirs(target_images_dir, exist_ok=True)
+        os.makedirs(target_labels_dir, exist_ok=True)
+
+        # 3. 复制图片和标签
+        count = 0
+        for img_path in image_paths:
+            if not os.path.exists(img_path):
+                continue
+            
+            # 复制图片
+            img_name = os.path.basename(img_path)
+            shutil.copy2(img_path, os.path.join(target_images_dir, img_name))
+            
+            # 尝试查找标签
+            lbl_path = None
+            # 策略：替换路径中的 /images/ 为 /labels/ 并修改扩展名为 .txt
+            parts = img_path.split(os.sep)
+            if 'images' in parts:
+                try:
+                    # 找到最后一个 'images'
+                    idx = len(parts) - 1 - parts[::-1].index('images')
+                    parts[idx] = 'labels'
+                    parts[-1] = os.path.splitext(parts[-1])[0] + '.txt'
+                    candidate = os.sep.join(parts)
+                    if os.path.exists(candidate):
+                        lbl_path = candidate
+                except ValueError:
+                    pass
+            
+            # 如果上述策略失败，尝试简单的同级 labels 目录
+            if not lbl_path:
+                parent = os.path.dirname(img_path)
+                grandparent = os.path.dirname(parent)
+                if os.path.basename(parent) == 'images': # dataset/images/x.jpg
+                     candidate = os.path.join(grandparent, 'labels', os.path.splitext(img_name)[0] + '.txt')
+                     if os.path.exists(candidate):
+                         lbl_path = candidate
+
+            if lbl_path:
+                shutil.copy2(lbl_path, os.path.join(target_labels_dir, os.path.basename(lbl_path)))
+            
+            count += 1
+
+        # 4. 创建 dataset.yaml
+        names = {}
+        # 尝试查找源数据集路径
+        source_candidates = [
+            os.path.join(project_path, 'training', source_dataset),
+            os.path.join(project_path, 'datasets', source_dataset)
+        ]
+        source_root = None
+        for p in source_candidates:
+            if os.path.exists(p):
+                source_root = p
+                break
+        
+        if source_root:
+             # 优先直接读取 dataset.yaml
+            yaml_path = os.path.join(source_root, 'dataset.yaml')
+            if not os.path.exists(yaml_path):
+                yaml_path = os.path.join(source_root, 'data.yaml')
+            
+            if os.path.exists(yaml_path):
+                try:
+                    with open(yaml_path, 'r', encoding='utf-8') as f:
+                        data = yaml.safe_load(f) or {}
+                        if 'names' in data:
+                            names = data['names']
+                except:
+                    pass
+            
+            # 如果没读到，使用 ProjectManager 分析
+            if not names:
+                info = ProjectManager.analyze_dataset(source_root)
+                if info and info.get('names'):
+                    names = {i: n for i, n in enumerate(info['names'])}
+        
+        # 写入 dataset.yaml
+        yaml_data = {
+            'path': target_root,
+            'train': 'train/images',
+            'val': 'train/images', 
+            'names': names
+        }
+        
+        with open(os.path.join(target_root, 'dataset.yaml'), 'w', encoding='utf-8') as f:
+            yaml.safe_dump(yaml_data, f, allow_unicode=True, sort_keys=False)
+
+        return jsonify({'success': True, 'message': f'成功创建子数据集 {new_dataset_name}，包含 {count} 张图片'})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/dataset/info')
 def api_dataset_info():
     try:

@@ -47,26 +47,13 @@ def api_auto_annotate():
         conf = float(data.get('conf', 0.25))
         if not image_path:
              return jsonify({'success': False, 'error': '缺少图片路径'})
-
-        from ultralytics import YOLO
-        if model_path:
-            model = YOLO(model_path)
-        else:
-            model = ModelManager.get_auto_annotate_model(project_path, prefer_project_best=True)
-            
-        if model is None:
-            return jsonify({'success': False, 'error': '模型不可用'})
-
-        results = model.predict(image_path, conf=conf, verbose=False)
-        boxes = []
-        for r in results:
-            for b in r.boxes:
-                xyxy = b.xyxy[0].tolist()
-                cls = int(b.cls.item()) if hasattr(b, 'cls') else 0
-                boxes.append({
-                    'class': cls,
-                    'x1': xyxy[0], 'y1': xyxy[1], 'x2': xyxy[2], 'y2': xyxy[3]
-                })
+        boxes = AnnotationManager.auto_annotate_image(
+            project_path=project_path,
+            image_path=image_path,
+            model_path=model_path,
+            conf=conf,
+            max_det=200
+        )
         return jsonify({'success': True, 'boxes': boxes})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

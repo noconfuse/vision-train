@@ -14,6 +14,58 @@ PRETRAINED_MODELS_DIR = os.path.join(PROJECT_ROOT, "pretrained_models")
 # 缓存加载的模型
 _light_models = {}
 
+def _safe_size(path):
+    try:
+        return os.path.getsize(path)
+    except Exception:
+        return 0
+
+def _dir_size(root_dir, exts=None):
+    total = 0
+    try:
+        for r, _, fs in os.walk(root_dir):
+            for f in fs:
+                if exts and not any(f.lower().endswith(e) for e in exts):
+                    continue
+                total += _safe_size(os.path.join(r, f))
+    except Exception:
+        return 0
+    return total
+
+def _pick_openvino_xml(path):
+    if not path:
+        return None
+    if os.path.isfile(path) and path.lower().endswith('.xml'):
+        return os.path.abspath(path)
+    if os.path.isdir(path):
+        cand = os.path.join(path, 'best.xml')
+        if os.path.exists(cand):
+            return os.path.abspath(cand)
+        xmls = []
+        for r, _, fs in os.walk(path):
+            for f in fs:
+                if f.lower().endswith('.xml'):
+                    xmls.append(os.path.abspath(os.path.join(r, f)))
+        if not xmls:
+            return None
+        xmls.sort(key=lambda p: (0 if os.path.basename(p) == 'best.xml' else 1, len(p), p))
+        return xmls[0]
+    return None
+
+def _format_openvino_name(xml_path):
+    try:
+        base_dir = os.path.dirname(xml_path)
+        meta = os.path.join(base_dir, 'metadata.yaml')
+        if os.path.exists(meta):
+            with open(meta, 'r', encoding='utf-8') as f:
+                y = yaml.safe_load(f) or {}
+            args = y.get('args') or {}
+            if isinstance(args, dict) and args.get('int8') is True:
+                return f"{os.path.basename(base_dir)} (OpenVINO INT8)"
+        return f"{os.path.basename(base_dir)} (OpenVINO)"
+    except Exception:
+        return f"{os.path.basename(os.path.dirname(xml_path))} (OpenVINO)"
+
 class ModelManager:
     """模型管理器"""
     
@@ -22,6 +74,7 @@ class ModelManager:
         """获取全局预训练模型"""
         models = []
         config_file = os.path.join(PRETRAINED_MODELS_DIR, "config.yaml")
+        existing_paths = set()
         
         # 1. 从 config.yaml 读取配置
         if os.path.exists(config_file):
@@ -36,32 +89,56 @@ class ModelManager:
                             if path:
                                 if not os.path.isabs(path):
                                     path = os.path.join(PROJECT_ROOT, path)
-                                if os.path.exists(path):
+                                ov_xml = _pick_openvino_xml(path)
+                                add_path = ov_xml or (os.path.abspath(path) if os.path.exists(path) else None)
+                                if add_path and add_path not in existing_paths and os.path.exists(add_path):
+                                    if ov_xml:
+                                        size = _dir_size(os.path.dirname(ov_xml), exts={'.xml', '.bin'})
+                                        display_name = _format_openvino_name(ov_xml)
+                                    else:
+                                        size = _safe_size(add_path) if os.path.isfile(add_path) else _dir_size(add_path)
+                                        display_name = name
                                     models.append({
-                                        "name": name,
+                                        "name": display_name,
                                         "type": "pretrained",
-                                        "path": os.path.abspath(path),
-                                        "size": os.path.getsize(path) if os.path.isfile(path) else 0,
+                                        "path": os.path.abspath(add_path),
+                                        "size": size,
                                         "is_global": True
                                     })
+                                    existing_paths.add(os.path.abspath(add_path))
             except Exception as e:
                 print(f"Error loading pretrained models config: {e}")
 
-        # 2. 扫描 pretrained_models 目录下的 .pt 文件
+        # 2. 扫描 pretrained_models 目录下的模型文件/目录
         if os.path.exists(PRETRAINED_MODELS_DIR):
             for entry in os.listdir(PRETRAINED_MODELS_DIR):
                 ep = os.path.join(PRETRAINED_MODELS_DIR, entry)
-                if os.path.isfile(ep) and entry.lower().endswith('.pt'):
-                    # 避免重复添加 (通过路径判断)
-                    existing_paths = {m['path'] for m in models}
-                    if os.path.abspath(ep) not in existing_paths:
-                        models.append({
-                            "name": entry,
-                            "type": "pretrained",
-                            "path": os.path.abspath(ep),
-                            "size": os.path.getsize(ep),
-                            "is_global": True
-                        })
+                add_path = None
+                display_name = entry
+                size = 0
+
+                if os.path.isfile(ep) and entry.lower().endswith(('.pt', '.onnx', '.xml')):
+                    add_path = os.path.abspath(ep)
+                    size = _safe_size(add_path)
+                    if entry.lower().endswith('.xml'):
+                        display_name = _format_openvino_name(add_path)
+                        size = _dir_size(os.path.dirname(add_path), exts={'.xml', '.bin'})
+                elif os.path.isdir(ep):
+                    ov_xml = _pick_openvino_xml(ep)
+                    if ov_xml:
+                        add_path = ov_xml
+                        display_name = _format_openvino_name(ov_xml)
+                        size = _dir_size(os.path.dirname(ov_xml), exts={'.xml', '.bin'})
+
+                if add_path and add_path not in existing_paths and os.path.exists(add_path):
+                    models.append({
+                        "name": display_name,
+                        "type": "pretrained",
+                        "path": os.path.abspath(add_path),
+                        "size": size,
+                        "is_global": True
+                    })
+                    existing_paths.add(os.path.abspath(add_path))
         return models
 
     @staticmethod
@@ -76,12 +153,28 @@ class ModelManager:
         models_dir = os.path.join(project_path, "models")
         if os.path.exists(models_dir):
             for item in os.listdir(models_dir):
-                if item.lower().endswith('.pt'):
+                ip = os.path.join(models_dir, item)
+                add_path = None
+                display_name = item
+                size = 0
+                if os.path.isfile(ip) and item.lower().endswith(('.pt', '.onnx', '.xml')):
+                    add_path = ip
+                    size = _safe_size(add_path)
+                    if item.lower().endswith('.xml'):
+                        display_name = _format_openvino_name(add_path)
+                        size = _dir_size(os.path.dirname(add_path), exts={'.xml', '.bin'})
+                elif os.path.isdir(ip):
+                    ov_xml = _pick_openvino_xml(ip)
+                    if ov_xml:
+                        add_path = ov_xml
+                        display_name = _format_openvino_name(ov_xml)
+                        size = _dir_size(os.path.dirname(ov_xml), exts={'.xml', '.bin'})
+                if add_path and os.path.exists(add_path):
                     models.append({
-                        "name": item,
+                        "name": display_name,
                         "type": "pretrained",
-                        "path": os.path.join(models_dir, item),
-                        "size": os.path.getsize(os.path.join(models_dir, item))
+                        "path": os.path.abspath(add_path),
+                        "size": size
                     })
                     
         # 2. 扫描 training_outputs (训练产物)
