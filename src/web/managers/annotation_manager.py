@@ -405,7 +405,15 @@ class AnnotationManager:
                             with Image.open(img_path) as im:
                                 w, h = im.size
                         except Exception:
-                            w, h = 1, 1
+                            try:
+                                import cv2
+                                im = cv2.imread(img_path)
+                                if im is not None and getattr(im, 'shape', None) is not None:
+                                    h, w = im.shape[:2]
+                                else:
+                                    w, h = 1, 1
+                            except Exception:
+                                w, h = 1, 1
                             
                         # 读取已有人工与自动标签用于去重
                         def _read_yolo(file_path):
@@ -431,8 +439,16 @@ class AnnotationManager:
                                 return arr
                             return arr
                             
-                        manual_lbl = os.path.join(ds_root, 'labels', split, os.path.splitext(os.path.relpath(img_path, img_dir))[0] + '.txt')
-                        exist_manual = _read_yolo(manual_lbl)
+                        rel_noext = os.path.splitext(os.path.relpath(img_path, img_dir))[0]
+                        manual_candidates = [
+                            os.path.join(ds_root, split, 'labels', rel_noext + '.txt'),
+                            os.path.join(ds_root, 'labels', split, rel_noext + '.txt'),
+                        ]
+                        exist_manual = []
+                        for cand in manual_candidates:
+                            if os.path.exists(cand):
+                                exist_manual = _read_yolo(cand)
+                                break
                         exist_auto = _read_yolo(auto_lbl_path)
                         
                         def _iou(a, b):

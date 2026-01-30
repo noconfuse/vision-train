@@ -649,6 +649,213 @@ def api_dataset_reorder_labels():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+def _dataset_delete_label(ds_root, yaml_path, delete_id, splits=None, delete_empty_files=True):
+    with open(yaml_path, 'r', encoding='utf-8') as f:
+        y = yaml.safe_load(f) or {}
+
+    original_names = y.get('names')
+    original_is_dict = isinstance(original_names, dict)
+    if isinstance(original_names, dict):
+        pairs = []
+        for k, v in original_names.items():
+            try:
+                kk = int(k)
+            except Exception:
+                continue
+            pairs.append((kk, v))
+        if pairs:
+            old_names = [v for _, v in sorted(pairs, key=lambda x: x[0])]
+        else:
+            old_names = list(original_names.values())
+    elif isinstance(original_names, list):
+        old_names = list(original_names)
+    else:
+        raise ValueError('data.yaml 缺少 names')
+
+    n = len(old_names)
+    if delete_id < 0 or delete_id >= n:
+        raise ValueError('class_id 越界')
+    deleted_name = old_names[delete_id]
+
+    new_names = [name for idx, name in enumerate(old_names) if idx != delete_id]
+    if original_is_dict:
+        y['names'] = {i: name for i, name in enumerate(new_names)}
+    else:
+        y['names'] = new_names
+    y['nc'] = len(new_names)
+
+    with open(yaml_path, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
+
+    if splits is None:
+        split_list = ['train', 'val', 'test']
+    elif isinstance(splits, list):
+        split_list = [str(s).strip() for s in splits if str(s).strip()]
+    else:
+        raise ValueError('splits 参数无效')
+
+    updated_files = 0
+    deleted_files = 0
+    shifted_lines = 0
+    removed_lines = 0
+    skipped_files = 0
+
+    def rewrite_label_file(fp):
+        nonlocal shifted_lines, removed_lines, deleted_files
+        try:
+            with open(fp, 'r', encoding='utf-8') as rf:
+                lines = rf.readlines()
+        except Exception:
+            return False
+
+        out = []
+        changed = False
+        for line in lines:
+            s = line.strip()
+            if not s:
+                continue
+            parts = s.split()
+            if not parts:
+                continue
+            try:
+                cid = int(float(parts[0]))
+            except Exception:
+                out.append(line if line.endswith('\n') else (line + '\n'))
+                continue
+
+            if cid == delete_id:
+                changed = True
+                removed_lines += 1
+                continue
+            if cid > delete_id:
+                parts[0] = str(cid - 1)
+                changed = True
+                shifted_lines += 1
+                out.append(' '.join(parts) + '\n')
+                continue
+
+            out.append(' '.join(parts) + '\n')
+
+        if not changed:
+            return False
+
+        if delete_empty_files and len(out) == 0:
+            try:
+                os.remove(fp)
+                deleted_files += 1
+                return True
+            except Exception:
+                pass
+
+        try:
+            with open(fp, 'w', encoding='utf-8') as wf:
+                wf.writelines(out)
+            return True
+        except Exception:
+            return False
+
+    for split in split_list:
+        lbl_dir = os.path.join(ds_root, split, 'labels')
+        auto_dir = os.path.join(ds_root, 'auto_labels', split)
+        for base in (lbl_dir, auto_dir):
+            if not os.path.isdir(base):
+                continue
+            for root, _, files in os.walk(base):
+                for fn in files:
+                    if not fn.lower().endswith('.txt'):
+                        continue
+                    fp = os.path.join(root, fn)
+                    ok = rewrite_label_file(fp)
+                    if ok:
+                        updated_files += 1
+                    else:
+                        skipped_files += 1
+
+    return {
+        'dataset_root': ds_root,
+        'yaml_path': yaml_path,
+        'deleted_label_id': delete_id,
+        'deleted_label_name': deleted_name,
+        'nc': len(new_names),
+        'updated_files': updated_files,
+        'deleted_files': deleted_files,
+        'shifted_lines': shifted_lines,
+        'removed_lines': removed_lines,
+        'skipped_files': skipped_files,
+        'splits': split_list
+    }
+
+
+@bp.route('/api/dataset/delete_label', methods=['POST'])
+def api_dataset_delete_label():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        dataset_name = data.get('dataset_name')
+        class_id = data.get('class_id')
+        class_name = data.get('class_name')
+        splits = data.get('splits')
+
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+        if class_id is None and (class_name is None or str(class_name).strip() == ''):
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        ds_candidates = [
+            os.path.join(project_path, 'training', dataset_name),
+            os.path.join(project_path, 'datasets', dataset_name),
+        ]
+        ds_root = None
+        for p in ds_candidates:
+            if p and os.path.isdir(p):
+                ds_root = p
+                break
+        if not ds_root:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        yaml_path = os.path.join(ds_root, 'data.yaml')
+        if not os.path.exists(yaml_path):
+            yaml_path = os.path.join(ds_root, 'dataset.yaml')
+        if not os.path.exists(yaml_path):
+            return jsonify({'success': False, 'error': '未找到 data.yaml 或 dataset.yaml'})
+
+        delete_id = None
+        if class_id is not None:
+            try:
+                delete_id = int(class_id)
+            except Exception:
+                return jsonify({'success': False, 'error': 'class_id 参数无效'})
+        else:
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                y = yaml.safe_load(f) or {}
+            names = y.get('names')
+            resolved = []
+            if isinstance(names, list):
+                resolved = list(names)
+            elif isinstance(names, dict):
+                pairs = []
+                for k, v in names.items():
+                    try:
+                        kk = int(k)
+                    except Exception:
+                        continue
+                    pairs.append((kk, v))
+                resolved = [v for _, v in sorted(pairs, key=lambda x: x[0])] if pairs else list(names.values())
+            else:
+                return jsonify({'success': False, 'error': 'data.yaml 缺少 names'})
+
+            target = str(class_name).strip()
+            try:
+                delete_id = resolved.index(target)
+            except ValueError:
+                return jsonify({'success': False, 'error': '未找到该标签'})
+
+        result = _dataset_delete_label(ds_root, yaml_path, delete_id, splits=splits, delete_empty_files=True)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/dataset/update_tags', methods=['POST'])
 def api_dataset_update_tags():
     try:

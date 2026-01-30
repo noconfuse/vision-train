@@ -702,20 +702,3 @@ class VideoManager:
         task_dir = VideoManager._get_task_dir(project_path, task_id)
         if os.path.exists(task_dir):
             shutil.rmtree(task_dir)
-
-    @staticmethod
-    def delete_task_images(project_path, task_id, image_names):
-        """删除任务中的指定图片"""
-        task_dir = VideoManager._get_task_dir(project_path, task_id)
-        images_dir = os.path.join(task_dir, 'images')
-        
-        deleted_count = 0
-        for name in image_names:
-            try:
-                p = os.path.join(images_dir, name)
-                if os.path.exists(p):
-                    os.remove(p)
-                    deleted_count += 1
-            except Exception:
-                pass
-        return deleted_count

@@ -55,6 +55,13 @@
           >
             {{ reorderingLabels ? '处理中...' : '调整标签顺序' }}
           </button>
+          <button
+            class="px-2 py-1 rounded-lg text-xs border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            :disabled="deletingLabel || !canReorderLabels"
+            @click="openDeleteLabel"
+          >
+            {{ deletingLabel ? '处理中...' : '删除标签' }}
+          </button>
         </div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -339,6 +346,36 @@
       </div>
     </div>
 
+    <div v-if="showDeleteLabelModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeDeleteLabel">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+        <h3 class="text-lg font-bold mb-4">删除标签</h3>
+        <div class="mb-3 text-sm text-gray-600">将从 dataset.yaml/data.yaml 删除该标签，并批量重写标注文件（不删除图片）。</div>
+
+        <div class="max-h-[420px] overflow-auto border border-gray-200 rounded-lg">
+          <div
+            v-for="it in deleteLabelItems"
+            :key="it.id"
+            class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0"
+          >
+            <div class="w-10 text-right font-mono text-sm text-gray-500">{{ it.id }}</div>
+            <div class="flex-1 text-sm text-gray-800 truncate">{{ it.name }}</div>
+            <div class="text-xs text-gray-500 w-20 text-right font-mono">{{ it.count }}</div>
+            <button
+              class="px-2 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50 text-xs"
+              :disabled="deletingLabel"
+              @click="confirmDeleteLabel(it)"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-4">
+          <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="deletingLabel" @click="closeDeleteLabel">关闭</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -369,6 +406,9 @@ const deleting = ref(false);
 const showReorderLabelsModal = ref(false);
 const reorderItems = ref([]);
 const reorderingLabels = ref(false);
+const showDeleteLabelModal = ref(false);
+const deleteLabelItems = ref([]);
+const deletingLabel = ref(false);
 const pageInput = ref(1);
 const isFullScreen = ref(false);
 
@@ -614,6 +654,50 @@ const openReorderLabels = () => {
 const closeReorderLabels = () => {
   showReorderLabelsModal.value = false;
   reorderItems.value = [];
+};
+
+const openDeleteLabel = () => {
+  const stats = datasetInfo.value?.class_stats || [];
+  deleteLabelItems.value = (stats || [])
+    .map(s => ({ id: Number(s.id), name: String(s.name ?? ''), count: Number(s.count ?? 0) }))
+    .filter(it => Number.isFinite(it.id) && it.name);
+  showDeleteLabelModal.value = true;
+};
+
+const closeDeleteLabel = () => {
+  showDeleteLabelModal.value = false;
+  deleteLabelItems.value = [];
+};
+
+const confirmDeleteLabel = async (it) => {
+  if (!it) return;
+  if (!confirm(`确定要删除标签「${it.name}」吗？\n该操作会批量修改标注文件，且不可撤销。`)) return;
+  deletingLabel.value = true;
+  try {
+    const res = await api.deleteDatasetLabel({
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      class_id: it.id
+    });
+    if (res.data.success) {
+      const delId = Number(res.data.deleted_label_id);
+      selectedClassIds.value = (selectedClassIds.value || [])
+        .filter(x => x !== delId)
+        .map(x => (x > delId ? x - 1 : x));
+
+      closeDeleteLabel();
+      await fetchDatasetInfo();
+      applyFilters();
+      alert(`已删除「${res.data.deleted_label_name}」：重写文件 ${res.data.updated_files || 0} 个，移除行 ${res.data.removed_lines || 0} 行，重编号行 ${res.data.shifted_lines || 0} 行`);
+    } else {
+      alert(res.data.error || '处理失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    deletingLabel.value = false;
+  }
 };
 
 const moveReorderItem = (idx, dir) => {

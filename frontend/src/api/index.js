@@ -40,6 +40,9 @@ export default {
   reorderDatasetLabels(data) {
     return api.post('/dataset/reorder_labels', data);
   },
+  deleteDatasetLabel(data) {
+    return api.post('/dataset/delete_label', data);
+  },
   autoAnnotate(data) {
     return api.post('/auto_annotate/batch', data);
   },

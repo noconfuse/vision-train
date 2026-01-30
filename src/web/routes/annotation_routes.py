@@ -236,7 +236,9 @@ def api_annotation_commit():
             return jsonify({'success': False, 'error': '缺少必要参数'})
         ds_root = os.path.join(project_path, 'training', dataset_name)
         img_dir = os.path.join(ds_root, split, 'images')
-        manual_dir = os.path.join(ds_root, 'labels', split)
+        manual_dir_v1 = os.path.join(ds_root, split, 'labels')
+        manual_dir_v2 = os.path.join(ds_root, 'labels', split)
+        manual_dir = manual_dir_v1 if (os.path.isdir(manual_dir_v1) or not os.path.isdir(manual_dir_v2)) else manual_dir_v2
         auto_dir = os.path.join(ds_root, 'auto_labels', split)
         os.makedirs(manual_dir, exist_ok=True)
         os.makedirs(auto_dir, exist_ok=True)
