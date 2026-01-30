@@ -69,6 +69,13 @@
           >
             {{ deduplicatingImages ? '处理中...' : '图片去重' }}
           </button>
+          <button
+            class="px-2 py-1 rounded-lg text-xs border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            :disabled="mergingDatasets || mergeCandidates.length === 0"
+            @click="openMergeDatasets"
+          >
+            {{ mergingDatasets ? '处理中...' : '合并数据集' }}
+          </button>
         </div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -312,6 +319,38 @@
       </div>
     </div>
 
+    <div v-if="showMergeDatasetsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeMergeDatasets">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+        <h3 class="text-lg font-bold mb-4">合并两个数据集</h3>
+        <div class="mb-4 text-sm text-gray-600">仅支持类别完全一致的数据集合并；将合并 train/val/test 的 images 与 labels。</div>
+
+        <div class="grid grid-cols-1 gap-4">
+          <div class="text-sm text-gray-700">
+            当前数据集：<span class="font-mono">{{ store.selectedDataset?.name }}</span>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">选择另一个数据集</label>
+            <select v-model="mergeOtherDataset" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              <option v-for="n in mergeCandidates" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">新数据集名称</label>
+            <input v-model.trim="mergeNewDatasetName" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="例如：datasets_merge_01" />
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+          <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="mergingDatasets" @click="closeMergeDatasets">取消</button>
+          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-50" :disabled="mergingDatasets || !mergeOtherDataset || !mergeNewDatasetName" @click="runMergeDatasets">
+            {{ mergingDatasets ? '合并中...' : '开始合并' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showReorderLabelsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeReorderLabels">
       <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
         <h3 class="text-lg font-bold mb-4">调整标签顺序</h3>
@@ -417,6 +456,10 @@ const showDeleteLabelModal = ref(false);
 const deleteLabelItems = ref([]);
 const deletingLabel = ref(false);
 const deduplicatingImages = ref(false);
+const showMergeDatasetsModal = ref(false);
+const mergeOtherDataset = ref('');
+const mergeNewDatasetName = ref('');
+const mergingDatasets = ref(false);
 const pageInput = ref(1);
 const isFullScreen = ref(false);
 
@@ -445,6 +488,19 @@ const canReorderLabels = computed(() => {
 });
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (filters.limit || 1))));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor((filters.offset || 0) / (filters.limit || 1)) + 1));
+const mergeCandidates = computed(() => {
+  const ds = store.currentProject?.datasets;
+  if (!ds) return [];
+  const all = [
+    ...(ds.trainable || []),
+    ...(ds.annotatable || [])
+  ];
+  const cur = store.selectedDataset?.name;
+  return all
+    .map(x => x?.name)
+    .filter(n => n && n !== cur)
+    .sort((a, b) => String(a).localeCompare(String(b)));
+});
 
 const pretrainedModelOptions = computed(() => {
   return (store.pretrainedModels || []).filter(m => m.type === 'pretrained');
@@ -730,6 +786,90 @@ const deduplicateImages = async () => {
     alert('请求失败');
   } finally {
     deduplicatingImages.value = false;
+  }
+};
+
+const normalizeNames = (v) => {
+  if (Array.isArray(v)) return v.map(x => String(x));
+  if (v && typeof v === 'object') {
+    return Object.keys(v)
+      .map(k => ({ k: Number(k), name: v[k] }))
+      .filter(x => Number.isFinite(x.k))
+      .sort((a, b) => a.k - b.k)
+      .map(x => String(x.name));
+  }
+  return [];
+};
+
+const openMergeDatasets = () => {
+  const cand = mergeCandidates.value;
+  mergeOtherDataset.value = cand[0] || '';
+  const a = store.selectedDataset?.name || 'dataset';
+  const b = mergeOtherDataset.value || 'dataset';
+  mergeNewDatasetName.value = `${a}_merge_${b}_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  showMergeDatasetsModal.value = true;
+};
+
+const closeMergeDatasets = () => {
+  showMergeDatasetsModal.value = false;
+  mergeOtherDataset.value = '';
+  mergeNewDatasetName.value = '';
+};
+
+const runMergeDatasets = async () => {
+  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  const other = String(mergeOtherDataset.value || '').trim();
+  const newName = String(mergeNewDatasetName.value || '').trim();
+  if (!other || !newName) return;
+  if (!confirm(`确定要合并数据集吗？\n${store.selectedDataset.name} + ${other} => ${newName}\n该操作会创建新数据集目录，并复制图片与标签。`)) return;
+
+  mergingDatasets.value = true;
+  try {
+    const otherInfoRes = await api.getDatasetInfo({
+      project_path: store.currentProject.path,
+      dataset_name: other
+    });
+    if (!otherInfoRes.data?.success) {
+      alert(otherInfoRes.data?.error || '无法读取另一个数据集信息');
+      return;
+    }
+    const curNames = normalizeNames(classList.value);
+    const otherNames = normalizeNames(otherInfoRes.data?.info?.names);
+    if (curNames.join('\n') !== otherNames.join('\n')) {
+      alert('两个数据集类别不一致，无法合并');
+      return;
+    }
+
+    const res = await api.mergeDatasets({
+      project_path: store.currentProject.path,
+      dataset_a: store.selectedDataset.name,
+      dataset_b: other,
+      new_dataset_name: newName
+    });
+    if (res.data.success) {
+      await store.fetchProjects();
+      const proj = store.projects.find(p => p.id === store.currentProject.id) || store.projects.find(p => p.path === store.currentProject.path);
+      if (proj) {
+        store.currentProject = proj;
+        const all = [
+          ...(proj.datasets?.trainable || []),
+          ...(proj.datasets?.annotatable || [])
+        ];
+        const created = all.find(d => d.name === newName) || all.find(d => d.path?.endsWith(`/training/${newName}`));
+        store.selectedDataset = created || store.selectedDataset;
+      }
+      closeMergeDatasets();
+      await fetchDatasetInfo();
+      applyFilters();
+      alert('合并完成');
+    } else {
+      alert(res.data.error || '处理失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    mergingDatasets.value = false;
   }
 };
 

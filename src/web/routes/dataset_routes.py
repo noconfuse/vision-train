@@ -970,6 +970,197 @@ def api_validate_dataset():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@bp.route('/api/dataset/merge', methods=['POST'])
+def api_dataset_merge():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        dataset_a = data.get('dataset_a')
+        dataset_b = data.get('dataset_b')
+        new_dataset_name = data.get('new_dataset_name')
+
+        if not project_path or not dataset_a or not dataset_b or not new_dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+        if dataset_a == dataset_b:
+            return jsonify({'success': False, 'error': '两个数据集不能相同'})
+
+        project_real = os.path.realpath(project_path)
+
+        def resolve_dataset_root(name):
+            candidates = [
+                os.path.join(project_path, 'training', name),
+                os.path.join(project_path, 'datasets', name),
+            ]
+            for p in candidates:
+                if not p:
+                    continue
+                rp = os.path.realpath(p)
+                if not (rp == project_real or rp.startswith(project_real + os.sep)):
+                    continue
+                if os.path.isdir(rp):
+                    return rp
+            return None
+
+        ds_a = resolve_dataset_root(dataset_a)
+        ds_b = resolve_dataset_root(dataset_b)
+        if not ds_a or not ds_b:
+            return jsonify({'success': False, 'error': '数据集不存在'})
+
+        target_root = os.path.realpath(os.path.join(project_path, 'training', new_dataset_name))
+        if not (target_root == project_real or target_root.startswith(project_real + os.sep)):
+            return jsonify({'success': False, 'error': '非法路径'})
+        if os.path.exists(target_root):
+            return jsonify({'success': False, 'error': f'数据集 {new_dataset_name} 已存在'})
+
+        def pick_yaml(ds_root):
+            p1 = os.path.join(ds_root, 'data.yaml')
+            if os.path.exists(p1):
+                return p1
+            p2 = os.path.join(ds_root, 'dataset.yaml')
+            if os.path.exists(p2):
+                return p2
+            return None
+
+        def load_names_list(ds_root):
+            ypath = pick_yaml(ds_root)
+            if ypath and os.path.exists(ypath):
+                try:
+                    with open(ypath, 'r', encoding='utf-8') as f:
+                        y = yaml.safe_load(f) or {}
+                    names = y.get('names')
+                    if isinstance(names, list):
+                        return [str(x) for x in names]
+                    if isinstance(names, dict):
+                        pairs = []
+                        for k, v in names.items():
+                            try:
+                                kk = int(k)
+                            except Exception:
+                                continue
+                            pairs.append((kk, v))
+                        if pairs:
+                            return [str(v) for _, v in sorted(pairs, key=lambda x: x[0])]
+                        return [str(v) for v in names.values()]
+                except Exception:
+                    pass
+            info = ProjectManager.analyze_dataset(ds_root) or {}
+            v = info.get('names') or []
+            if isinstance(v, list):
+                return [str(x) for x in v]
+            return []
+
+        names_a = load_names_list(ds_a)
+        names_b = load_names_list(ds_b)
+        if not names_a or not names_b:
+            return jsonify({'success': False, 'error': '无法读取数据集类别信息'})
+        if names_a != names_b:
+            return jsonify({'success': False, 'error': '两个数据集类别不一致，无法合并', 'names_a': names_a, 'names_b': names_b})
+
+        os.makedirs(target_root, exist_ok=False)
+        for split in ('train', 'val', 'test'):
+            os.makedirs(os.path.join(target_root, split, 'images'), exist_ok=True)
+            os.makedirs(os.path.join(target_root, split, 'labels'), exist_ok=True)
+
+        yaml_out = {
+            'path': target_root,
+            'train': 'train/images',
+            'val': 'val/images',
+            'test': 'test/images',
+            'names': names_a,
+        }
+        with open(os.path.join(target_root, 'dataset.yaml'), 'w', encoding='utf-8') as f:
+            yaml.safe_dump(yaml_out, f, allow_unicode=True, sort_keys=False)
+
+        def resolve_split_dirs(ds_root, split):
+            img_dir = os.path.join(ds_root, split, 'images')
+            if os.path.isdir(img_dir):
+                manual_v1 = os.path.join(ds_root, split, 'labels')
+                manual_v2 = os.path.join(ds_root, 'labels', split)
+                lbl_dir = manual_v1 if (os.path.isdir(manual_v1) or not os.path.isdir(manual_v2)) else manual_v2
+                return img_dir, lbl_dir
+
+            if split == 'train':
+                img_dir2 = os.path.join(ds_root, 'images')
+                if os.path.isdir(img_dir2):
+                    lbl_dir2 = os.path.join(ds_root, 'labels')
+                    return img_dir2, lbl_dir2
+            return None, None
+
+        def copy_dataset_into(ds_root, src_tag):
+            stats = {'copied_images': 0, 'copied_labels': 0, 'renamed_images': 0, 'missing_labels': 0}
+            for split in ('train', 'val', 'test'):
+                src_img_dir, src_lbl_dir = resolve_split_dirs(ds_root, split)
+                if not src_img_dir:
+                    continue
+                dst_img_dir = os.path.join(target_root, split, 'images')
+                dst_lbl_dir = os.path.join(target_root, split, 'labels')
+
+                for root, dirs, files in os.walk(src_img_dir):
+                    dirs.sort()
+                    files.sort()
+                    for fn in files:
+                        if not fn.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                            continue
+                        src_img = os.path.join(root, fn)
+                        rel = os.path.relpath(src_img, src_img_dir)
+                        rel_dir = os.path.dirname(rel)
+                        base, ext = os.path.splitext(os.path.basename(rel))
+                        dst_dir = os.path.join(dst_img_dir, rel_dir) if rel_dir else dst_img_dir
+                        os.makedirs(dst_dir, exist_ok=True)
+
+                        dst_img = os.path.join(dst_dir, base + ext)
+                        dst_base = base
+                        if os.path.exists(dst_img):
+                            idx = 1
+                            while True:
+                                candidate_base = f"{base}_{src_tag}{idx}"
+                                candidate_img = os.path.join(dst_dir, candidate_base + ext)
+                                if not os.path.exists(candidate_img):
+                                    dst_img = candidate_img
+                                    dst_base = candidate_base
+                                    stats['renamed_images'] += 1
+                                    break
+                                idx += 1
+
+                        shutil.copy2(src_img, dst_img)
+                        stats['copied_images'] += 1
+
+                        lbl_src = None
+                        if src_lbl_dir:
+                            lbl_src = os.path.join(src_lbl_dir, os.path.splitext(rel)[0] + '.txt')
+                            if not os.path.exists(lbl_src):
+                                lbl_src = None
+
+                        dst_lbl_dir2 = os.path.join(dst_lbl_dir, rel_dir) if rel_dir else dst_lbl_dir
+                        os.makedirs(dst_lbl_dir2, exist_ok=True)
+                        dst_lbl = os.path.join(dst_lbl_dir2, dst_base + '.txt')
+
+                        if lbl_src:
+                            shutil.copy2(lbl_src, dst_lbl)
+                            stats['copied_labels'] += 1
+                        else:
+                            stats['missing_labels'] += 1
+            return stats
+
+        s1 = copy_dataset_into(ds_a, 'a')
+        s2 = copy_dataset_into(ds_b, 'b')
+
+        return jsonify({
+            'success': True,
+            'dataset_root': target_root,
+            'dataset_a_root': ds_a,
+            'dataset_b_root': ds_b,
+            'names': names_a,
+            'stats': {'a': s1, 'b': s2},
+        })
+    except Exception as e:
+        try:
+            if 'target_root' in locals() and target_root and os.path.isdir(target_root):
+                shutil.rmtree(target_root)
+        except Exception:
+            pass
+        return jsonify({'success': False, 'error': str(e)})
+
 @bp.route('/api/dataset/split', methods=['POST'])
 def api_dataset_split():
     import random

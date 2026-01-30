@@ -46,6 +46,9 @@ export default {
   deduplicateDatasetImages(data) {
     return api.post('/dataset/deduplicate_images', data);
   },
+  mergeDatasets(data) {
+    return api.post('/dataset/merge', data);
+  },
   autoAnnotate(data) {
     return api.post('/auto_annotate/batch', data);
   },
