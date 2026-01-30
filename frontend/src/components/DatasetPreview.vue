@@ -62,6 +62,13 @@
           >
             {{ deletingLabel ? '处理中...' : '删除标签' }}
           </button>
+          <button
+            class="px-2 py-1 rounded-lg text-xs border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            :disabled="deduplicatingImages || !store.selectedDataset"
+            @click="deduplicateImages"
+          >
+            {{ deduplicatingImages ? '处理中...' : '图片去重' }}
+          </button>
         </div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -409,6 +416,7 @@ const reorderingLabels = ref(false);
 const showDeleteLabelModal = ref(false);
 const deleteLabelItems = ref([]);
 const deletingLabel = ref(false);
+const deduplicatingImages = ref(false);
 const pageInput = ref(1);
 const isFullScreen = ref(false);
 
@@ -697,6 +705,31 @@ const confirmDeleteLabel = async (it) => {
     alert('请求失败');
   } finally {
     deletingLabel.value = false;
+  }
+};
+
+const deduplicateImages = async () => {
+  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  if (!confirm('确定要按图片MD5去重吗？\n该操作会删除重复图片及其对应的标签文件，且不可撤销。')) return;
+  deduplicatingImages.value = true;
+  try {
+    const res = await api.deduplicateDatasetImages({
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      keep_split: 'train'
+    });
+    if (res.data.success) {
+      await fetchDatasetInfo();
+      applyFilters();
+      alert(`去重完成：扫描 ${res.data.scanned_images || 0} 张，唯一 ${res.data.unique_images || 0} 张，删除重复 ${res.data.deleted_images || 0} 张，删除标签文件 ${res.data.deleted_label_files || 0} 个`);
+    } else {
+      alert(res.data.error || '处理失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    deduplicatingImages.value = false;
   }
 };
 

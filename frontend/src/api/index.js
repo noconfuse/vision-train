@@ -43,6 +43,9 @@ export default {
   deleteDatasetLabel(data) {
     return api.post('/dataset/delete_label', data);
   },
+  deduplicateDatasetImages(data) {
+    return api.post('/dataset/deduplicate_images', data);
+  },
   autoAnnotate(data) {
     return api.post('/auto_annotate/batch', data);
   },
