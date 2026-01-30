@@ -212,11 +212,46 @@ class TrainingManager:
                 add_arg('imgsz', int)
                 add_arg('batch', int)
                 add_arg('rect', bool)
-                add_arg('scale', float)
+                add_arg('cos_lr', bool)  # 余弦退火
+                
+                # 增强参数
                 add_arg('mosaic', float)
                 add_arg('mixup', float)
+                add_arg('copy_paste', float)
+                
+                add_arg('degrees', float)
+                add_arg('translate', float)
+                add_arg('scale', float)
+                add_arg('shear', float)
+                add_arg('perspective', float)
+                add_arg('flipud', float)
+                add_arg('fliplr', float)
+                
+                add_arg('hsv_h', float)
+                add_arg('hsv_s', float)
+                add_arg('hsv_v', float)
+
                 add_arg('close_mosaic', int)
                 add_arg('lr0', float)
+                add_arg('lrf', float)
+
+                # 自动处理不平衡数据集优化
+                if training_config.get('imbalance_optimization'):
+                    training_status['log'].append("已启用不平衡数据集优化策略")
+                    # 如果用户没有显式设置这些参数，则使用优化默认值
+                    defaults = {
+                        'cos_lr': True,     # 有助于收敛
+                        'mosaic': 1.0,      # 强增强
+                        'mixup': 0.15,      # 混合增强，对小样本有效
+                        'fliplr': 0.5,      # 左右翻转
+                        'degrees': 10.0,    # 轻微旋转
+                        'hsv_s': 0.7,       # 增加饱和度变化
+                        'hsv_v': 0.4,       # 增加亮度变化
+                    }
+                    for k, v in defaults.items():
+                        if k not in args:
+                            args[k] = v
+                            training_status['log'].append(f"  - 自动设置 {k}={v}")
 
                 # 特殊处理 freeze
                 freeze_val = training_config.get('freeze')
