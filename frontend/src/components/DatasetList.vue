@@ -146,6 +146,7 @@
               <th class="text-left px-4 py-2 font-medium">mAP50</th>
               <th class="text-left px-4 py-2 font-medium">mAP50-95</th>
               <th class="text-left px-4 py-2 font-medium">产物</th>
+              <th class="text-left px-4 py-2 font-medium">导出</th>
               <th class="text-left px-4 py-2 font-medium">操作</th>
             </tr>
           </thead>
@@ -161,6 +162,18 @@
                 <button @click="openArtifacts(r)" class="text-blue-600 hover:underline">
                   可视化
                 </button>
+              </td>
+              <td class="px-4 py-2 text-gray-700 text-xs">
+                 <div class="flex flex-col gap-1 items-start">
+                   <div v-for="exp in (runExports[r.training_id || r.id] || [])" :key="exp.filename">
+                      <a :href="exp.download_url" target="_blank" class="text-emerald-600 hover:underline flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                        ⬇️ {{ exp.format }} {{ exp.int8 ? '(INT8)' : (exp.half ? '(FP16)' : '') }}
+                      </a>
+                   </div>
+                   <button @click="openExport(r)" class="text-indigo-600 hover:underline flex items-center gap-1 mt-1">
+                     🚀 导出
+                   </button>
+                 </div>
               </td>
               <td class="px-4 py-2 text-gray-700 text-xs">
                 <button @click="deleteRun(r)" class="text-rose-600 hover:underline">
@@ -296,11 +309,80 @@
       </div>
     </div>
   </div>
+
+  <div v-if="exportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeExport">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold">导出模型 (Export Model)</h3>
+        <button class="text-gray-500 hover:text-gray-700" @click="closeExport">✕</button>
+      </div>
+      
+      <div class="space-y-4">
+        <div v-if="store.exportStatus.is_running" class="text-center py-8">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+            <div class="text-gray-700 font-medium">{{ store.exportStatus.message }}</div>
+            <div class="text-gray-500 text-sm mt-1">{{ store.exportStatus.progress }}%</div>
+        </div>
+        
+        <div v-else>
+          <div class="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">导出格式</label>
+              <select v-model="exportConfig.format" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-indigo-500 outline-none">
+                <option value="onnx">ONNX</option>
+                <option value="openvino">OpenVINO</option>
+                <option value="engine">TensorRT</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">图片尺寸 (imgsz)</label>
+              <input type="number" v-model="exportConfig.imgsz" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-indigo-500 outline-none">
+            </div>
+          </div>
+
+          <div class="flex gap-4 mb-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="exportConfig.half" class="form-checkbox text-indigo-500 rounded">
+                <span class="text-sm text-gray-700">半精度 (FP16)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="exportConfig.int8" class="form-checkbox text-indigo-500 rounded">
+                <span class="text-sm text-gray-700">INT8 量化</span>
+              </label>
+          </div>
+
+          <div v-if="exportConfig.int8 && exportConfig.format === 'openvino'" class="bg-indigo-50 border border-indigo-100 rounded p-3 mb-4">
+              <div class="text-xs text-indigo-700 font-bold mb-2">INT8 量化校准设置</div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[10px] text-indigo-600/70 mb-1">每类采样数</label>
+                  <input type="number" v-model="exportConfig.per_class" class="w-full bg-white border border-indigo-200 rounded px-2 py-1 text-xs">
+                </div>
+                <div>
+                  <label class="block text-[10px] text-indigo-600/70 mb-1">最大图片数</label>
+                  <input type="number" v-model="exportConfig.max_images" class="w-full bg-white border border-indigo-200 rounded px-2 py-1 text-xs">
+                </div>
+              </div>
+          </div>
+          
+          <div v-if="exportError" class="bg-red-50 text-red-700 text-sm p-3 rounded mb-4 border border-red-100">
+            {{ exportError }}
+          </div>
+
+          <div class="flex justify-end pt-2">
+            <button @click="startExport" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-sm">
+              🚀 开始导出
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
 import { useMainStore } from '../stores/main';
-import { computed, ref } from 'vue';
+import { computed, ref, reactive, watch } from 'vue';
 import api from '../api';
 
 const store = useMainStore();
@@ -336,6 +418,19 @@ const artifactsLoading = ref(false);
 const currentArtifacts = ref({ images: [], weights: [], config: null });
 const currentRun = ref(null);
 
+const exportModal = ref(false);
+const exportRun = ref(null);
+const exportConfig = reactive({
+  format: 'onnx',
+  imgsz: 640,
+  half: false,
+  int8: false,
+  per_class: 20,
+  max_images: 200
+});
+const exportError = ref(null);
+const runExports = ref({}); // Map<training_id, Array<ExportInfo>>
+
 const downloadingMap = ref({});
 
 const refreshProjectsKeepSelection = async () => {
@@ -356,6 +451,35 @@ const refreshProjectsKeepSelection = async () => {
     }
   }
 };
+
+const fetchRunExports = async (runs) => {
+  if (!runs || runs.length === 0) return;
+  try {
+    const res = await api.getModelExports({
+      project_path: store.currentProject.path
+    });
+    if (res.data.success) {
+      const map = {};
+      res.data.exports.forEach(exp => {
+        const tid = exp.training_id;
+        if (!map[tid]) map[tid] = [];
+        map[tid].push(exp);
+      });
+      runExports.value = map;
+    }
+  } catch (e) {
+    console.error("Failed to fetch exports", e);
+  }
+};
+
+watch(() => store.exportStatus.is_running, (newVal, oldVal) => {
+  if (oldVal && !newVal) {
+    // Export finished
+    if (historyDataset.value && historyRuns.value.length > 0) {
+       fetchRunExports(historyRuns.value);
+    }
+  }
+});
 
 const parseDownloadFilename = (contentDisposition, fallback) => {
   if (!contentDisposition || typeof contentDisposition !== 'string') return fallback;
@@ -418,6 +542,7 @@ const openHistory = async (ds) => {
     });
     if (res.data.success) {
       historyRuns.value = res.data.history || [];
+      await fetchRunExports(historyRuns.value);
     } else {
       alert(res.data.error || '加载失败');
     }
@@ -581,6 +706,38 @@ const closeArtifacts = () => {
   artifactsModal.value = false;
   currentArtifacts.value = { images: [], weights: [], config: null };
   currentRun.value = null;
+};
+
+const openExport = (run) => {
+  exportRun.value = run;
+  exportConfig.format = 'onnx';
+  exportConfig.imgsz = run.config?.imgsz || 640;
+  exportConfig.half = false;
+  exportConfig.int8 = false;
+  exportConfig.per_class = 20;
+  exportConfig.max_images = 200;
+  exportError.value = null;
+  exportModal.value = true;
+};
+
+const closeExport = () => {
+  exportModal.value = false;
+  exportRun.value = null;
+};
+
+const startExport = async () => {
+  if (!exportRun.value) return;
+  exportError.value = null;
+  try {
+    await store.startExport({
+      project_path: store.currentProject.path,
+      training_id: exportRun.value.training_id || exportRun.value.id,
+      ...exportConfig
+    });
+    store.pollExportStatus();
+  } catch (e) {
+    exportError.value = e.message || '启动失败';
+  }
 };
 
 const deleteRun = async (run) => {

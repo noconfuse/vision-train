@@ -13,6 +13,13 @@ export const useMainStore = defineStore('main', {
       message: '',
       results: {}
     },
+    trainingRuns: [],
+    exportStatus: {
+      is_running: false,
+      progress: 0,
+      message: '',
+      download_url: null
+    },
     isLoading: false,
     error: null
   }),
