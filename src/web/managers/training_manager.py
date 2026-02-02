@@ -30,7 +30,8 @@ training_status = {
     'message': '',
     'error': None,
     'stop_requested': False,
-    'log': deque(maxlen=1000)
+    'log': deque(maxlen=1000),
+    'history': []
 }
 
 eval_status = {
@@ -62,7 +63,8 @@ class TrainingManager:
             'progress': 0,
             'message': '初始化训练...',
             'error': None,
-            'stop_requested': False
+            'stop_requested': False,
+            'history': []
         })
         training_status['log'].clear()
         
@@ -180,6 +182,16 @@ class TrainingManager:
                     training_status['map50_95'] = float(metrics.get('metrics/mAP50-95(B)', 0))
                     training_status['progress'] = int((trainer.epoch + 1) / trainer.epochs * 100)
                     
+                    # Record history
+                    training_status['history'].append({
+                        'epoch': training_status['epoch'],
+                        'box_loss': training_status['box_loss'],
+                        'cls_loss': training_status['cls_loss'],
+                        'dfl_loss': training_status['dfl_loss'],
+                        'map50': training_status['map50'],
+                        'map50_95': training_status['map50_95']
+                    })
+
                     # 记录日志
                     msg = f"Epoch {trainer.epoch+1}/{trainer.epochs} box_loss:{training_status['box_loss']:.4f} mAP50:{training_status['map50']:.4f}"
                     training_status['log'].append(msg)

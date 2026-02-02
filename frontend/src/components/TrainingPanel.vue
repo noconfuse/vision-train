@@ -118,6 +118,60 @@
       </div>
     </div>
 
+    <!-- Real-time Charts -->
+    <div v-if="store.trainingStatus.history && store.trainingStatus.history.length > 1" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <!-- Loss Chart -->
+        <div class="bg-black/20 rounded-lg p-4 border border-white/10">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-xs font-bold opacity-80">Training Loss</span>
+                <div class="flex gap-2 text-[10px]">
+                    <span class="text-red-400">Box</span>
+                    <span class="text-blue-400">Cls</span>
+                    <span class="text-yellow-400">Dfl</span>
+                </div>
+            </div>
+            <svg viewBox="0 0 100 50" class="w-full h-24 overflow-visible" preserveAspectRatio="none">
+                <!-- Grid lines -->
+                <line x1="0" y1="0" x2="100" y2="0" stroke="white" stroke-opacity="0.1" stroke-width="0.2" />
+                <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-opacity="0.1" stroke-width="0.2" />
+                
+                <!-- Box Loss -->
+                <polyline :points="getPoints(store.trainingStatus.history, 'box_loss')" 
+                          fill="none" stroke="#f87171" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+                <!-- Cls Loss -->
+                <polyline :points="getPoints(store.trainingStatus.history, 'cls_loss')" 
+                          fill="none" stroke="#60a5fa" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+                <!-- Dfl Loss -->
+                <polyline :points="getPoints(store.trainingStatus.history, 'dfl_loss')" 
+                          fill="none" stroke="#facc15" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+            </svg>
+        </div>
+
+        <!-- Metrics Chart -->
+        <div class="bg-black/20 rounded-lg p-4 border border-white/10">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-xs font-bold opacity-80">Metrics (mAP)</span>
+                <div class="flex gap-2 text-[10px]">
+                    <span class="text-green-400">mAP50</span>
+                    <span class="text-purple-400">mAP50-95</span>
+                </div>
+            </div>
+            <svg viewBox="0 0 100 50" class="w-full h-24 overflow-visible" preserveAspectRatio="none">
+                 <!-- Grid lines -->
+                <line x1="0" y1="0" x2="100" y2="0" stroke="white" stroke-opacity="0.1" stroke-width="0.2" />
+                <line x1="0" y1="25" x2="100" y2="25" stroke="white" stroke-opacity="0.1" stroke-width="0.2" stroke-dasharray="2" />
+                <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-opacity="0.1" stroke-width="0.2" />
+
+                <!-- mAP50 -->
+                <polyline :points="getMetricsPoints(store.trainingStatus.history, 'map50')" 
+                          fill="none" stroke="#4ade80" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+                <!-- mAP50-95 -->
+                <polyline :points="getMetricsPoints(store.trainingStatus.history, 'map50_95')" 
+                          fill="none" stroke="#c084fc" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+            </svg>
+        </div>
+    </div>
+
     <!-- Actions -->
     <div class="flex justify-end gap-3">
       <button v-if="!store.trainingStatus.is_running"
@@ -205,6 +259,27 @@ const onImbalanceChange = () => {
         if (!config.fliplr) config.fliplr = 0.5;
         if (!config.degrees) config.degrees = 10.0;
     }
+};
+
+const getPoints = (data, key, height = 50, width = 100) => {
+    if (!data || data.length < 2) return '';
+    const values = data.map(d => d[key] || 0);
+    const maxVal = Math.max(...values, 0.0001) * 1.1; // 10% padding
+    
+    return values.map((v, i) => {
+        const x = (i / (values.length - 1)) * width;
+        const y = height - (v / maxVal) * height;
+        return `${x},${y}`;
+    }).join(' ');
+};
+
+const getMetricsPoints = (data, key, height = 50, width = 100) => {
+    if (!data || data.length < 2) return '';
+    return data.map((d, i) => {
+        const x = (i / (data.length - 1)) * width;
+        const y = height - ((d[key] || 0) * height); // 0-1 range
+        return `${x},${y}`;
+    }).join(' ');
 };
 
 const isValid = computed(() => {
