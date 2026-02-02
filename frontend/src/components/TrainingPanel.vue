@@ -10,15 +10,60 @@
 
     <!-- Model Selection -->
     <div class="mb-6">
-      <label class="block text-sm font-medium mb-2 opacity-90">预训练模型</label>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div v-for="(model, path) in store.pretrainedModels" 
-             :key="path"
+      <div class="flex justify-between items-center mb-2">
+        <label class="block text-sm font-medium opacity-90">预训练模型</label>
+        <div class="flex bg-black/20 rounded-lg p-1 gap-1">
+            <button 
+                @click="activeModelTab = 'preset'"
+                class="px-3 py-1 text-xs rounded-md transition-colors"
+                :class="activeModelTab === 'preset' ? 'bg-white text-indigo-600 font-bold shadow-sm' : 'text-white/60 hover:text-white hover:bg-white/5'">
+                官方预设
+            </button>
+            <button 
+                @click="activeModelTab = 'history'"
+                class="px-3 py-1 text-xs rounded-md transition-colors"
+                :class="activeModelTab === 'history' ? 'bg-white text-indigo-600 font-bold shadow-sm' : 'text-white/60 hover:text-white hover:bg-white/5'">
+                训练历史
+            </button>
+        </div>
+      </div>
+
+      <!-- Preset Models -->
+      <div v-if="activeModelTab === 'preset'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div v-for="(model, path) in presetModels" 
+             :key="model.path"
              class="border-2 border-white/20 rounded-lg p-3 cursor-pointer hover:bg-white/10 transition-colors"
              :class="selectedModel === model.name ? 'border-white bg-white/20' : ''"
              @click="selectedModel = model.name">
           <div class="font-bold">{{ model.name }}</div>
           <div class="text-xs opacity-70">{{ (model.size / 1024 / 1024).toFixed(1) }} MB</div>
+        </div>
+      </div>
+
+      <!-- History Models -->
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-60 overflow-y-auto pr-1">
+        <div v-if="historyModels.length === 0" class="col-span-2 text-center py-8 opacity-50 text-sm border-2 border-dashed border-white/10 rounded-lg">
+            暂无训练历史模型
+        </div>
+        <div v-for="model in historyModels" 
+             :key="model.path"
+             class="border-2 border-white/20 rounded-lg p-3 cursor-pointer hover:bg-white/10 transition-colors flex flex-col gap-1 relative"
+             :class="selectedModel === model.name ? 'border-white bg-white/20' : ''"
+             @click="selectedModel = model.name">
+          
+          <!-- Badge for mAP -->
+          <div v-if="model.metrics && model.metrics.map50" class="absolute top-2 right-2 bg-green-500/20 text-green-300 text-[10px] px-1.5 py-0.5 rounded font-mono">
+            mAP: {{ (model.metrics.map50 * 100).toFixed(1) }}%
+          </div>
+
+          <div class="font-bold text-sm truncate pr-16" :title="model.name">{{ model.name }}</div>
+          <div class="flex items-center gap-2 text-[10px] opacity-60">
+            <span v-if="model.dataset" class="bg-indigo-500/30 px-1 rounded">{{ model.dataset }}</span>
+            <span>{{ (model.size / 1024 / 1024).toFixed(1) }} MB</span>
+          </div>
+          <div class="text-[10px] opacity-40 font-mono mt-1">
+            {{ model.created_at || 'Unknown Date' }}
+          </div>
         </div>
       </div>
     </div>
@@ -196,6 +241,23 @@ import { ref, reactive, computed, onMounted } from 'vue';
 const store = useMainStore();
 
 const selectedModel = ref('');
+const activeModelTab = ref('preset');
+
+const presetModels = computed(() => {
+    return store.pretrainedModels.filter(m => !m.type || m.type !== 'trained');
+});
+
+const historyModels = computed(() => {
+    return store.pretrainedModels
+        .filter(m => m.type === 'trained')
+        .sort((a, b) => {
+            if (a.created_at && b.created_at) {
+                return new Date(b.created_at) - new Date(a.created_at);
+            }
+            return 0;
+        });
+});
+
 const showAdvanced = ref(false);
 
 const config = reactive({

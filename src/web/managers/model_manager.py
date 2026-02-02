@@ -188,7 +188,10 @@ class ModelManager:
                     "type": "trained",
                     "path": best_pt,
                     "size": os.path.getsize(best_pt),
-                    "source_run": run['id']
+                    "source_run": run['id'],
+                    "dataset": run['dataset'],
+                    "created_at": run.get('created_at'),
+                    "metrics": run.get('metrics', {})
                 })
             # last.pt
             last_pt = os.path.join(run['path'], 'weights', 'last.pt')
@@ -198,7 +201,10 @@ class ModelManager:
                     "type": "trained",
                     "path": last_pt,
                     "size": os.path.getsize(last_pt),
-                    "source_run": run['id']
+                    "source_run": run['id'],
+                    "dataset": run['dataset'],
+                    "created_at": run.get('created_at'),
+                    "metrics": run.get('metrics', {})
                 })
                 
         return models
