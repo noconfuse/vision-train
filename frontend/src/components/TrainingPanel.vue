@@ -132,12 +132,16 @@
         Stop Training
       </button>
     </div>
+
+    <!-- History -->
+    <TrainingHistory />
   </div>
 </template>
 
 <script setup>
 import { useMainStore } from '../stores/main';
 import { ref, reactive, computed, onMounted } from 'vue';
+import TrainingHistory from './TrainingHistory.vue';
 
 const store = useMainStore();
 

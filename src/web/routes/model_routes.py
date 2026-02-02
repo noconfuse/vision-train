@@ -104,3 +104,25 @@ def api_model_evaluate_status():
         return jsonify({'success': True, 'status': res})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/model/exports')
+def api_model_exports():
+    try:
+        project_path = request.args.get('project_path')
+        training_id = request.args.get('training_id')
+        if not project_path:
+            return jsonify({'success': False, 'error': '缺少项目路径'})
+        exports = ExportManager.list_exports(project_path, training_id)
+        
+        # 补充 download_url
+        for item in exports:
+            # 查找 zip
+            zip_file = next((f for f in item.get('files', []) if f.endswith('.zip')), None)
+            if zip_file:
+                item['download_url'] = f"/api/file?path={zip_file}"
+            elif item.get('primary_model_path'):
+                 item['download_url'] = f"/api/file?path={item['primary_model_path']}"
+                 
+        return jsonify({'success': True, 'exports': exports})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})

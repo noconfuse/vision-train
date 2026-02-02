@@ -92,6 +92,72 @@ export const useMainStore = defineStore('main', {
       } catch (err) {
         console.error(err);
       }
+    },
+
+    async fetchTrainingRuns() {
+      if (!this.currentProject) return;
+      try {
+        const res = await api.getTrainingRuns({ project_path: this.currentProject.path });
+        if (res.data.success) {
+          this.trainingRuns = res.data.runs;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    },
+
+    async startExport(payload) {
+      try {
+        const res = await api.exportModel(payload);
+        if (res.data.success) {
+          this.exportStatus.is_running = true;
+          this.exportStatus.message = 'Starting export...';
+          this.pollExportStatus();
+          return { success: true };
+        } else {
+          return { success: false, error: res.data.error };
+        }
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+
+    async pollExportStatus() {
+      if (!this.exportStatus.is_running) return;
+      try {
+        const res = await api.getExportStatus();
+        if (res.data.success) {
+          const status = res.data.status;
+          this.exportStatus = { ...this.exportStatus, ...status };
+          
+          if (status.is_running) {
+            setTimeout(() => this.pollExportStatus(), 1000);
+          } else {
+             // Refresh runs or exports if needed?
+             // Maybe fetch exports for the specific run?
+          }
+        }
+      } catch (e) {
+        console.error(e);
+        this.exportStatus.is_running = false;
+      }
+    },
+
+    async getModelExports(trainingId) {
+        if (!this.currentProject) return [];
+        try {
+            const res = await api.getModelExports({ 
+                project_path: this.currentProject.path,
+                training_id: trainingId 
+            });
+            if (res.data.success) {
+                return res.data.exports;
+            }
+            return [];
+        } catch (e) {
+            console.error(e);
+            return [];
+        }
     }
   }
 });

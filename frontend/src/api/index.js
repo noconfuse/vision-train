@@ -66,6 +66,15 @@ export default {
   getModels(params) {
     return api.get('/models', { params });
   },
+  exportModel(data) {
+    return api.post('/model/export', data);
+  },
+  getExportStatus() {
+    return api.get('/model/export/status');
+  },
+  getModelExports(params) {
+    return api.get('/model/exports', { params });
+  },
   
   // Training
   startTraining(data) {
