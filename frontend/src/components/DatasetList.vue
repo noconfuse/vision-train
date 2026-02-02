@@ -164,16 +164,9 @@
                 </button>
               </td>
               <td class="px-4 py-2 text-gray-700 text-xs">
-                 <div class="flex flex-col gap-1 items-start">
-                   <div v-for="exp in (runExports[r.training_id || r.id] || [])" :key="exp.filename">
-                      <a :href="exp.download_url" target="_blank" class="text-emerald-600 hover:underline flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                        ⬇️ {{ exp.format }} {{ exp.int8 ? '(INT8)' : (exp.half ? '(FP16)' : '') }}
-                      </a>
-                   </div>
-                   <button @click="openExport(r)" class="text-indigo-600 hover:underline flex items-center gap-1 mt-1">
-                     🚀 导出
-                   </button>
-                 </div>
+                 <button @click="openExport(r)" class="text-indigo-600 hover:underline flex items-center gap-1">
+                   🚀 导出
+                 </button>
               </td>
               <td class="px-4 py-2 text-gray-700 text-xs">
                 <button @click="deleteRun(r)" class="text-rose-600 hover:underline">
@@ -369,8 +362,17 @@
             {{ exportError }}
           </div>
 
-          <div class="flex justify-end pt-2">
-            <button @click="startExport" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-sm">
+          <div class="flex justify-between items-center pt-2 mt-4 border-t border-gray-100">
+            <div class="flex flex-wrap gap-2 mr-4">
+              <a v-for="exp in (exportRun ? (runExports[exportRun.training_id || exportRun.id] || []) : [])" 
+                 :key="exp.filename" 
+                 :href="exp.download_url" 
+                 target="_blank" 
+                 class="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors">
+                ⬇️ 下载 {{ exp.format }} {{ exp.int8 ? '(INT8)' : (exp.half ? '(FP16)' : '') }}
+              </a>
+            </div>
+            <button @click="startExport" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-sm shrink-0">
               🚀 开始导出
             </button>
           </div>
