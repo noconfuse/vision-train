@@ -131,6 +131,11 @@
           仅看待复核
         </label>
 
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" v-model="filters.person_review" class="rounded border-gray-300">
+          Person疑似误标复核
+        </label>
+
         <button
           class="px-3 py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-800 text-white"
           @click="applyFilters"
@@ -471,6 +476,7 @@ const filters = reactive({
   mode: 'include',
   unannotated: false,
   has_auto_label: false,
+  person_review: false,
   offset: 0,
   limit: 60
 });
@@ -648,7 +654,7 @@ const fetchImages = async (reset = false) => {
       unannotated: filters.unannotated,
       has_auto_label: filters.has_auto_label
     };
-    const res = filters.has_auto_label
+    const res = filters.person_review
       ? await api.getPersonReview({ ...params })
       : await api.getDatasetImages({ ...params });
     

@@ -12,9 +12,16 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from managers.project_manager import ProjectManager
 from managers.training_manager import TrainingManager
-from managers.annotation_manager import AnnotationManager
+from ultralytics import YOLO
 
 bp = Blueprint('dataset', __name__)
+_person_review_model = None
+
+def _get_person_review_model():
+    global _person_review_model
+    if _person_review_model is None:
+        _person_review_model = YOLO('yolo11n.pt')
+    return _person_review_model
 
 @bp.route('/api/datasets')
 def api_datasets():
@@ -458,8 +465,13 @@ def api_dataset_person_review():
             # 模型预测（只保留可能为人类的框）
             preds = []
             try:
-                boxes = AnnotationManager.auto_annotate_image(project_path, img_path, model_path=None, conf=conf, max_det=200)
-                preds = boxes or []
+                model = _get_person_review_model()
+                results = model.predict(img_path, conf=float(conf), max_det=200, verbose=False)
+                for r in results:
+                    for b in r.boxes:
+                        xyxy = b.xyxy[0].tolist()
+                        cls = int(b.cls.item()) if hasattr(b, 'cls') else 0
+                        preds.append({'class': cls, 'x1': xyxy[0], 'y1': xyxy[1], 'x2': xyxy[2], 'y2': xyxy[3]})
             except Exception:
                 preds = []
 
