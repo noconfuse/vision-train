@@ -205,6 +205,13 @@
             <span v-else class="w-2 h-2 rounded-full bg-yellow-500 shadow-sm" title="Pending"></span>
           </div>
 
+          <div
+            v-if="img.review && Number(img.review.suspect_person_count || 0) > 0"
+            class="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-red-600/90 text-white text-[10px] font-semibold"
+          >
+            疑似{{ Number(img.review.suspect_person_count || 0) }}
+          </div>
+
           <div v-if="selectionMode" class="absolute top-2 left-2">
             <div
               class="w-5 h-5 rounded border flex items-center justify-center text-xs font-bold shadow-sm"
@@ -604,6 +611,10 @@ const onImageUpdate = (img) => {
   const target = images.value.find(i => i.path === img.path);
   if (target) {
     target.pending = false; // Assuming save means it's done
+    if (target.review) {
+      target.review.suspect_person_count = 0;
+      target.review.suspect_boxes = [];
+    }
   }
 };
 

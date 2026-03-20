@@ -70,6 +70,30 @@
               </text>
             </g>
 
+            <g v-for="(box, idx) in suspectBoxes" :key="`suspect-${idx}`">
+              <rect
+                :x="box.x1 * imgWidth"
+                :y="box.y1 * imgHeight"
+                :width="(box.x2 - box.x1) * imgWidth"
+                :height="(box.y2 - box.y1) * imgHeight"
+                fill="rgba(239, 68, 68, 0.15)"
+                stroke="#ef4444"
+                :stroke-width="2 / scale"
+                stroke-dasharray="6"
+                pointer-events="none"
+              />
+              <text
+                :x="box.x1 * imgWidth"
+                :y="Math.max(14 / scale, box.y1 * imgHeight - 6 / scale)"
+                fill="#ef4444"
+                :font-size="12 / scale"
+                font-weight="bold"
+                style="text-shadow: 1px 1px 1px black; pointer-events: none;"
+              >
+                疑似误标 person
+              </text>
+            </g>
+
             <!-- Drawing Box -->
             <rect 
               v-if="interactionMode === 'draw'"
@@ -91,6 +115,9 @@
         <div class="p-4 border-b border-gray-200">
           <h3 class="font-bold text-gray-800 mb-1">图片标注</h3>
           <p class="text-xs text-gray-500 truncate" :title="image.path">{{ image.path.split('/').pop() }}</p>
+          <div v-if="hasReviewIssue" class="mt-2 px-2 py-1 rounded bg-red-50 text-red-700 text-xs border border-red-200">
+            Person复核提示：检测到 {{ suspectBoxes.length }} 个疑似误标框，已在画面中红框标出
+          </div>
         </div>
 
         <!-- Class Selection -->
@@ -190,6 +217,20 @@ const colors = [
 
 const getColor = (idx) => colors[idx % colors.length];
 const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
+const suspectBoxes = computed(() => {
+  const arr = props.image?.review?.suspect_boxes;
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((b) => {
+      const x1 = Number(b?.x1);
+      const y1 = Number(b?.y1);
+      const x2 = Number(b?.x2);
+      const y2 = Number(b?.y2);
+      return { x1, y1, x2, y2 };
+    })
+    .filter((b) => Number.isFinite(b.x1) && Number.isFinite(b.y1) && Number.isFinite(b.x2) && Number.isFinite(b.y2));
+});
+const hasReviewIssue = computed(() => suspectBoxes.value.length > 0);
 
 // Image layout logic
 const imageStyle = computed(() => {

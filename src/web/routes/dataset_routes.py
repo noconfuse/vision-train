@@ -497,6 +497,7 @@ def api_dataset_person_review():
                 return inter / union
 
             suspect = 0
+            suspect_boxes = []
             for mb in manual_person_boxes:
                 matched = False
                 for pb in pred_person_boxes:
@@ -505,6 +506,12 @@ def api_dataset_person_review():
                         break
                 if not matched:
                     suspect += 1
+                    suspect_boxes.append({
+                        'x1': float(mb['x1']) / float(w or 1),
+                        'y1': float(mb['y1']) / float(h or 1),
+                        'x2': float(mb['x2']) / float(w or 1),
+                        'y2': float(mb['y2']) / float(h or 1)
+                    })
 
             rel = os.path.relpath(img_path, img_dir)
             items.append({
@@ -516,6 +523,7 @@ def api_dataset_person_review():
                     'manual_person_count': len(manual_person_boxes),
                     'pred_person_count': len(pred_person_boxes),
                     'suspect_person_count': suspect,
+                    'suspect_boxes': suspect_boxes,
                     'iou_thresh': iou_thresh,
                     'conf': conf
                 }
