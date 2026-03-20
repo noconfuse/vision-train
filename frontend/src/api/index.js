@@ -31,6 +31,9 @@ export default {
   getDatasetImages(params) {
     return api.get('/dataset/images', { params });
   },
+  getPersonReview(params) {
+    return api.get('/dataset/person_review', { params });
+  },
   downloadDatasetZip(params) {
     return api.get('/dataset/download', { params, responseType: 'blob' });
   },

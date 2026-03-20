@@ -12,6 +12,7 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from managers.project_manager import ProjectManager
 from managers.training_manager import TrainingManager
+from managers.annotation_manager import AnnotationManager
 
 bp = Blueprint('dataset', __name__)
 
@@ -324,6 +325,190 @@ def api_dataset_images():
                 'name': os.path.basename(p)
             })
             
+        return jsonify({'success': True, 'images': items, 'total': total})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/dataset/person_review')
+def api_dataset_person_review():
+    try:
+        project_path = request.args.get('project_path')
+        dataset_name = request.args.get('dataset_name')
+        split = request.args.get('split', 'train')
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '50'))
+        conf = float(request.args.get('conf', '0.25'))
+        iou_thresh = float(request.args.get('iou', '0.5'))
+
+        if not project_path or not dataset_name:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+
+        ds_root = os.path.join(project_path, 'training', dataset_name)
+        img_dir = os.path.join(ds_root, split, 'images')
+        lbl_dir = os.path.join(ds_root, split, 'labels')
+        if not os.path.isdir(img_dir) or not os.path.isdir(lbl_dir):
+            return jsonify({'success': True, 'images': [], 'total': 0})
+
+        # 读取数据集的 person 类索引
+        yaml_path = os.path.join(ds_root, 'data.yaml')
+        if not os.path.exists(yaml_path):
+            yaml_path = os.path.join(ds_root, 'dataset.yaml')
+        person_id = None
+        if os.path.exists(yaml_path):
+            try:
+                with open(yaml_path, 'r', encoding='utf-8') as f:
+                    y = yaml.safe_load(f) or {}
+                names = y.get('names')
+                resolved = []
+                if isinstance(names, list):
+                    resolved = list(names)
+                elif isinstance(names, dict):
+                    pairs = []
+                    for k, v in names.items():
+                        try:
+                            kk = int(k)
+                        except Exception:
+                            continue
+                        pairs.append((kk, v))
+                    resolved = [v for _, v in sorted(pairs, key=lambda x: x[0])] if pairs else list(names.values())
+                if resolved:
+                    try:
+                        person_id = resolved.index('person')
+                    except ValueError:
+                        person_id = None
+            except Exception:
+                person_id = None
+
+        # 收集包含 person 标注的图片
+        candidates = []
+        for root, _, files in os.walk(img_dir):
+            for f in files:
+                if not f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    continue
+                img_path = os.path.join(root, f)
+                rel = os.path.relpath(img_path, img_dir)
+                lbl_path = os.path.join(lbl_dir, os.path.splitext(rel)[0] + '.txt')
+                if not os.path.exists(lbl_path):
+                    continue
+                # 检查是否存在 person 标注
+                has_person = False
+                try:
+                    with open(lbl_path, 'r', encoding='utf-8') as lf:
+                        for line in lf:
+                            parts = line.strip().split()
+                            if len(parts) >= 5:
+                                try:
+                                    cid = int(float(parts[0]))
+                                except Exception:
+                                    continue
+                                if person_id is None or cid == person_id:
+                                    has_person = True
+                                    break
+                except Exception:
+                    continue
+                if has_person:
+                    candidates.append((img_path, lbl_path))
+
+        candidates.sort()
+        total = len(candidates)
+        page_items = candidates[offset:offset+limit]
+
+        # 逐张图片进行模型校验（轻量模型或项目最佳）
+        items = []
+        for img_path, lbl_path in page_items:
+            # 读取图片尺寸
+            w, h = 1, 1
+            try:
+                from PIL import Image
+                with Image.open(img_path) as im:
+                    w, h = im.size
+            except Exception:
+                try:
+                    import cv2
+                    im = cv2.imread(img_path)
+                    if im is not None and getattr(im, 'shape', None) is not None:
+                        h, w = im.shape[:2]
+                except Exception:
+                    pass
+
+            # 读取人工 person 框（转为像素坐标）
+            manual_person_boxes = []
+            try:
+                with open(lbl_path, 'r', encoding='utf-8') as lf:
+                    for line in lf:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            try:
+                                cid = int(float(parts[0]))
+                                cx = float(parts[1]) * w
+                                cy = float(parts[2]) * h
+                                ww = float(parts[3]) * w
+                                hh = float(parts[4]) * h
+                                x1 = max(0.0, cx - ww/2.0)
+                                y1 = max(0.0, cy - hh/2.0)
+                                x2 = min(float(w), cx + ww/2.0)
+                                y2 = min(float(h), cy + hh/2.0)
+                            except Exception:
+                                continue
+                            if person_id is None or cid == person_id:
+                                manual_person_boxes.append({'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2})
+            except Exception:
+                manual_person_boxes = []
+
+            # 模型预测（只保留可能为人类的框）
+            preds = []
+            try:
+                boxes = AnnotationManager.auto_annotate_image(project_path, img_path, model_path=None, conf=conf, max_det=200)
+                preds = boxes or []
+            except Exception:
+                preds = []
+
+            pred_person_ids = set()
+            if person_id is not None:
+                pred_person_ids.add(int(person_id))
+            pred_person_ids.add(0)
+
+            pred_person_boxes = [
+                {'x1': float(b.get('x1', 0.0)), 'y1': float(b.get('y1', 0.0)), 'x2': float(b.get('x2', 0.0)), 'y2': float(b.get('y2', 0.0))}
+                for b in preds
+                if int(b.get('class', -1)) in pred_person_ids
+            ]
+
+            def iou(a, b):
+                ix1 = max(a['x1'], b['x1']); iy1 = max(a['y1'], b['y1'])
+                ix2 = min(a['x2'], b['x2']); iy2 = min(a['y2'], b['y2'])
+                iw = max(0.0, ix2 - ix1); ih = max(0.0, iy2 - iy1)
+                inter = iw * ih
+                area_a = max(0.0, (a['x2']-a['x1'])) * max(0.0, (a['y2']-a['y1']))
+                area_b = max(0.0, (b['x2']-b['x1'])) * max(0.0, (b['y2']-b['y1']))
+                union = area_a + area_b - inter + 1e-6
+                return inter / union
+
+            suspect = 0
+            for mb in manual_person_boxes:
+                matched = False
+                for pb in pred_person_boxes:
+                    if iou(mb, pb) >= iou_thresh:
+                        matched = True
+                        break
+                if not matched:
+                    suspect += 1
+
+            rel = os.path.relpath(img_path, img_dir)
+            items.append({
+                'url': f"/api/file?path={img_path}",
+                'path': img_path,
+                'name': os.path.basename(img_path),
+                'pending': suspect > 0,
+                'review': {
+                    'manual_person_count': len(manual_person_boxes),
+                    'pred_person_count': len(pred_person_boxes),
+                    'suspect_person_count': suspect,
+                    'iou_thresh': iou_thresh,
+                    'conf': conf
+                }
+            })
+
         return jsonify({'success': True, 'images': items, 'total': total})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

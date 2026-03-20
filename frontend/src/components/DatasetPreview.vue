@@ -637,7 +637,7 @@ const fetchImages = async (reset = false) => {
   
   loading.value = true;
   try {
-    const res = await api.getDatasetImages({
+    const params = {
       project_path: store.currentProject.path,
       dataset_name: store.selectedDataset.name,
       split: filters.split,
@@ -647,7 +647,10 @@ const fetchImages = async (reset = false) => {
       mode: filters.mode,
       unannotated: filters.unannotated,
       has_auto_label: filters.has_auto_label
-    });
+    };
+    const res = filters.has_auto_label
+      ? await api.getPersonReview({ ...params })
+      : await api.getDatasetImages({ ...params });
     
     if (res.data.success) {
       images.value = res.data.images;
