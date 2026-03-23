@@ -76,6 +76,13 @@
           >
             {{ mergingDatasets ? '处理中...' : '合并数据集' }}
           </button>
+          <button
+            class="px-2 py-1 rounded-lg text-xs border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            :disabled="!store.selectedDataset || augmentSubmitting"
+            @click="openAugmentSubsetModal"
+          >
+            {{ augmentSubmitting ? '处理中...' : '弱类补偿采样' }}
+          </button>
         </div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -331,6 +338,71 @@
       </div>
     </div>
 
+    <div v-if="showAugmentSubsetModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeAugmentSubsetModal">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-xl p-6">
+        <h3 class="text-lg font-bold mb-4">弱类补偿采样</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">类别</label>
+            <select v-model.number="augmentConfig.targetClassId" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              <option v-for="c in augmentClassOptions" :key="c.id" :value="c.id">{{ c.name }}（{{ c.count }}）</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">来源分割</label>
+            <select v-model="augmentConfig.split" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              <option value="train">train</option>
+              <option value="val">val</option>
+              <option value="test">test</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">目标类重复倍数</label>
+            <input v-model.number="augmentConfig.targetRepeat" type="number" min="1" max="30" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">非目标样本保留比例</label>
+            <input v-model.number="augmentConfig.nonTargetKeepRatio" type="number" min="0" max="1" step="0.05" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">颜色增强强度</label>
+            <input v-model.number="augmentConfig.colorJitter" type="number" min="0" max="0.8" step="0.05" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">随机种子</label>
+            <input v-model.number="augmentConfig.seed" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-2">新数据集名称</label>
+            <input v-model.trim="augmentConfig.newDatasetName" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="例如：datasets_person_comp_20260323" />
+          </div>
+          <div class="md:col-span-2 flex flex-wrap gap-3 text-sm text-gray-700">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="augmentConfig.enableHflip" class="rounded border-gray-300">
+              启用水平翻转
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="augmentConfig.enableVflip" class="rounded border-gray-300">
+              启用垂直翻转
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="augmentConfig.copyEvalSplits" class="rounded border-gray-300">
+              同步复制 val/test
+            </label>
+          </div>
+        </div>
+        <div class="mt-4 text-xs text-gray-500">
+          提示：目标类重复倍数=8 表示每张目标类图片保留1份原图，并额外生成7份增强图。
+        </div>
+        <div class="flex justify-end gap-2 mt-6">
+          <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="augmentSubmitting" @click="closeAugmentSubsetModal">取消</button>
+          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-50" :disabled="augmentSubmitting || !augmentConfig.newDatasetName" @click="runAugmentSubset">
+            {{ augmentSubmitting ? '生成中...' : '开始生成' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showMergeDatasetsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeMergeDatasets">
       <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
         <h3 class="text-lg font-bold mb-4">合并两个数据集</h3>
@@ -472,6 +544,20 @@ const showMergeDatasetsModal = ref(false);
 const mergeOtherDataset = ref('');
 const mergeNewDatasetName = ref('');
 const mergingDatasets = ref(false);
+const showAugmentSubsetModal = ref(false);
+const augmentSubmitting = ref(false);
+const augmentConfig = reactive({
+  targetClassId: 0,
+  split: 'train',
+  targetRepeat: 8,
+  nonTargetKeepRatio: 0.35,
+  colorJitter: 0.2,
+  seed: 42,
+  enableHflip: true,
+  enableVflip: false,
+  copyEvalSplits: true,
+  newDatasetName: ''
+});
 const pageInput = ref(1);
 const isFullScreen = ref(false);
 
@@ -513,6 +599,12 @@ const mergeCandidates = computed(() => {
     .map(x => x?.name)
     .filter(n => n && n !== cur)
     .sort((a, b) => String(a).localeCompare(String(b)));
+});
+const augmentClassOptions = computed(() => {
+  const stats = datasetInfo.value?.class_stats || [];
+  return (stats || [])
+    .map(s => ({ id: Number(s.id), name: String(s.name ?? ''), count: Number(s.count ?? 0) }))
+    .filter(x => Number.isFinite(x.id) && x.name);
 });
 
 const pretrainedModelOptions = computed(() => {
@@ -718,6 +810,81 @@ const openCreateSubset = () => {
 const closeCreateSubset = () => {
   showCreateSubsetModal.value = false;
   subsetName.value = '';
+};
+
+const openAugmentSubsetModal = () => {
+  const classes = augmentClassOptions.value;
+  const first = classes[0];
+  const base = store.selectedDataset?.name || 'dataset';
+  augmentConfig.targetClassId = Number.isFinite(augmentConfig.targetClassId) ? augmentConfig.targetClassId : (first?.id ?? 0);
+  if (!classes.some(c => c.id === augmentConfig.targetClassId)) {
+    augmentConfig.targetClassId = first?.id ?? 0;
+  }
+  augmentConfig.split = 'train';
+  augmentConfig.targetRepeat = 8;
+  augmentConfig.nonTargetKeepRatio = 0.35;
+  augmentConfig.colorJitter = 0.2;
+  augmentConfig.seed = 42;
+  augmentConfig.enableHflip = true;
+  augmentConfig.enableVflip = false;
+  augmentConfig.copyEvalSplits = true;
+  augmentConfig.newDatasetName = `${base}_comp_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  showAugmentSubsetModal.value = true;
+};
+
+const closeAugmentSubsetModal = () => {
+  showAugmentSubsetModal.value = false;
+};
+
+const runAugmentSubset = async () => {
+  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  if (!augmentConfig.newDatasetName) return;
+  const targetRepeat = Math.max(1, Math.min(30, Number(augmentConfig.targetRepeat || 8)));
+  const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
+  const colorJitter = Math.max(0, Math.min(0.8, Number(augmentConfig.colorJitter || 0)));
+  if (!confirm(`确定生成增强子集吗？\n目标类ID: ${augmentConfig.targetClassId}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}`)) return;
+
+  augmentSubmitting.value = true;
+  try {
+    const res = await api.createAugmentedSubset({
+      project_path: store.currentProject.path,
+      source_dataset: store.selectedDataset.name,
+      new_dataset_name: augmentConfig.newDatasetName,
+      split: augmentConfig.split,
+      target_class_id: augmentConfig.targetClassId,
+      target_repeat: targetRepeat,
+      non_target_keep_ratio: nonTargetKeepRatio,
+      seed: Number(augmentConfig.seed || 42),
+      copy_eval_splits: !!augmentConfig.copyEvalSplits,
+      enable_hflip: !!augmentConfig.enableHflip,
+      enable_vflip: !!augmentConfig.enableVflip,
+      color_jitter: colorJitter
+    });
+    if (res.data.success) {
+      await store.fetchProjects();
+      const proj = store.projects.find(p => p.id === store.currentProject.id) || store.projects.find(p => p.path === store.currentProject.path);
+      if (proj) {
+        store.currentProject = proj;
+        const all = [
+          ...(proj.datasets?.trainable || []),
+          ...(proj.datasets?.annotatable || [])
+        ];
+        const created = all.find(d => d.name === augmentConfig.newDatasetName) || all.find(d => d.path?.endsWith(`/training/${augmentConfig.newDatasetName}`));
+        store.selectedDataset = created || store.selectedDataset;
+      }
+      closeAugmentSubsetModal();
+      await fetchDatasetInfo();
+      applyFilters();
+      alert(res.data.message || '增强子集创建成功');
+    } else {
+      alert(res.data.error || '增强子集创建失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    augmentSubmitting.value = false;
+  }
 };
 
 const openReorderLabels = () => {
@@ -1073,7 +1240,7 @@ const handleGlobalKeydown = (e) => {
   if (e.defaultPrevented) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (!store.selectedDataset) return;
-  if (currentImage.value || showAutoAnnotateModal.value || showCreateSubsetModal.value) return;
+  if (currentImage.value || showAutoAnnotateModal.value || showCreateSubsetModal.value || showAugmentSubsetModal.value) return;
 
   const el = e.target;
   const tag = el?.tagName?.toLowerCase?.();

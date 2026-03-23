@@ -6,6 +6,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 def get_device():
     try:
-        return '0' if torch.cuda.is_available() else 'cpu'
+        if torch.cuda.is_available():
+            return '0'
+        if hasattr(torch, 'backends') and hasattr(torch.backends, 'mps'):
+            if torch.backends.mps.is_built() and torch.backends.mps.is_available():
+                return 'mps'
+        return 'cpu'
     except Exception:
         return 'cpu'

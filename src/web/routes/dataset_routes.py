@@ -7,6 +7,8 @@ import shutil
 import zipfile
 import tempfile
 import hashlib
+import random
+from PIL import Image, ImageEnhance
 
 # Ensure parent directory is in sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,6 +24,128 @@ def _get_person_review_model():
     if _person_review_model is None:
         _person_review_model = YOLO('yolo11n.pt')
     return _person_review_model
+
+def _resolve_dataset_root(project_path, dataset_name):
+    candidates = [
+        os.path.join(project_path, 'training', dataset_name),
+        os.path.join(project_path, 'datasets', dataset_name),
+    ]
+    for p in candidates:
+        if os.path.isdir(p):
+            return p
+    return None
+
+def _load_dataset_names(ds_root):
+    names = []
+    yaml_path = os.path.join(ds_root, 'data.yaml')
+    if not os.path.exists(yaml_path):
+        yaml_path = os.path.join(ds_root, 'dataset.yaml')
+    if os.path.exists(yaml_path):
+        try:
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                y = yaml.safe_load(f) or {}
+            raw_names = y.get('names')
+            if isinstance(raw_names, list):
+                names = [str(x) for x in raw_names]
+            elif isinstance(raw_names, dict):
+                pairs = []
+                for k, v in raw_names.items():
+                    try:
+                        kk = int(k)
+                    except Exception:
+                        continue
+                    pairs.append((kk, str(v)))
+                if pairs:
+                    names = [v for _, v in sorted(pairs, key=lambda x: x[0])]
+                else:
+                    names = [str(v) for v in raw_names.values()]
+        except Exception:
+            names = []
+    if not names:
+        info = ProjectManager.analyze_dataset(ds_root)
+        if info and isinstance(info.get('names'), list):
+            names = [str(x) for x in info.get('names')]
+    return names
+
+def _parse_label_classes(label_path):
+    cls_set = set()
+    if not label_path or (not os.path.exists(label_path)):
+        return cls_set
+    try:
+        with open(label_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                parts = s.split()
+                if not parts:
+                    continue
+                try:
+                    cls_set.add(int(float(parts[0])))
+                except Exception:
+                    continue
+    except Exception:
+        return set()
+    return cls_set
+
+def _augment_one_sample(src_img, src_lbl, dst_img, dst_lbl, rng, enable_hflip, enable_vflip, color_jitter):
+    with Image.open(src_img) as im:
+        img = im.convert('RGB')
+    do_hflip = bool(enable_hflip) and (rng.random() < 0.5)
+    do_vflip = bool(enable_vflip) and (rng.random() < 0.3)
+    jitter = max(0.0, float(color_jitter or 0.0))
+    if jitter > 0:
+        b = 1.0 + rng.uniform(-jitter, jitter)
+        c = 1.0 + rng.uniform(-jitter, jitter)
+        s = 1.0 + rng.uniform(-jitter, jitter)
+        img = ImageEnhance.Brightness(img).enhance(max(0.1, b))
+        img = ImageEnhance.Contrast(img).enhance(max(0.1, c))
+        img = ImageEnhance.Color(img).enhance(max(0.1, s))
+    if do_hflip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    if do_vflip:
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+    os.makedirs(os.path.dirname(dst_img), exist_ok=True)
+    img.save(dst_img)
+
+    lines = []
+    if src_lbl and os.path.exists(src_lbl):
+        with open(src_lbl, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+    out_lines = []
+    for line in lines:
+        s = line.strip()
+        if not s:
+            continue
+        parts = s.split()
+        if len(parts) < 5:
+            out_lines.append(s + '\n')
+            continue
+        try:
+            cid = int(float(parts[0]))
+            x = float(parts[1])
+            y = float(parts[2])
+            w = float(parts[3])
+            h = float(parts[4])
+        except Exception:
+            out_lines.append(s + '\n')
+            continue
+        if do_hflip:
+            x = 1.0 - x
+        if do_vflip:
+            y = 1.0 - y
+        x = min(1.0, max(0.0, x))
+        y = min(1.0, max(0.0, y))
+        w = min(1.0, max(0.0, w))
+        h = min(1.0, max(0.0, h))
+        rest = parts[5:]
+        out_parts = [str(cid), f'{x:.6f}', f'{y:.6f}', f'{w:.6f}', f'{h:.6f}'] + rest
+        out_lines.append(' '.join(out_parts) + '\n')
+
+    os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
+    with open(dst_lbl, 'w', encoding='utf-8') as f:
+        f.writelines(out_lines)
 
 @bp.route('/api/datasets')
 def api_datasets():
@@ -147,6 +271,191 @@ def api_dataset_create_subset():
     except Exception as e:
         import traceback
         traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/dataset/augment_subset', methods=['POST'])
+def api_dataset_augment_subset():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        source_dataset = data.get('source_dataset')
+        new_dataset_name = data.get('new_dataset_name')
+        split = str(data.get('split') or 'train').strip() or 'train'
+        target_class_id = data.get('target_class_id')
+        target_repeat = int(data.get('target_repeat') or 8)
+        non_target_keep_ratio = float(data.get('non_target_keep_ratio') if data.get('non_target_keep_ratio') is not None else 0.35)
+        seed = int(data.get('seed') or 42)
+        copy_eval_splits = bool(data.get('copy_eval_splits', True))
+        enable_hflip = bool(data.get('enable_hflip', True))
+        enable_vflip = bool(data.get('enable_vflip', False))
+        color_jitter = float(data.get('color_jitter') if data.get('color_jitter') is not None else 0.2)
+
+        if not project_path or not source_dataset or not new_dataset_name or target_class_id is None:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+        try:
+            target_class_id = int(target_class_id)
+        except Exception:
+            return jsonify({'success': False, 'error': 'target_class_id 无效'})
+        if target_repeat < 1:
+            target_repeat = 1
+        if target_repeat > 30:
+            target_repeat = 30
+        non_target_keep_ratio = min(1.0, max(0.0, non_target_keep_ratio))
+        color_jitter = min(0.8, max(0.0, color_jitter))
+
+        source_root = _resolve_dataset_root(project_path, source_dataset)
+        if not source_root:
+            return jsonify({'success': False, 'error': '源数据集不存在'})
+
+        src_img_dir = os.path.join(source_root, split, 'images')
+        src_lbl_dir = os.path.join(source_root, split, 'labels')
+        if not os.path.isdir(src_img_dir):
+            return jsonify({'success': False, 'error': f'{split}/images 不存在'})
+
+        target_root = os.path.join(project_path, 'training', new_dataset_name)
+        if os.path.exists(target_root):
+            return jsonify({'success': False, 'error': f'数据集 {new_dataset_name} 已存在'})
+
+        items = []
+        for root, _, files in os.walk(src_img_dir):
+            for fn in files:
+                low = fn.lower()
+                if not low.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.webp')):
+                    continue
+                img_path = os.path.join(root, fn)
+                rel = os.path.relpath(img_path, src_img_dir)
+                lbl_path = os.path.join(src_lbl_dir, os.path.splitext(rel)[0] + '.txt')
+                classes = _parse_label_classes(lbl_path)
+                has_target = target_class_id in classes
+                items.append({
+                    'img': img_path,
+                    'lbl': lbl_path if os.path.exists(lbl_path) else None,
+                    'rel': rel,
+                    'has_target': has_target
+                })
+
+        if not items:
+            return jsonify({'success': False, 'error': '源数据集图片为空'})
+
+        target_items = [x for x in items if x['has_target']]
+        non_target_items = [x for x in items if not x['has_target']]
+        if len(target_items) == 0:
+            return jsonify({'success': False, 'error': '未找到包含该标签的样本'})
+
+        rng = random.Random(seed)
+        rng.shuffle(non_target_items)
+        keep_non_target_count = int(round(len(non_target_items) * non_target_keep_ratio))
+        kept_non_target_items = non_target_items[:keep_non_target_count]
+
+        keep_base_items = target_items + kept_non_target_items
+        out_train_img = os.path.join(target_root, 'train', 'images')
+        out_train_lbl = os.path.join(target_root, 'train', 'labels')
+        os.makedirs(out_train_img, exist_ok=True)
+        os.makedirs(out_train_lbl, exist_ok=True)
+
+        copied_base_count = 0
+        for it in keep_base_items:
+            dst_img = os.path.join(out_train_img, it['rel'])
+            dst_lbl = os.path.join(out_train_lbl, os.path.splitext(it['rel'])[0] + '.txt')
+            os.makedirs(os.path.dirname(dst_img), exist_ok=True)
+            os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
+            shutil.copy2(it['img'], dst_img)
+            if it['lbl'] and os.path.exists(it['lbl']):
+                shutil.copy2(it['lbl'], dst_lbl)
+            else:
+                with open(dst_lbl, 'w', encoding='utf-8') as f:
+                    f.write('')
+            copied_base_count += 1
+
+        extra_needed = max(0, target_repeat - 1) * len(target_items)
+        augmented_count = 0
+        if extra_needed > 0:
+            pool = list(target_items)
+            rng.shuffle(pool)
+            for i in range(extra_needed):
+                src = pool[i % len(pool)]
+                rel_noext, ext = os.path.splitext(src['rel'])
+                if not ext:
+                    ext = '.jpg'
+                aug_rel = f'{rel_noext}__aug_{i+1:05d}{ext}'
+                dst_img = os.path.join(out_train_img, aug_rel)
+                dst_lbl = os.path.join(out_train_lbl, f'{rel_noext}__aug_{i+1:05d}.txt')
+                _augment_one_sample(
+                    src_img=src['img'],
+                    src_lbl=src['lbl'],
+                    dst_img=dst_img,
+                    dst_lbl=dst_lbl,
+                    rng=rng,
+                    enable_hflip=enable_hflip,
+                    enable_vflip=enable_vflip,
+                    color_jitter=color_jitter
+                )
+                augmented_count += 1
+
+        copied_eval = {}
+        if copy_eval_splits:
+            for eval_split in ('val', 'test'):
+                copied_eval[eval_split] = {'images': 0, 'labels': 0}
+                src_eval_img = os.path.join(source_root, eval_split, 'images')
+                src_eval_lbl = os.path.join(source_root, eval_split, 'labels')
+                dst_eval_img = os.path.join(target_root, eval_split, 'images')
+                dst_eval_lbl = os.path.join(target_root, eval_split, 'labels')
+
+                if os.path.isdir(src_eval_img):
+                    for root, _, files in os.walk(src_eval_img):
+                        for fn in files:
+                            src_fp = os.path.join(root, fn)
+                            rel = os.path.relpath(src_fp, src_eval_img)
+                            dst_fp = os.path.join(dst_eval_img, rel)
+                            os.makedirs(os.path.dirname(dst_fp), exist_ok=True)
+                            shutil.copy2(src_fp, dst_fp)
+                            copied_eval[eval_split]['images'] += 1
+                if os.path.isdir(src_eval_lbl):
+                    for root, _, files in os.walk(src_eval_lbl):
+                        for fn in files:
+                            src_fp = os.path.join(root, fn)
+                            rel = os.path.relpath(src_fp, src_eval_lbl)
+                            dst_fp = os.path.join(dst_eval_lbl, rel)
+                            os.makedirs(os.path.dirname(dst_fp), exist_ok=True)
+                            shutil.copy2(src_fp, dst_fp)
+                            copied_eval[eval_split]['labels'] += 1
+
+        names = _load_dataset_names(source_root)
+        yaml_names = {i: n for i, n in enumerate(names)}
+        yaml_data = {
+            'path': target_root,
+            'train': 'train/images',
+            'val': 'val/images' if os.path.isdir(os.path.join(target_root, 'val', 'images')) else 'train/images',
+            'names': yaml_names
+        }
+        if os.path.isdir(os.path.join(target_root, 'test', 'images')):
+            yaml_data['test'] = 'test/images'
+        with open(os.path.join(target_root, 'dataset.yaml'), 'w', encoding='utf-8') as f:
+            yaml.safe_dump(yaml_data, f, allow_unicode=True, sort_keys=False)
+
+        original_target_count = len(target_items)
+        original_total_count = len(items)
+        output_total_count = copied_base_count + augmented_count
+        output_target_count = len(target_items) + augmented_count
+        output_target_ratio = (float(output_target_count) / float(output_total_count)) if output_total_count > 0 else 0.0
+
+        return jsonify({
+            'success': True,
+            'new_dataset_name': new_dataset_name,
+            'source_split': split,
+            'target_class_id': target_class_id,
+            'original_total': original_total_count,
+            'original_target': original_target_count,
+            'copied_non_target': len(kept_non_target_items),
+            'copied_base': copied_base_count,
+            'augmented': augmented_count,
+            'output_total': output_total_count,
+            'output_target': output_target_count,
+            'output_target_ratio': round(output_target_ratio * 100, 2),
+            'copied_eval': copied_eval,
+            'message': f'已创建增强子集 {new_dataset_name}：train样本 {output_total_count} 张，目标类占比 {round(output_target_ratio * 100, 2)}%'
+        })
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @bp.route('/api/dataset/info')
