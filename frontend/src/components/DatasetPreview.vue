@@ -365,6 +365,10 @@
             <input v-model.number="augmentConfig.nonTargetKeepRatio" type="number" min="0" max="1" step="0.05" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">目标类占比(0~1)</label>
+            <input v-model.number="augmentConfig.desiredTargetRatio" type="number" min="0.01" max="0.99" step="0.01" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">颜色增强强度</label>
             <input v-model.number="augmentConfig.colorJitter" type="number" min="0" max="0.8" step="0.05" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
@@ -389,13 +393,25 @@
               <input type="checkbox" v-model="augmentConfig.copyEvalSplits" class="rounded border-gray-300">
               同步复制 val/test
             </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="augmentConfig.autoTuneByRatio" class="rounded border-gray-300">
+              按目标占比自动反推参数
+            </label>
           </div>
+        </div>
+        <div v-if="augmentPreview" class="mt-4 text-xs border border-blue-200 bg-blue-50 rounded-lg p-3 text-blue-800">
+          <div>预估后目标类占比：{{ augmentPreview.estimated_output_target_ratio }}%</div>
+          <div>预估总样本：{{ augmentPreview.estimated_output_total }}，目标样本：{{ augmentPreview.estimated_output_target }}</div>
+          <div>建议参数：重复倍数 {{ augmentPreview.resolved_target_repeat }}，非目标保留 {{ augmentPreview.resolved_non_target_keep_ratio }}</div>
         </div>
         <div class="mt-4 text-xs text-gray-500">
           提示：目标类重复倍数=8 表示每张目标类图片保留1份原图，并额外生成7份增强图。
         </div>
         <div class="flex justify-end gap-2 mt-6">
           <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="augmentSubmitting" @click="closeAugmentSubsetModal">取消</button>
+          <button class="px-4 py-2 border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg text-sm disabled:opacity-50" :disabled="augmentSubmitting" @click="runAugmentPreview">
+            {{ augmentSubmitting ? '处理中...' : '先预估' }}
+          </button>
           <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm disabled:opacity-50" :disabled="augmentSubmitting || !augmentConfig.newDatasetName" @click="runAugmentSubset">
             {{ augmentSubmitting ? '生成中...' : '开始生成' }}
           </button>
@@ -546,11 +562,14 @@ const mergeNewDatasetName = ref('');
 const mergingDatasets = ref(false);
 const showAugmentSubsetModal = ref(false);
 const augmentSubmitting = ref(false);
+const augmentPreview = ref(null);
 const augmentConfig = reactive({
   targetClassId: 0,
   split: 'train',
   targetRepeat: 8,
   nonTargetKeepRatio: 0.35,
+  desiredTargetRatio: 0.05,
+  autoTuneByRatio: true,
   colorJitter: 0.2,
   seed: 42,
   enableHflip: true,
@@ -823,17 +842,73 @@ const openAugmentSubsetModal = () => {
   augmentConfig.split = 'train';
   augmentConfig.targetRepeat = 8;
   augmentConfig.nonTargetKeepRatio = 0.35;
+  augmentConfig.desiredTargetRatio = 0.05;
+  augmentConfig.autoTuneByRatio = true;
   augmentConfig.colorJitter = 0.2;
   augmentConfig.seed = 42;
   augmentConfig.enableHflip = true;
   augmentConfig.enableVflip = false;
   augmentConfig.copyEvalSplits = true;
   augmentConfig.newDatasetName = `${base}_comp_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  augmentPreview.value = null;
   showAugmentSubsetModal.value = true;
 };
 
 const closeAugmentSubsetModal = () => {
   showAugmentSubsetModal.value = false;
+  augmentPreview.value = null;
+};
+
+const buildAugmentPayload = (withDryRun = false) => {
+  const targetRepeat = Math.max(1, Math.min(30, Number(augmentConfig.targetRepeat || 8)));
+  const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
+  const colorJitter = Math.max(0, Math.min(0.8, Number(augmentConfig.colorJitter || 0)));
+  const desiredTargetRatio = Math.max(0.01, Math.min(0.99, Number(augmentConfig.desiredTargetRatio || 0.05)));
+  const payload = {
+    project_path: store.currentProject.path,
+    source_dataset: store.selectedDataset.name,
+    new_dataset_name: augmentConfig.newDatasetName,
+    split: augmentConfig.split,
+    target_class_id: augmentConfig.targetClassId,
+    target_repeat: targetRepeat,
+    non_target_keep_ratio: nonTargetKeepRatio,
+    seed: Number(augmentConfig.seed || 42),
+    copy_eval_splits: !!augmentConfig.copyEvalSplits,
+    enable_hflip: !!augmentConfig.enableHflip,
+    enable_vflip: !!augmentConfig.enableVflip,
+    color_jitter: colorJitter
+  };
+  if (augmentConfig.autoTuneByRatio) {
+    payload.desired_target_ratio = desiredTargetRatio;
+  }
+  if (withDryRun) {
+    payload.dry_run = true;
+  }
+  return payload;
+};
+
+const runAugmentPreview = async () => {
+  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  augmentSubmitting.value = true;
+  try {
+    const res = await api.previewAugmentedSubset(buildAugmentPayload(true));
+    if (res.data.success) {
+      augmentPreview.value = res.data;
+      if (Number.isFinite(Number(res.data.resolved_target_repeat))) {
+        augmentConfig.targetRepeat = Number(res.data.resolved_target_repeat);
+      }
+      if (Number.isFinite(Number(res.data.resolved_non_target_keep_ratio))) {
+        augmentConfig.nonTargetKeepRatio = Number(res.data.resolved_non_target_keep_ratio);
+      }
+    } else {
+      alert(res.data.error || '预估失败');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('请求失败');
+  } finally {
+    augmentSubmitting.value = false;
+  }
 };
 
 const runAugmentSubset = async () => {
@@ -841,25 +916,11 @@ const runAugmentSubset = async () => {
   if (!augmentConfig.newDatasetName) return;
   const targetRepeat = Math.max(1, Math.min(30, Number(augmentConfig.targetRepeat || 8)));
   const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
-  const colorJitter = Math.max(0, Math.min(0.8, Number(augmentConfig.colorJitter || 0)));
   if (!confirm(`确定生成增强子集吗？\n目标类ID: ${augmentConfig.targetClassId}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}`)) return;
 
   augmentSubmitting.value = true;
   try {
-    const res = await api.createAugmentedSubset({
-      project_path: store.currentProject.path,
-      source_dataset: store.selectedDataset.name,
-      new_dataset_name: augmentConfig.newDatasetName,
-      split: augmentConfig.split,
-      target_class_id: augmentConfig.targetClassId,
-      target_repeat: targetRepeat,
-      non_target_keep_ratio: nonTargetKeepRatio,
-      seed: Number(augmentConfig.seed || 42),
-      copy_eval_splits: !!augmentConfig.copyEvalSplits,
-      enable_hflip: !!augmentConfig.enableHflip,
-      enable_vflip: !!augmentConfig.enableVflip,
-      color_jitter: colorJitter
-    });
+    const res = await api.createAugmentedSubset(buildAugmentPayload(false));
     if (res.data.success) {
       await store.fetchProjects();
       const proj = store.projects.find(p => p.id === store.currentProject.id) || store.projects.find(p => p.path === store.currentProject.path);

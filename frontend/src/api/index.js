@@ -29,6 +29,9 @@ export default {
   createAugmentedSubset(data) {
     return api.post('/dataset/augment_subset', data);
   },
+  previewAugmentedSubset(data) {
+    return api.post('/dataset/augment_subset', { ...data, dry_run: true });
+  },
   
   // Dataset Images & Annotation
   getDatasetImages(params) {

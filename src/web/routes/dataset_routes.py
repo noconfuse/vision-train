@@ -88,6 +88,58 @@ def _parse_label_classes(label_path):
         return set()
     return cls_set
 
+def _parse_bool(v, default=False):
+    if v is None:
+        return bool(default)
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+
+def _compute_balancing_params(target_count, non_target_count, desired_target_ratio, max_repeat=30):
+    t = int(target_count or 0)
+    n = int(non_target_count or 0)
+    if t <= 0:
+        return 1, 0.35, 0.0, 0, 0
+
+    try:
+        d = float(desired_target_ratio)
+    except Exception:
+        d = 0.05
+    if d > 1.0 and d <= 100.0:
+        d = d / 100.0
+    d = min(0.99, max(0.001, d))
+
+    best = None
+    for r in range(1, int(max_repeat) + 1):
+        for kx in range(0, 101):
+            k = kx / 100.0
+            keep_n = int(round(n * k))
+            total = t * r + keep_n
+            if total <= 0:
+                continue
+            ratio = float(t * r) / float(total)
+            diff = abs(ratio - d)
+            is_ge = ratio >= d
+            cand = (is_ge, diff, -total, r, k, ratio, keep_n)
+            if best is None:
+                best = cand
+            else:
+                if best[0] != cand[0]:
+                    if cand[0] and not best[0]:
+                        best = cand
+                else:
+                    if cand[1] < best[1]:
+                        best = cand
+                    elif cand[1] == best[1]:
+                        if cand[2] < best[2]:
+                            best = cand
+                        elif cand[2] == best[2] and cand[3] < best[3]:
+                            best = cand
+    if best is None:
+        return 1, 0.35, 0.0, 0, 0
+    _, _, _, r, k, ratio, keep_n = best
+    return int(r), float(k), float(ratio), int(keep_n), int(t * r + keep_n)
+
 def _augment_one_sample(src_img, src_lbl, dst_img, dst_lbl, rng, enable_hflip, enable_vflip, color_jitter):
     with Image.open(src_img) as im:
         img = im.convert('RGB')
@@ -285,12 +337,16 @@ def api_dataset_augment_subset():
         target_repeat = int(data.get('target_repeat') or 8)
         non_target_keep_ratio = float(data.get('non_target_keep_ratio') if data.get('non_target_keep_ratio') is not None else 0.35)
         seed = int(data.get('seed') or 42)
-        copy_eval_splits = bool(data.get('copy_eval_splits', True))
-        enable_hflip = bool(data.get('enable_hflip', True))
-        enable_vflip = bool(data.get('enable_vflip', False))
+        copy_eval_splits = _parse_bool(data.get('copy_eval_splits', True), default=True)
+        enable_hflip = _parse_bool(data.get('enable_hflip', True), default=True)
+        enable_vflip = _parse_bool(data.get('enable_vflip', False), default=False)
+        dry_run = _parse_bool(data.get('dry_run', False), default=False)
+        desired_target_ratio = data.get('desired_target_ratio')
         color_jitter = float(data.get('color_jitter') if data.get('color_jitter') is not None else 0.2)
 
-        if not project_path or not source_dataset or not new_dataset_name or target_class_id is None:
+        if not project_path or not source_dataset or target_class_id is None:
+            return jsonify({'success': False, 'error': '缺少必要参数'})
+        if (not dry_run) and (not new_dataset_name):
             return jsonify({'success': False, 'error': '缺少必要参数'})
         try:
             target_class_id = int(target_class_id)
@@ -342,12 +398,46 @@ def api_dataset_augment_subset():
         if len(target_items) == 0:
             return jsonify({'success': False, 'error': '未找到包含该标签的样本'})
 
+        if desired_target_ratio is not None and str(desired_target_ratio).strip() != '':
+            auto_repeat, auto_keep_ratio, _, _, _ = _compute_balancing_params(
+                target_count=len(target_items),
+                non_target_count=len(non_target_items),
+                desired_target_ratio=desired_target_ratio,
+                max_repeat=30
+            )
+            target_repeat = int(auto_repeat)
+            non_target_keep_ratio = float(auto_keep_ratio)
+
         rng = random.Random(seed)
         rng.shuffle(non_target_items)
         keep_non_target_count = int(round(len(non_target_items) * non_target_keep_ratio))
         kept_non_target_items = non_target_items[:keep_non_target_count]
 
         keep_base_items = target_items + kept_non_target_items
+        original_target_count = len(target_items)
+        original_total_count = len(items)
+        output_total_count = len(target_items) * int(target_repeat) + keep_non_target_count
+        output_target_count = len(target_items) * int(target_repeat)
+        output_target_ratio = (float(output_target_count) / float(output_total_count)) if output_total_count > 0 else 0.0
+
+        if dry_run:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'source_split': split,
+                'target_class_id': target_class_id,
+                'original_total': original_total_count,
+                'original_target': original_target_count,
+                'non_target_total': len(non_target_items),
+                'resolved_target_repeat': int(target_repeat),
+                'resolved_non_target_keep_ratio': round(float(non_target_keep_ratio), 4),
+                'estimated_kept_non_target': int(keep_non_target_count),
+                'estimated_output_total': int(output_total_count),
+                'estimated_output_target': int(output_target_count),
+                'estimated_output_target_ratio': round(output_target_ratio * 100, 2),
+                'message': f'预估完成：目标类占比约 {round(output_target_ratio * 100, 2)}%'
+            })
+
         out_train_img = os.path.join(target_root, 'train', 'images')
         out_train_lbl = os.path.join(target_root, 'train', 'labels')
         os.makedirs(out_train_img, exist_ok=True)
@@ -433,20 +523,21 @@ def api_dataset_augment_subset():
         with open(os.path.join(target_root, 'dataset.yaml'), 'w', encoding='utf-8') as f:
             yaml.safe_dump(yaml_data, f, allow_unicode=True, sort_keys=False)
 
-        original_target_count = len(target_items)
-        original_total_count = len(items)
         output_total_count = copied_base_count + augmented_count
         output_target_count = len(target_items) + augmented_count
         output_target_ratio = (float(output_target_count) / float(output_total_count)) if output_total_count > 0 else 0.0
 
         return jsonify({
             'success': True,
+            'dry_run': False,
             'new_dataset_name': new_dataset_name,
             'source_split': split,
             'target_class_id': target_class_id,
             'original_total': original_total_count,
             'original_target': original_target_count,
             'copied_non_target': len(kept_non_target_items),
+            'resolved_target_repeat': int(target_repeat),
+            'resolved_non_target_keep_ratio': round(float(non_target_keep_ratio), 4),
             'copied_base': copied_base_count,
             'augmented': augmented_count,
             'output_total': output_total_count,
