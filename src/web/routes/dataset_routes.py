@@ -333,7 +333,12 @@ def api_dataset_augment_subset():
         source_dataset = data.get('source_dataset')
         new_dataset_name = data.get('new_dataset_name')
         split = str(data.get('split') or 'train').strip() or 'train'
-        target_class_id = data.get('target_class_id')
+        
+        # Support both old single class and new multiple classes format
+        target_class_ids = data.get('target_class_ids')
+        if not target_class_ids and data.get('target_class_id') is not None:
+            target_class_ids = [data.get('target_class_id')]
+            
         target_repeat = int(data.get('target_repeat') or 8)
         non_target_keep_ratio = float(data.get('non_target_keep_ratio') if data.get('non_target_keep_ratio') is not None else 0.35)
         seed = int(data.get('seed') or 42)
@@ -344,14 +349,14 @@ def api_dataset_augment_subset():
         desired_target_ratio = data.get('desired_target_ratio')
         color_jitter = float(data.get('color_jitter') if data.get('color_jitter') is not None else 0.2)
 
-        if not project_path or not source_dataset or target_class_id is None:
+        if not project_path or not source_dataset or not target_class_ids:
             return jsonify({'success': False, 'error': '缺少必要参数'})
         if (not dry_run) and (not new_dataset_name):
             return jsonify({'success': False, 'error': '缺少必要参数'})
         try:
-            target_class_id = int(target_class_id)
+            target_class_ids = [int(cid) for cid in target_class_ids]
         except Exception:
-            return jsonify({'success': False, 'error': 'target_class_id 无效'})
+            return jsonify({'success': False, 'error': 'target_class_ids 包含无效值'})
         if target_repeat < 1:
             target_repeat = 1
         if target_repeat > 30:
@@ -382,7 +387,7 @@ def api_dataset_augment_subset():
                 rel = os.path.relpath(img_path, src_img_dir)
                 lbl_path = os.path.join(src_lbl_dir, os.path.splitext(rel)[0] + '.txt')
                 classes = _parse_label_classes(lbl_path)
-                has_target = target_class_id in classes
+                has_target = any(cid in classes for cid in target_class_ids)
                 items.append({
                     'img': img_path,
                     'lbl': lbl_path if os.path.exists(lbl_path) else None,
@@ -425,7 +430,7 @@ def api_dataset_augment_subset():
                 'success': True,
                 'dry_run': True,
                 'source_split': split,
-                'target_class_id': target_class_id,
+                'target_class_ids': target_class_ids,
                 'original_total': original_total_count,
                 'original_target': original_target_count,
                 'non_target_total': len(non_target_items),
@@ -532,7 +537,7 @@ def api_dataset_augment_subset():
             'dry_run': False,
             'new_dataset_name': new_dataset_name,
             'source_split': split,
-            'target_class_id': target_class_id,
+            'target_class_ids': target_class_ids,
             'original_total': original_total_count,
             'original_target': original_target_count,
             'copied_non_target': len(kept_non_target_items),

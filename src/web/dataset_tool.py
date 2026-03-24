@@ -23,6 +23,6 @@ register_blueprints(app)
 
 if __name__ == '__main__':
     print("🎯 数据集工具后端启动中...")
-    print("🌐 API 服务地址: http://localhost:5001")
+    print("🌐 API 服务地址: http://localhost:8080")
     
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True, use_reloader=False)

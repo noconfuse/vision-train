@@ -343,10 +343,11 @@
         <h3 class="text-lg font-bold mb-4">弱类补偿采样</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">类别</label>
-            <select v-model.number="augmentConfig.targetClassId" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <label class="block text-sm font-medium text-gray-700 mb-2">目标分类（多选）</label>
+            <select v-model="augmentConfig.targetClassIds" multiple class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-32">
               <option v-for="c in augmentClassOptions" :key="c.id" :value="c.id">{{ c.name }}（{{ c.count }}）</option>
             </select>
+            <div class="text-xs text-gray-500 mt-1">按住 Ctrl/Cmd 或 Shift 键可多选</div>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">来源分割</label>
@@ -564,7 +565,7 @@ const showAugmentSubsetModal = ref(false);
 const augmentSubmitting = ref(false);
 const augmentPreview = ref(null);
 const augmentConfig = reactive({
-  targetClassId: 0,
+  targetClassIds: [],
   split: 'train',
   targetRepeat: 8,
   nonTargetKeepRatio: 0.35,
@@ -835,9 +836,10 @@ const openAugmentSubsetModal = () => {
   const classes = augmentClassOptions.value;
   const first = classes[0];
   const base = store.selectedDataset?.name || 'dataset';
-  augmentConfig.targetClassId = Number.isFinite(augmentConfig.targetClassId) ? augmentConfig.targetClassId : (first?.id ?? 0);
-  if (!classes.some(c => c.id === augmentConfig.targetClassId)) {
-    augmentConfig.targetClassId = first?.id ?? 0;
+  if (!augmentConfig.targetClassIds || augmentConfig.targetClassIds.length === 0) {
+    if (first) {
+       augmentConfig.targetClassIds = [first.id];
+    }
   }
   augmentConfig.split = 'train';
   augmentConfig.targetRepeat = 8;
@@ -869,7 +871,7 @@ const buildAugmentPayload = (withDryRun = false) => {
     source_dataset: store.selectedDataset.name,
     new_dataset_name: augmentConfig.newDatasetName,
     split: augmentConfig.split,
-    target_class_id: augmentConfig.targetClassId,
+    target_class_ids: augmentConfig.targetClassIds, // Pass the array of selected class IDs
     target_repeat: targetRepeat,
     non_target_keep_ratio: nonTargetKeepRatio,
     seed: Number(augmentConfig.seed || 42),
@@ -914,9 +916,13 @@ const runAugmentPreview = async () => {
 const runAugmentSubset = async () => {
   if (!store.currentProject?.path || !store.selectedDataset?.name) return;
   if (!augmentConfig.newDatasetName) return;
+  if (!augmentConfig.targetClassIds || augmentConfig.targetClassIds.length === 0) {
+    alert('请选择至少一个目标分类');
+    return;
+  }
   const targetRepeat = Math.max(1, Math.min(30, Number(augmentConfig.targetRepeat || 8)));
   const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
-  if (!confirm(`确定生成增强子集吗？\n目标类ID: ${augmentConfig.targetClassId}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}`)) return;
+  if (!confirm(`确定生成增强子集吗？\n目标类IDs: ${augmentConfig.targetClassIds.join(', ')}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}`)) return;
 
   augmentSubmitting.value = true;
   try {
