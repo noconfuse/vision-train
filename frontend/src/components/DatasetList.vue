@@ -167,6 +167,9 @@
                  <button @click="openExport(r)" class="text-indigo-600 hover:underline flex items-center gap-1">
                    🚀 导出
                  </button>
+                 <button @click="openInfer(r)" class="text-amber-600 hover:underline flex items-center gap-1 ml-3">
+                   🧪 批量推理
+                 </button>
               </td>
               <td class="px-4 py-2 text-gray-700 text-xs">
                 <button @click="deleteRun(r)" class="text-rose-600 hover:underline">
@@ -180,6 +183,55 @@
     </div>
   </div>
 
+  <div v-if="inferModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeInfer">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-5xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold">批量推理测试集</h3>
+        <button class="text-gray-500 hover:text-gray-700" @click="closeInfer">✕</button>
+      </div>
+      <div class="space-y-4">
+        <div v-if="store.testInferStatus.is_running" class="text-center py-8">
+          <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
+          <div class="text-gray-700 font-medium">{{ store.testInferStatus.message }}</div>
+          <div class="text-gray-500 text-sm mt-1">{{ store.testInferStatus.progress }}%</div>
+        </div>
+        <div v-else>
+          <div class="grid grid-cols-3 gap-4 mb-4">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">测试子目录 (位于项目 test/ 下)</label>
+              <input v-model="inferConfig.test_subdir" placeholder="例如：test_01（留空则使用 test 根目录）" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">置信度阈值 (conf)</label>
+              <input type="number" step="0.01" v-model="inferConfig.conf" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">最大检测数 (max_det)</label>
+              <input type="number" v-model="inferConfig.max_det" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none">
+            </div>
+          </div>
+          <div v-if="inferError" class="bg-red-50 text-red-700 text-sm p-3 rounded mb-4 border border-red-100">
+            {{ inferError }}
+          </div>
+          <div class="flex justify-end pt-2 mt-2 border-t border-gray-100">
+            <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm mr-2" @click="closeInfer">取消</button>
+            <button class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm" @click="startInfer">开始批量推理</button>
+          </div>
+
+          <div v-if="store.testInferStatus.results && store.testInferStatus.results.length > 0" class="mt-6">
+            <div class="text-gray-700 mb-2 text-sm">推理结果预览：</div>
+            <div class="grid grid-cols-3 gap-3">
+              <div v-for="(item, idx) in store.testInferStatus.results" :key="idx" class="border rounded p-2 bg-gray-50">
+                <div class="text-xs font-mono mb-1 text-gray-600 truncate" :title="item.image">{{ (item.image || '').split('/').pop() }}</div>
+                <img :src="item.pred_image_url || item.image_url" class="w-full rounded">
+                <div class="text-gray-500 text-xs mt-1">预测框: {{ (item.boxes || []).length }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div v-if="splitDataset" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="closeSplit">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
       <div class="flex items-center justify-between mb-4">
@@ -434,6 +486,15 @@ const exportError = ref(null);
 const runExports = ref({}); // Map<training_id, Array<ExportInfo>>
 
 const downloadingMap = ref({});
+
+const inferModal = ref(false);
+const inferRun = ref(null);
+const inferConfig = reactive({
+  test_subdir: '',
+  conf: 0.25,
+  max_det: 200
+});
+const inferError = ref(null);
 
 const refreshProjectsKeepSelection = async () => {
   const cur = store.currentProject;
@@ -739,6 +800,40 @@ const startExport = async () => {
     store.pollExportStatus();
   } catch (e) {
     exportError.value = e.message || '启动失败';
+  }
+};
+
+const openInfer = (run) => {
+  inferRun.value = run;
+  inferError.value = null;
+  inferModal.value = true;
+};
+
+const closeInfer = () => {
+  if (!store.testInferStatus.is_running) {
+    inferModal.value = false;
+    inferRun.value = null;
+  }
+};
+
+const startInfer = async () => {
+  if (!inferRun.value) return;
+  inferError.value = null;
+  const payload = {
+    project_path: store.currentProject.path,
+    dataset_name: historyDataset.value?.name,
+    training_id: inferRun.value.training_id || inferRun.value.id,
+    test_subdir: inferConfig.test_subdir || '',
+    conf: parseFloat(inferConfig.conf) || 0.25,
+    max_det: parseInt(inferConfig.max_det) || 200
+  };
+  try {
+    const res = await store.startTestInference(payload);
+    if (!res.success) {
+      inferError.value = res.error || '启动失败';
+    }
+  } catch (e) {
+    inferError.value = e.message || '请求失败';
   }
 };
 
