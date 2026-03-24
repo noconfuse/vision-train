@@ -20,6 +20,12 @@ export const useMainStore = defineStore('main', {
       message: '',
       download_url: null
     },
+    testInferStatus: {
+      is_running: false,
+      progress: 0,
+      message: '',
+      results: []
+    },
     isLoading: false,
     error: null
   }),
@@ -165,6 +171,48 @@ export const useMainStore = defineStore('main', {
             console.error(e);
             return [];
         }
+    },
+
+    async startTestInference(payload) {
+      try {
+        const res = await api.startTestInference(payload);
+        if (res.data.success) {
+          this.testInferStatus.is_running = true;
+          this.testInferStatus.progress = 0;
+          this.testInferStatus.message = '启动推理...';
+          this.testInferStatus.results = [];
+          this.pollTestInferenceStatus();
+          return { success: true };
+        } else {
+          return { success: false, error: res.data.error };
+        }
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+
+    async pollTestInferenceStatus() {
+      if (!this.testInferStatus.is_running) return;
+      try {
+        const res = await api.getTestInferenceStatus();
+        if (res.data.success) {
+          const st = res.data.status;
+          this.testInferStatus = {
+            ...this.testInferStatus,
+            is_running: !!st.is_running,
+            progress: st.progress || 0,
+            message: st.message || '',
+            results: st.results || [],
+            output_dir_url: st.output_dir_url || null
+          };
+          if (st.is_running) {
+            setTimeout(() => this.pollTestInferenceStatus(), 1000);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+        this.testInferStatus.is_running = false;
+      }
     }
   }
 });

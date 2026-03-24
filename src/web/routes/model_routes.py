@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from managers.model_manager import ModelManager
 from managers.export_manager import ExportManager, export_status
 from managers.training_manager import TrainingManager
+from managers.inference_manager import InferenceManager
 
 bp = Blueprint('model', __name__)
 
@@ -124,5 +125,51 @@ def api_model_exports():
                  item['download_url'] = f"/api/file?path={item['primary_model_path']}"
                  
         return jsonify({'success': True, 'exports': exports})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/model/infer_test/start', methods=['POST'])
+def api_model_infer_test_start():
+    try:
+        data = request.get_json() or {}
+        project_path = data.get('project_path')
+        training_dataset = data.get('dataset_name')
+        training_id = data.get('training_id')
+        weights_path = data.get('weights_path')
+        test_subdir = data.get('test_subdir')
+        conf = float(data.get('conf', 0.25))
+        max_det = int(data.get('max_det', 200))
+        if not project_path:
+            return jsonify({'success': False, 'error': '缺少项目路径'})
+        res = InferenceManager.start(
+            project_path=project_path,
+            test_subdir=test_subdir,
+            weights_path=weights_path,
+            training_dataset=training_dataset,
+            training_id=training_id,
+            conf=conf,
+            max_det=max_det
+        )
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/model/infer_test/status')
+def api_model_infer_test_status():
+    try:
+        st = InferenceManager.get_status().copy()
+        # Convert paths to URLs
+        results = []
+        for item in st.get('results', []):
+            it = dict(item)
+            if item.get('image'):
+                it['image_url'] = f"/api/file?path={item['image']}"
+            if item.get('pred_image'):
+                it['pred_image_url'] = f"/api/file?path={item['pred_image']}"
+            results.append(it)
+        st['results'] = results
+        if st.get('output_dir'):
+            st['output_dir_url'] = f"/api/file?path={st['output_dir']}"
+        return jsonify({'success': True, 'status': st})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

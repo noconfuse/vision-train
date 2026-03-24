@@ -1535,8 +1535,15 @@ def api_dataset_delete_folder():
             if not (rp == project_real or rp.startswith(project_real + os.sep)):
                 continue
             if os.path.isdir(rp):
-                shutil.rmtree(rp)
-                deleted_path = rp
+                try:
+                    shutil.rmtree(rp)
+                    deleted_path = rp
+                except OSError as e:
+                    import errno
+                    if e.errno == errno.ENOTEMPTY or e.errno == errno.EACCES:
+                        return jsonify({'success': False, 'error': '删除失败：目录非空或被占用。后台可能仍在向该数据集写入文件（如增强任务未完成），请等待任务完成后再尝试删除。'})
+                    else:
+                        raise e
                 break
 
         if not deleted_path:

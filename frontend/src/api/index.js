@@ -84,6 +84,13 @@ export default {
   getModelExports(params) {
     return api.get('/model/exports', { params });
   },
+  // Test Inference
+  startTestInference(data) {
+    return api.post('/model/infer_test/start', data);
+  },
+  getTestInferenceStatus() {
+    return api.get('/model/infer_test/status');
+  },
   
   // Training
   startTraining(data) {
