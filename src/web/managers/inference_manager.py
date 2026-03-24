@@ -33,12 +33,18 @@ def _collect_images(root_dir: str) -> List[str]:
 def _draw_predictions(img_path: str, boxes: List[Dict[str, Any]], class_names: Dict[int, str], save_path: str):
     try:
         with Image.open(img_path) as im:
-            im = im.convert('RGB')
-            draw = ImageDraw.Draw(im)
+            im = im.convert('RGBA')
+            overlay = Image.new('RGBA', im.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
             try:
                 font = ImageFont.truetype("DejaVuSans.ttf", 16)
             except Exception:
                 font = ImageFont.load_default()
+            palette = [
+                (255, 99, 71), (56, 189, 248), (234, 179, 8), (34, 197, 94),
+                (168, 85, 247), (244, 63, 94), (59, 130, 246), (16, 185, 129),
+                (245, 158, 11), (239, 68, 68)
+            ]
             for b in boxes:
                 x1 = float(b.get('x1', 0))
                 y1 = float(b.get('y1', 0))
@@ -47,16 +53,19 @@ def _draw_predictions(img_path: str, boxes: List[Dict[str, Any]], class_names: D
                 cls_id = int(b.get('class', 0))
                 conf = float(b.get('conf', 0.0))
                 name = class_names.get(cls_id, str(cls_id))
-                color = (37, 99, 235)  # indigo
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=2)
+                base_color = palette[cls_id % len(palette)]
+                color = (base_color[0], base_color[1], base_color[2], 200)
+                fill_color = (base_color[0], base_color[1], base_color[2], 64)
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=3, fill=fill_color)
                 label = f"{name} {conf:.2f}"
-                tw, th = draw.textsize(label, font=font)
+                tw, th = ImageDraw.Draw(Image.new('RGB', (1,1))).textsize(label, font=font)
                 bx = max(0, x1)
                 by = max(0, y1 - th - 2)
-                draw.rectangle([(bx, by), (bx + tw + 4, by + th + 2)], fill=(0, 0, 0))
-                draw.text((bx + 2, by + 1), label, fill=(255, 255, 255), font=font)
+                draw.rectangle([(bx, by), (bx + tw + 6, by + th + 4)], fill=(0, 0, 0, 160), outline=color)
+                draw.text((bx + 3, by + 2), label, fill=(255, 255, 255, 255), font=font)
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            im.save(save_path, quality=90)
+            out = Image.alpha_composite(im, overlay).convert('RGB')
+            out.save(save_path, quality=90)
     except Exception:
         pass
 
@@ -151,3 +160,22 @@ class InferenceManager:
         th.start()
         return {'success': True, 'message': '推理任务已启动'}
 
+    @staticmethod
+    def list_test_dirs(project_path: str):
+        base_test = os.path.join(project_path, 'test')
+        result = []
+        if not os.path.isdir(base_test):
+            return []
+        # Include root as empty subdir
+        root_images = _collect_images(base_test)
+        result.append({
+            'name': '(test 根目录)',
+            'subdir': '',
+            'image_count': len(root_images)
+        })
+        for name in sorted(os.listdir(base_test)):
+            p = os.path.join(base_test, name)
+            if os.path.isdir(p):
+                cnt = len(_collect_images(p))
+                result.append({'name': name, 'subdir': name, 'image_count': cnt})
+        return result

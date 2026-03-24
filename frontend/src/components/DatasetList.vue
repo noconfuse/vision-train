@@ -199,7 +199,11 @@
           <div class="grid grid-cols-3 gap-4 mb-4">
             <div>
               <label class="block text-xs text-gray-600 mb-1">测试子目录 (位于项目 test/ 下)</label>
-              <input v-model="inferConfig.test_subdir" placeholder="例如：test_01（留空则使用 test 根目录）" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none">
+              <select v-model="inferConfig.test_subdir" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none">
+                <option v-for="d in store.testDirs" :key="d.subdir" :value="d.subdir">
+                  {{ d.name }}（{{ d.image_count }} 张）
+                </option>
+              </select>
             </div>
             <div>
               <label class="block text-xs text-gray-600 mb-1">置信度阈值 (conf)</label>
@@ -807,6 +811,7 @@ const openInfer = (run) => {
   inferRun.value = run;
   inferError.value = null;
   inferModal.value = true;
+  store.fetchTestDirs();
 };
 
 const closeInfer = () => {

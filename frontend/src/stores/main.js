@@ -26,6 +26,7 @@ export const useMainStore = defineStore('main', {
       message: '',
       results: []
     },
+    testDirs: [],
     isLoading: false,
     error: null
   }),
@@ -212,6 +213,21 @@ export const useMainStore = defineStore('main', {
       } catch (e) {
         console.error(e);
         this.testInferStatus.is_running = false;
+      }
+    },
+
+    async fetchTestDirs() {
+      if (!this.currentProject) return;
+      try {
+        const res = await api.getTestDirs({ project_path: this.currentProject.path });
+        if (res.data.success) {
+          this.testDirs = res.data.dirs || [];
+        } else {
+          this.testDirs = [];
+        }
+      } catch (e) {
+        console.error(e);
+        this.testDirs = [];
       }
     }
   }

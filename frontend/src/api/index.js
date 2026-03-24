@@ -91,6 +91,9 @@ export default {
   getTestInferenceStatus() {
     return api.get('/model/infer_test/status');
   },
+  getTestDirs(params) {
+    return api.get('/model/test_dirs', { params });
+  },
   
   // Training
   startTraining(data) {

@@ -173,3 +173,14 @@ def api_model_infer_test_status():
         return jsonify({'success': True, 'status': st})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@bp.route('/api/model/test_dirs')
+def api_model_test_dirs():
+    try:
+        project_path = request.args.get('project_path') or request.json.get('project_path') if request.is_json else None
+        if not project_path:
+            return jsonify({'success': False, 'error': '缺少项目路径'})
+        dirs = InferenceManager.list_test_dirs(project_path)
+        return jsonify({'success': True, 'dirs': dirs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
