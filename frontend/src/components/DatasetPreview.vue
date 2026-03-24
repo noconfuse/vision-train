@@ -357,15 +357,15 @@
               <option value="test">test</option>
             </select>
           </div>
-          <div>
+          <div v-if="!augmentConfig.autoTuneByRatio">
             <label class="block text-sm font-medium text-gray-700 mb-2">目标类重复倍数</label>
             <input v-model.number="augmentConfig.targetRepeat" type="number" min="1" max="30" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
-          <div>
+          <div v-if="!augmentConfig.autoTuneByRatio">
             <label class="block text-sm font-medium text-gray-700 mb-2">非目标样本保留比例</label>
             <input v-model.number="augmentConfig.nonTargetKeepRatio" type="number" min="0" max="1" step="0.05" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
-          <div>
+          <div v-if="augmentConfig.autoTuneByRatio">
             <label class="block text-sm font-medium text-gray-700 mb-2">目标类占比(0~1)</label>
             <input v-model.number="augmentConfig.desiredTargetRatio" type="number" min="0.01" max="0.99" step="0.01" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
@@ -406,7 +406,8 @@
           <div>建议参数：重复倍数 {{ augmentPreview.resolved_target_repeat }}，非目标保留 {{ augmentPreview.resolved_non_target_keep_ratio }}</div>
         </div>
         <div class="mt-4 text-xs text-gray-500">
-          提示：目标类重复倍数=8 表示每张目标类图片保留1份原图，并额外生成7份增强图。
+          <p v-if="augmentConfig.autoTuneByRatio">提示：自动调平模式下，只需设置“期望的目标类占比”，系统将自动计算出最佳的“重复倍数”和“非目标保留比例”。<br/><span class="text-rose-500 font-bold">警告：如果你选择的多个弱类总占比已经超过你设置的期望占比，系统将不会进行增强！建议关闭自动调平，手动设置倍数。</span></p>
+          <p v-else>提示：目标类重复倍数=8 表示每张目标类图片保留1份原图，并额外生成7份增强图。非目标保留比例=1.0 表示不丢弃任何其他图片。</p>
         </div>
         <div class="flex justify-end gap-2 mt-6">
           <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="augmentSubmitting" @click="closeAugmentSubsetModal">取消</button>
@@ -568,9 +569,9 @@ const augmentConfig = reactive({
   targetClassIds: [],
   split: 'train',
   targetRepeat: 8,
-  nonTargetKeepRatio: 0.35,
+  nonTargetKeepRatio: 1.0,
   desiredTargetRatio: 0.05,
-  autoTuneByRatio: true,
+  autoTuneByRatio: false,
   colorJitter: 0.2,
   seed: 42,
   enableHflip: true,
@@ -843,9 +844,9 @@ const openAugmentSubsetModal = () => {
   }
   augmentConfig.split = 'train';
   augmentConfig.targetRepeat = 8;
-  augmentConfig.nonTargetKeepRatio = 0.35;
+  augmentConfig.nonTargetKeepRatio = 1.0;
   augmentConfig.desiredTargetRatio = 0.05;
-  augmentConfig.autoTuneByRatio = true;
+  augmentConfig.autoTuneByRatio = false;
   augmentConfig.colorJitter = 0.2;
   augmentConfig.seed = 42;
   augmentConfig.enableHflip = true;
