@@ -177,7 +177,8 @@ def api_model_infer_test_status():
 @bp.route('/api/model/test_dirs')
 def api_model_test_dirs():
     try:
-        project_path = request.args.get('project_path') or request.json.get('project_path') if request.is_json else None
+        data = request.get_json(silent=True) or {}
+        project_path = request.args.get('project_path') or data.get('project_path') or request.form.get('project_path')
         if not project_path:
             return jsonify({'success': False, 'error': '缺少项目路径'})
         dirs = InferenceManager.list_test_dirs(project_path)
