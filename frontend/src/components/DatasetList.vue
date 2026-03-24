@@ -225,7 +225,7 @@
           <div v-if="store.testInferStatus.results && store.testInferStatus.results.length > 0" class="mt-6">
             <div class="text-gray-700 mb-2 text-sm">推理结果预览：</div>
             <div class="grid grid-cols-3 gap-3">
-              <div v-for="(item, idx) in store.testInferStatus.results" :key="idx" class="border rounded p-2 bg-gray-50">
+              <div v-for="(item, idx) in store.testInferStatus.results" :key="idx" class="border rounded p-2 bg-gray-50 cursor-zoom-in" @click="openPreview(item)">
                 <div class="text-xs font-mono mb-1 text-gray-600 truncate" :title="item.image">{{ (item.image || '').split('/').pop() }}</div>
                 <img :src="item.pred_image_url || item.image_url" class="w-full rounded">
                 <div class="text-gray-500 text-xs mt-1">预测框: {{ (item.boxes || []).length }}</div>
@@ -233,6 +233,28 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="previewModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="closePreview">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-6xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b">
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-gray-600">{{ (previewItem?.image || '').split('/').pop() }}</span>
+          <div class="flex items-center gap-2">
+            <button :class="showPred ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'" class="px-3 py-1 rounded" @click="showPred = true">预测图</button>
+            <button :class="!showPred ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'" class="px-3 py-1 rounded" @click="showPred = false">原图</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <a v-if="previewItem?.pred_image_url" :href="previewItem.pred_image_url" target="_blank" class="px-3 py-1 rounded bg-slate-100 text-slate-700">在新窗口打开预测图</a>
+          <a v-if="previewItem?.image_url" :href="previewItem.image_url" target="_blank" class="px-3 py-1 rounded bg-slate-100 text-slate-700">在新窗口打开原图</a>
+          <button class="text-gray-500 hover:text-gray-700" @click="closePreview">✕</button>
+        </div>
+      </div>
+      <div class="bg-black flex items-center justify-center">
+        <img :src="showPred ? (previewItem?.pred_image_url || previewItem?.image_url) : previewItem?.image_url" class="max-h-[80vh] w-auto object-contain">
       </div>
     </div>
   </div>
@@ -499,6 +521,9 @@ const inferConfig = reactive({
   max_det: 200
 });
 const inferError = ref(null);
+const previewModal = ref(false);
+const previewItem = ref(null);
+const showPred = ref(true);
 
 const refreshProjectsKeepSelection = async () => {
   const cur = store.currentProject;
@@ -840,6 +865,17 @@ const startInfer = async () => {
   } catch (e) {
     inferError.value = e.message || '请求失败';
   }
+};
+
+const openPreview = (item) => {
+  previewItem.value = item;
+  showPred.value = true;
+  previewModal.value = true;
+};
+
+const closePreview = () => {
+  previewModal.value = false;
+  previewItem.value = null;
 };
 
 const deleteRun = async (run) => {

@@ -31,37 +31,56 @@ def _collect_images(root_dir: str) -> List[str]:
     return images
 
 def _draw_predictions(img_path: str, boxes: List[Dict[str, Any]], class_names: Dict[int, str], save_path: str):
-    with Image.open(img_path) as im:
-        im = im.convert('RGB')
-        draw = ImageDraw.Draw(im)
+    try:
+        with Image.open(img_path) as im:
+            im = im.convert('RGB')
+            draw = ImageDraw.Draw(im)
+            try:
+                font = ImageFont.truetype("DejaVuSans.ttf", 16)
+            except Exception:
+                font = ImageFont.load_default()
+            palette = [
+                (255, 99, 71), (56, 189, 248), (234, 179, 8), (34, 197, 94),
+                (168, 85, 247), (244, 63, 94), (59, 130, 246), (16, 185, 129),
+                (245, 158, 11), (239, 68, 68)
+            ]
+            for b in boxes:
+                try:
+                    x1 = float(b.get('x1', 0))
+                    y1 = float(b.get('y1', 0))
+                    x2 = float(b.get('x2', 0))
+                    y2 = float(b.get('y2', 0))
+                    cls_id = int(b.get('class', 0))
+                    conf = float(b.get('conf', 0.0))
+                    name = class_names.get(cls_id, str(cls_id))
+                    base_color = palette[cls_id % len(palette)]
+                    color = (base_color[0], base_color[1], base_color[2])
+                    draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=3)
+                    label = f"{name} {conf:.2f}"
+                    try:
+                        # Pillow >=8: textbbox
+                        bbox = draw.textbbox((0, 0), label, font=font)
+                        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    except Exception:
+                        # Fallback
+                        tw, th = draw.textsize(label, font=font)
+                    bx = max(0, x1)
+                    by = max(0, y1 - th - 2)
+                    draw.rectangle([(bx, by), (bx + tw + 6, by + th + 4)], fill=(0, 0, 0), outline=color)
+                    draw.text((bx + 3, by + 2), label, fill=(255, 255, 255), font=font)
+                except Exception:
+                    # Keep going even if one box fails to draw
+                    continue
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            im.save(save_path, quality=90)
+    except Exception:
+        # If something goes wrong, try saving original image to keep pipeline going
         try:
-            font = ImageFont.truetype("DejaVuSans.ttf", 16)
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with Image.open(img_path) as im:
+                im.convert('RGB').save(save_path, quality=90)
         except Exception:
-            font = ImageFont.load_default()
-        palette = [
-            (255, 99, 71), (56, 189, 248), (234, 179, 8), (34, 197, 94),
-            (168, 85, 247), (244, 63, 94), (59, 130, 246), (16, 185, 129),
-            (245, 158, 11), (239, 68, 68)
-        ]
-        for b in boxes:
-            x1 = float(b.get('x1', 0))
-            y1 = float(b.get('y1', 0))
-            x2 = float(b.get('x2', 0))
-            y2 = float(b.get('y2', 0))
-            cls_id = int(b.get('class', 0))
-            conf = float(b.get('conf', 0.0))
-            name = class_names.get(cls_id, str(cls_id))
-            base_color = palette[cls_id % len(palette)]
-            color = (base_color[0], base_color[1], base_color[2])
-            draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=3)
-            label = f"{name} {conf:.2f}"
-            tw, th = font.getsize(label)
-            bx = max(0, x1)
-            by = max(0, y1 - th - 2)
-            draw.rectangle([(bx, by), (bx + tw + 6, by + th + 4)], fill=(0, 0, 0), outline=color)
-            draw.text((bx + 3, by + 2), label, fill=(255, 255, 255), font=font)
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        im.save(save_path, quality=90)
+            pass
 
 class InferenceManager:
     @staticmethod

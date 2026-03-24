@@ -391,9 +391,19 @@
               启用垂直翻转
             </label>
             <label class="flex items-center gap-2">
-              <input type="checkbox" v-model="augmentConfig.copyEvalSplits" class="rounded border-gray-300">
-              同步复制 val/test
+              <input type="checkbox" v-model="augmentConfig.rebalanceEvalSplits" class="rounded border-gray-300">
+              重建 val/test
             </label>
+            <label class="flex items-center gap-2" v-if="!augmentConfig.rebalanceEvalSplits">
+              <input type="checkbox" v-model="augmentConfig.copyEvalSplits" class="rounded border-gray-300">
+              直接复制原 val/test
+            </label>
+          </div>
+          <div v-if="augmentConfig.rebalanceEvalSplits" class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-2">eval目标占比(留空=按源数据整体占比自动估算)</label>
+            <input v-model.number="augmentConfig.evalTargetRatio" type="number" min="0" max="1" step="0.01" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="例如 0.06 表示约 6%" />
+          </div>
+          <div class="md:col-span-2 flex flex-wrap gap-3 text-sm text-gray-700">
             <label class="flex items-center gap-2">
               <input type="checkbox" v-model="augmentConfig.autoTuneByRatio" class="rounded border-gray-300">
               按目标占比自动反推参数
@@ -404,10 +414,18 @@
           <div>预估后目标类占比：{{ augmentPreview.estimated_output_target_ratio }}%</div>
           <div>预估总样本：{{ augmentPreview.estimated_output_total }}，目标样本：{{ augmentPreview.estimated_output_target }}</div>
           <div>建议参数：重复倍数 {{ augmentPreview.resolved_target_repeat }}，非目标保留 {{ augmentPreview.resolved_non_target_keep_ratio }}</div>
+          <div v-if="augmentPreview.rebalance_eval_splits && augmentPreview.estimated_eval?.val">
+            预估val：{{ augmentPreview.estimated_eval.val.total }} 张，其中目标类 {{ augmentPreview.estimated_eval.val.target }} 张
+          </div>
+          <div v-if="augmentPreview.rebalance_eval_splits && augmentPreview.estimated_eval?.test">
+            预估test：{{ augmentPreview.estimated_eval.test.total }} 张，其中目标类 {{ augmentPreview.estimated_eval.test.target }} 张
+          </div>
         </div>
         <div class="mt-4 text-xs text-gray-500">
           <p v-if="augmentConfig.autoTuneByRatio">提示：自动调平模式下，只需设置“期望的目标类占比”，系统将自动计算出最佳的“重复倍数”和“非目标保留比例”。<br/><span class="text-rose-500 font-bold">警告：如果你选择的多个弱类总占比已经超过你设置的期望占比，系统将不会进行增强！建议关闭自动调平，手动设置倍数。</span></p>
           <p v-else>提示：目标类重复倍数=8 表示每张目标类图片保留1份原图，并额外生成7份增强图。非目标保留比例=1.0 表示不丢弃任何其他图片。</p>
+          <p v-if="augmentConfig.rebalanceEvalSplits">重建 val/test 会从源数据集全部原始样本重新抽样，优先提高目标类在评估集中的覆盖，但不会把增强图放进评估集。</p>
+          <p v-else>直接复制原 val/test 只会沿用原评估集，不会同步补充弱类。</p>
         </div>
         <div class="flex justify-end gap-2 mt-6">
           <button class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm" :disabled="augmentSubmitting" @click="closeAugmentSubsetModal">取消</button>
@@ -571,12 +589,14 @@ const augmentConfig = reactive({
   targetRepeat: 8,
   nonTargetKeepRatio: 1.0,
   desiredTargetRatio: 0.05,
+  evalTargetRatio: null,
   autoTuneByRatio: false,
   colorJitter: 0.2,
   seed: 42,
   enableHflip: true,
   enableVflip: false,
   copyEvalSplits: true,
+  rebalanceEvalSplits: true,
   newDatasetName: ''
 });
 const pageInput = ref(1);
@@ -846,12 +866,14 @@ const openAugmentSubsetModal = () => {
   augmentConfig.targetRepeat = 8;
   augmentConfig.nonTargetKeepRatio = 1.0;
   augmentConfig.desiredTargetRatio = 0.05;
+  augmentConfig.evalTargetRatio = null;
   augmentConfig.autoTuneByRatio = false;
   augmentConfig.colorJitter = 0.2;
   augmentConfig.seed = 42;
   augmentConfig.enableHflip = true;
   augmentConfig.enableVflip = false;
   augmentConfig.copyEvalSplits = true;
+  augmentConfig.rebalanceEvalSplits = true;
   augmentConfig.newDatasetName = `${base}_comp_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
   augmentPreview.value = null;
   showAugmentSubsetModal.value = true;
@@ -877,10 +899,14 @@ const buildAugmentPayload = (withDryRun = false) => {
     non_target_keep_ratio: nonTargetKeepRatio,
     seed: Number(augmentConfig.seed || 42),
     copy_eval_splits: !!augmentConfig.copyEvalSplits,
+    rebalance_eval_splits: !!augmentConfig.rebalanceEvalSplits,
     enable_hflip: !!augmentConfig.enableHflip,
     enable_vflip: !!augmentConfig.enableVflip,
     color_jitter: colorJitter
   };
+  if (augmentConfig.rebalanceEvalSplits && augmentConfig.evalTargetRatio !== null && augmentConfig.evalTargetRatio !== '' && Number.isFinite(Number(augmentConfig.evalTargetRatio))) {
+    payload.eval_target_ratio = Math.max(0, Math.min(1, Number(augmentConfig.evalTargetRatio)));
+  }
   if (augmentConfig.autoTuneByRatio) {
     payload.desired_target_ratio = desiredTargetRatio;
   }
@@ -923,7 +949,8 @@ const runAugmentSubset = async () => {
   }
   const targetRepeat = Math.max(1, Math.min(30, Number(augmentConfig.targetRepeat || 8)));
   const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
-  if (!confirm(`确定生成增强子集吗？\n目标类IDs: ${augmentConfig.targetClassIds.join(', ')}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}`)) return;
+  const evalMode = augmentConfig.rebalanceEvalSplits ? '重建 val/test' : (augmentConfig.copyEvalSplits ? '复制原 val/test' : '不生成 val/test');
+  if (!confirm(`确定生成增强子集吗？\n目标类IDs: ${augmentConfig.targetClassIds.join(', ')}\n重复倍数: ${targetRepeat}\n非目标保留比例: ${nonTargetKeepRatio}\n评估集策略: ${evalMode}`)) return;
 
   augmentSubmitting.value = true;
   try {

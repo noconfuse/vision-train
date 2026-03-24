@@ -199,6 +199,47 @@ def _augment_one_sample(src_img, src_lbl, dst_img, dst_lbl, rng, enable_hflip, e
     with open(dst_lbl, 'w', encoding='utf-8') as f:
         f.writelines(out_lines)
 
+def _collect_split_items(ds_root, split_name, target_class_ids=None, prefix_split=False):
+    items = []
+    target_id_set = {int(x) for x in (target_class_ids or [])}
+    src_img_dir = os.path.join(ds_root, split_name, 'images')
+    src_lbl_dir = os.path.join(ds_root, split_name, 'labels')
+    if not os.path.isdir(src_img_dir):
+        return items
+
+    for root, _, files in os.walk(src_img_dir):
+        for fn in files:
+            low = fn.lower()
+            if not low.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.webp')):
+                continue
+            img_path = os.path.join(root, fn)
+            rel = os.path.relpath(img_path, src_img_dir)
+            out_rel = os.path.join(split_name, rel) if prefix_split else rel
+            lbl_path = os.path.join(src_lbl_dir, os.path.splitext(rel)[0] + '.txt')
+            classes = _parse_label_classes(lbl_path)
+            has_target = bool(classes & target_id_set) if target_id_set else False
+            items.append({
+                'img': img_path,
+                'lbl': lbl_path if os.path.exists(lbl_path) else None,
+                'rel': out_rel,
+                'orig_rel': rel,
+                'orig_split': split_name,
+                'has_target': has_target
+            })
+    return items
+
+def _copy_dataset_item(item, dst_img_dir, dst_lbl_dir):
+    dst_img = os.path.join(dst_img_dir, item['rel'])
+    dst_lbl = os.path.join(dst_lbl_dir, os.path.splitext(item['rel'])[0] + '.txt')
+    os.makedirs(os.path.dirname(dst_img), exist_ok=True)
+    os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
+    shutil.copy2(item['img'], dst_img)
+    if item.get('lbl') and os.path.exists(item['lbl']):
+        shutil.copy2(item['lbl'], dst_lbl)
+    else:
+        with open(dst_lbl, 'w', encoding='utf-8') as f:
+            f.write('')
+
 @bp.route('/api/datasets')
 def api_datasets():
     try:
@@ -343,10 +384,12 @@ def api_dataset_augment_subset():
         non_target_keep_ratio = float(data.get('non_target_keep_ratio') if data.get('non_target_keep_ratio') is not None else 0.35)
         seed = int(data.get('seed') or 42)
         copy_eval_splits = _parse_bool(data.get('copy_eval_splits', True), default=True)
+        rebalance_eval_splits = _parse_bool(data.get('rebalance_eval_splits', False), default=False)
         enable_hflip = _parse_bool(data.get('enable_hflip', True), default=True)
         enable_vflip = _parse_bool(data.get('enable_vflip', False), default=False)
         dry_run = _parse_bool(data.get('dry_run', False), default=False)
         desired_target_ratio = data.get('desired_target_ratio')
+        eval_target_ratio = data.get('eval_target_ratio')
         color_jitter = float(data.get('color_jitter') if data.get('color_jitter') is not None else 0.2)
 
         if not project_path or not source_dataset or not target_class_ids:
@@ -368,80 +411,160 @@ def api_dataset_augment_subset():
         if not source_root:
             return jsonify({'success': False, 'error': '源数据集不存在'})
 
-        src_img_dir = os.path.join(source_root, split, 'images')
-        src_lbl_dir = os.path.join(source_root, split, 'labels')
-        if not os.path.isdir(src_img_dir):
-            return jsonify({'success': False, 'error': f'{split}/images 不存在'})
-
         target_root = os.path.join(project_path, 'training', new_dataset_name)
         if os.path.exists(target_root):
             return jsonify({'success': False, 'error': f'数据集 {new_dataset_name} 已存在'})
 
-        items = []
-        for root, _, files in os.walk(src_img_dir):
-            for fn in files:
-                low = fn.lower()
-                if not low.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.webp')):
-                    continue
-                img_path = os.path.join(root, fn)
-                rel = os.path.relpath(img_path, src_img_dir)
-                lbl_path = os.path.join(src_lbl_dir, os.path.splitext(rel)[0] + '.txt')
-                classes = _parse_label_classes(lbl_path)
-                has_target = any(cid in classes for cid in target_class_ids)
-                items.append({
-                    'img': img_path,
-                    'lbl': lbl_path if os.path.exists(lbl_path) else None,
-                    'rel': rel,
-                    'has_target': has_target
-                })
-
-        if not items:
-            return jsonify({'success': False, 'error': '源数据集图片为空'})
-
-        target_items = [x for x in items if x['has_target']]
-        non_target_items = [x for x in items if not x['has_target']]
-        if len(target_items) == 0:
-            return jsonify({'success': False, 'error': '未找到包含该标签的样本'})
-
-        if desired_target_ratio is not None and str(desired_target_ratio).strip() != '':
-            auto_repeat, auto_keep_ratio, _, _, _ = _compute_balancing_params(
-                target_count=len(target_items),
-                non_target_count=len(non_target_items),
-                desired_target_ratio=desired_target_ratio,
-                max_repeat=30
-            )
-            target_repeat = int(auto_repeat)
-            non_target_keep_ratio = float(auto_keep_ratio)
-
         rng = random.Random(seed)
-        rng.shuffle(non_target_items)
-        keep_non_target_count = int(round(len(non_target_items) * non_target_keep_ratio))
-        kept_non_target_items = non_target_items[:keep_non_target_count]
 
-        keep_base_items = target_items + kept_non_target_items
-        original_target_count = len(target_items)
-        original_total_count = len(items)
+        copied_eval = {}
+        eval_preview = {}
+        source_eval_stats = {}
+        keep_base_items = []
+        target_items = []
+        kept_non_target_items = []
+        keep_non_target_count = 0
+
+        if rebalance_eval_splits:
+            all_items = []
+            for split_name in ('train', 'val', 'test'):
+                all_items.extend(_collect_split_items(source_root, split_name, target_class_ids=target_class_ids, prefix_split=True))
+
+            if not all_items:
+                return jsonify({'success': False, 'error': '源数据集图片为空'})
+
+            original_total_count = len(all_items)
+            original_target_count = len([x for x in all_items if x['has_target']])
+            if original_target_count == 0:
+                return jsonify({'success': False, 'error': '未找到包含该标签的样本'})
+
+            if desired_target_ratio is not None and str(desired_target_ratio).strip() != '':
+                auto_repeat, auto_keep_ratio, _, _, _ = _compute_balancing_params(
+                    target_count=original_target_count,
+                    non_target_count=max(0, original_total_count - original_target_count),
+                    desired_target_ratio=desired_target_ratio,
+                    max_repeat=30
+                )
+                target_repeat = int(auto_repeat)
+                non_target_keep_ratio = float(auto_keep_ratio)
+
+            source_eval_stats = {
+                'train_total': len([x for x in all_items if x['orig_split'] == 'train']),
+                'train_target': len([x for x in all_items if x['orig_split'] == 'train' and x['has_target']]),
+                'val_total': len([x for x in all_items if x['orig_split'] == 'val']),
+                'val_target': len([x for x in all_items if x['orig_split'] == 'val' and x['has_target']]),
+                'test_total': len([x for x in all_items if x['orig_split'] == 'test']),
+                'test_target': len([x for x in all_items if x['orig_split'] == 'test' and x['has_target']]),
+            }
+            overall_target_ratio = (float(original_target_count) / float(original_total_count)) if original_total_count > 0 else 0.0
+            if eval_target_ratio is None or str(eval_target_ratio).strip() == '':
+                eval_target_ratio = overall_target_ratio
+            else:
+                eval_target_ratio = float(eval_target_ratio)
+                if eval_target_ratio > 1.0 and eval_target_ratio <= 100.0:
+                    eval_target_ratio = eval_target_ratio / 100.0
+            eval_target_ratio = min(0.9, max(0.0, float(eval_target_ratio)))
+
+            remaining_target_items = [x for x in all_items if x['has_target']]
+            remaining_non_target_items = [x for x in all_items if not x['has_target']]
+            rng.shuffle(remaining_target_items)
+            rng.shuffle(remaining_non_target_items)
+
+            def take_items(pool, count):
+                n = max(0, min(int(count or 0), len(pool)))
+                taken = pool[:n]
+                del pool[:n]
+                return taken
+
+            def build_eval_items(split_name, total_count, min_target_count):
+                want_target = min(
+                    max(int(min_target_count), int(round(float(total_count) * float(eval_target_ratio)))),
+                    len(remaining_target_items)
+                )
+                picked = take_items(remaining_target_items, want_target)
+                missing = max(0, int(total_count) - len(picked))
+                picked += take_items(remaining_non_target_items, missing)
+                missing = max(0, int(total_count) - len(picked))
+                if missing > 0:
+                    picked += take_items(remaining_target_items, missing)
+                rng.shuffle(picked)
+                copied_eval[split_name] = {
+                    'images': len(picked),
+                    'labels': len(picked),
+                    'target_images': len([x for x in picked if x['has_target']])
+                }
+                eval_preview[split_name] = {
+                    'total': len(picked),
+                    'target': len([x for x in picked if x['has_target']]),
+                    'requested_total': int(total_count),
+                    'requested_min_target': int(min_target_count)
+                }
+                return picked
+
+            val_items = build_eval_items('val', source_eval_stats['val_total'], source_eval_stats['val_target'])
+            test_items = build_eval_items('test', source_eval_stats['test_total'], source_eval_stats['test_target'])
+
+            remaining_train_items = remaining_target_items + remaining_non_target_items
+            rng.shuffle(remaining_train_items)
+            target_items = [x for x in remaining_train_items if x['has_target']]
+            non_target_items = [x for x in remaining_train_items if not x['has_target']]
+            keep_non_target_count = int(round(len(non_target_items) * non_target_keep_ratio))
+            kept_non_target_items = non_target_items[:keep_non_target_count]
+            keep_base_items = target_items + kept_non_target_items
+        else:
+            items = _collect_split_items(source_root, split, target_class_ids=target_class_ids, prefix_split=False)
+            if not items:
+                return jsonify({'success': False, 'error': f'{split}/images 不存在或图片为空'})
+
+            target_items = [x for x in items if x['has_target']]
+            non_target_items = [x for x in items if not x['has_target']]
+            if len(target_items) == 0:
+                return jsonify({'success': False, 'error': '未找到包含该标签的样本'})
+
+            if desired_target_ratio is not None and str(desired_target_ratio).strip() != '':
+                auto_repeat, auto_keep_ratio, _, _, _ = _compute_balancing_params(
+                    target_count=len(target_items),
+                    non_target_count=len(non_target_items),
+                    desired_target_ratio=desired_target_ratio,
+                    max_repeat=30
+                )
+                target_repeat = int(auto_repeat)
+                non_target_keep_ratio = float(auto_keep_ratio)
+
+            rng.shuffle(non_target_items)
+            keep_non_target_count = int(round(len(non_target_items) * non_target_keep_ratio))
+            kept_non_target_items = non_target_items[:keep_non_target_count]
+            keep_base_items = target_items + kept_non_target_items
+            original_target_count = len(target_items)
+            original_total_count = len(items)
+
         output_total_count = len(target_items) * int(target_repeat) + keep_non_target_count
         output_target_count = len(target_items) * int(target_repeat)
         output_target_ratio = (float(output_target_count) / float(output_total_count)) if output_total_count > 0 else 0.0
 
         if dry_run:
-            return jsonify({
+            payload = {
                 'success': True,
                 'dry_run': True,
-                'source_split': split,
+                'source_split': ('all' if rebalance_eval_splits else split),
                 'target_class_ids': target_class_ids,
                 'original_total': original_total_count,
                 'original_target': original_target_count,
-                'non_target_total': len(non_target_items),
+                'non_target_total': max(0, original_total_count - original_target_count),
                 'resolved_target_repeat': int(target_repeat),
                 'resolved_non_target_keep_ratio': round(float(non_target_keep_ratio), 4),
                 'estimated_kept_non_target': int(keep_non_target_count),
                 'estimated_output_total': int(output_total_count),
                 'estimated_output_target': int(output_target_count),
                 'estimated_output_target_ratio': round(output_target_ratio * 100, 2),
+                'rebalance_eval_splits': rebalance_eval_splits,
                 'message': f'预估完成：目标类占比约 {round(output_target_ratio * 100, 2)}%'
-            })
+            }
+            if rebalance_eval_splits:
+                payload['source_eval_stats'] = source_eval_stats
+                payload['eval_target_ratio'] = round(float(eval_target_ratio) * 100, 2)
+                payload['estimated_eval'] = eval_preview
+            return jsonify(payload)
 
         out_train_img = os.path.join(target_root, 'train', 'images')
         out_train_lbl = os.path.join(target_root, 'train', 'labels')
@@ -450,16 +573,7 @@ def api_dataset_augment_subset():
 
         copied_base_count = 0
         for it in keep_base_items:
-            dst_img = os.path.join(out_train_img, it['rel'])
-            dst_lbl = os.path.join(out_train_lbl, os.path.splitext(it['rel'])[0] + '.txt')
-            os.makedirs(os.path.dirname(dst_img), exist_ok=True)
-            os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
-            shutil.copy2(it['img'], dst_img)
-            if it['lbl'] and os.path.exists(it['lbl']):
-                shutil.copy2(it['lbl'], dst_lbl)
-            else:
-                with open(dst_lbl, 'w', encoding='utf-8') as f:
-                    f.write('')
+            _copy_dataset_item(it, out_train_img, out_train_lbl)
             copied_base_count += 1
 
         extra_needed = max(0, target_repeat - 1) * len(target_items)
@@ -487,8 +601,15 @@ def api_dataset_augment_subset():
                 )
                 augmented_count += 1
 
-        copied_eval = {}
-        if copy_eval_splits:
+        if rebalance_eval_splits:
+            for eval_split, items in (('val', val_items), ('test', test_items)):
+                if not items:
+                    continue
+                dst_eval_img = os.path.join(target_root, eval_split, 'images')
+                dst_eval_lbl = os.path.join(target_root, eval_split, 'labels')
+                for it in items:
+                    _copy_dataset_item(it, dst_eval_img, dst_eval_lbl)
+        elif copy_eval_splits:
             for eval_split in ('val', 'test'):
                 copied_eval[eval_split] = {'images': 0, 'labels': 0}
                 src_eval_img = os.path.join(source_root, eval_split, 'images')
@@ -536,7 +657,7 @@ def api_dataset_augment_subset():
             'success': True,
             'dry_run': False,
             'new_dataset_name': new_dataset_name,
-            'source_split': split,
+            'source_split': ('all' if rebalance_eval_splits else split),
             'target_class_ids': target_class_ids,
             'original_total': original_total_count,
             'original_target': original_target_count,
@@ -549,6 +670,9 @@ def api_dataset_augment_subset():
             'output_target': output_target_count,
             'output_target_ratio': round(output_target_ratio * 100, 2),
             'copied_eval': copied_eval,
+            'rebalance_eval_splits': rebalance_eval_splits,
+            'eval_target_ratio': round(float(eval_target_ratio) * 100, 2) if rebalance_eval_splits else None,
+            'estimated_eval': eval_preview if rebalance_eval_splits else None,
             'message': f'已创建增强子集 {new_dataset_name}：train样本 {output_total_count} 张，目标类占比 {round(output_target_ratio * 100, 2)}%'
         })
     except Exception as e:
