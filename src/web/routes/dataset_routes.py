@@ -228,9 +228,21 @@ def _collect_split_items(ds_root, split_name, target_class_ids=None, prefix_spli
             })
     return items
 
-def _copy_dataset_item(item, dst_img_dir, dst_lbl_dir):
-    dst_img = os.path.join(dst_img_dir, item['rel'])
-    dst_lbl = os.path.join(dst_lbl_dir, os.path.splitext(item['rel'])[0] + '.txt')
+def _build_output_rel(item, target_split):
+    rel = item.get('orig_rel') or item.get('rel') or os.path.basename(item['img'])
+    rel = rel.replace('\\', '/')
+    rel_dir = os.path.dirname(rel).replace('/', '__').strip('_')
+    rel_name = os.path.basename(rel)
+    if rel_dir:
+        rel_name = f'{rel_dir}__{rel_name}'
+    if item.get('orig_split') and item.get('orig_split') != target_split:
+        rel_name = f"{item['orig_split']}__{rel_name}"
+    return rel_name
+
+def _copy_dataset_item(item, dst_img_dir, dst_lbl_dir, target_split=None):
+    rel = _build_output_rel(item, target_split) if target_split else item['rel']
+    dst_img = os.path.join(dst_img_dir, rel)
+    dst_lbl = os.path.join(dst_lbl_dir, os.path.splitext(rel)[0] + '.txt')
     os.makedirs(os.path.dirname(dst_img), exist_ok=True)
     os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
     shutil.copy2(item['img'], dst_img)
@@ -428,7 +440,7 @@ def api_dataset_augment_subset():
         if rebalance_eval_splits:
             all_items = []
             for split_name in ('train', 'val', 'test'):
-                all_items.extend(_collect_split_items(source_root, split_name, target_class_ids=target_class_ids, prefix_split=True))
+                all_items.extend(_collect_split_items(source_root, split_name, target_class_ids=target_class_ids, prefix_split=False))
 
             if not all_items:
                 return jsonify({'success': False, 'error': '源数据集图片为空'})
@@ -573,7 +585,7 @@ def api_dataset_augment_subset():
 
         copied_base_count = 0
         for it in keep_base_items:
-            _copy_dataset_item(it, out_train_img, out_train_lbl)
+            _copy_dataset_item(it, out_train_img, out_train_lbl, target_split='train')
             copied_base_count += 1
 
         extra_needed = max(0, target_repeat - 1) * len(target_items)
@@ -583,7 +595,8 @@ def api_dataset_augment_subset():
             rng.shuffle(pool)
             for i in range(extra_needed):
                 src = pool[i % len(pool)]
-                rel_noext, ext = os.path.splitext(src['rel'])
+                rel_for_train = _build_output_rel(src, 'train')
+                rel_noext, ext = os.path.splitext(rel_for_train)
                 if not ext:
                     ext = '.jpg'
                 aug_rel = f'{rel_noext}__aug_{i+1:05d}{ext}'
@@ -608,7 +621,7 @@ def api_dataset_augment_subset():
                 dst_eval_img = os.path.join(target_root, eval_split, 'images')
                 dst_eval_lbl = os.path.join(target_root, eval_split, 'labels')
                 for it in items:
-                    _copy_dataset_item(it, dst_eval_img, dst_eval_lbl)
+                    _copy_dataset_item(it, dst_eval_img, dst_eval_lbl, target_split=eval_split)
         elif copy_eval_splits:
             for eval_split in ('val', 'test'):
                 copied_eval[eval_split] = {'images': 0, 'labels': 0}

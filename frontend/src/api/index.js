@@ -111,6 +111,9 @@ export default {
   getTrainingRuns(params) {
     return api.get('/training/runs', { params });
   },
+  resumeTraining(data) {
+    return api.post('/training/resume', data);
+  },
   deleteTrainingRun(data) {
     return api.post('/training/delete', data);
   },

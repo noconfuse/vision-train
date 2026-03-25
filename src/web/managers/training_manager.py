@@ -364,17 +364,30 @@ class TrainingManager:
                     
                 # 读取 config
                 cfg_path = os.path.join(run_dir, 'training_config.json')
-                config = {}
+                raw_config = {}
                 if os.path.exists(cfg_path):
                     try:
                         with open(cfg_path, 'r') as f:
-                            config = json.load(f)
+                            raw_config = json.load(f)
                     except:
                         pass
+                if not isinstance(raw_config, dict):
+                    raw_config = {}
+
+                config = raw_config.get('config', {})
+                if not isinstance(config, dict):
+                    config = {}
+                config = {**config}
+                for key in ['model_name', 'dataset_name', 'dataset_path', 'start_time', 'dataset_yaml']:
+                    if raw_config.get(key) not in (None, '') and key not in config:
+                        config[key] = raw_config.get(key)
                         
                 # 检查是否有结果
                 results_csv = os.path.join(run_dir, 'results.csv')
-                status = 'completed' if os.path.exists(os.path.join(run_dir, 'weights', 'best.pt')) else 'running/failed'
+                weights_dir = os.path.join(run_dir, 'weights')
+                has_best = os.path.exists(os.path.join(weights_dir, 'best.pt'))
+                has_last = os.path.exists(os.path.join(weights_dir, 'last.pt'))
+                status = 'completed' if has_best else ('resumable' if has_last else 'running/failed')
                 
                 metrics = {}
                 if os.path.exists(results_csv):
@@ -402,10 +415,18 @@ class TrainingManager:
 
                 runs.append({
                     'id': run_id,
+                    'training_id': run_id,
                     'dataset': dataset_name,
                     'path': run_dir,
                     'config': config,
+                    'raw_config': raw_config,
+                    'model_name': raw_config.get('model_name') or config.get('model_name'),
+                    'dataset_path': raw_config.get('dataset_path') or config.get('dataset_path'),
+                    'dataset_yaml': raw_config.get('dataset_yaml') or config.get('dataset_yaml'),
                     'status': status,
+                    'has_best': has_best,
+                    'has_last': has_last,
+                    'can_resume': has_last,
                     'metrics': metrics,
                     'created_at': datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S')
                 })
@@ -492,50 +513,110 @@ class TrainingManager:
         )
 
     @staticmethod
-    def resume_last_run(project_path, dataset_name):
+    def resume_last_run(project_path, dataset_name, training_id=None):
         """恢复中断的训练"""
-        # 找到最近的 last.pt
         runs = TrainingManager.list_training_runs(project_path)
         target_run = None
-        for r in runs:
-            if r['dataset'] == dataset_name:
-                target_run = r
-                break
+        if training_id:
+            for r in runs:
+                if r['id'] == training_id and (not dataset_name or r['dataset'] == dataset_name):
+                    target_run = r
+                    break
+        else:
+            for r in runs:
+                if r['dataset'] == dataset_name and r.get('can_resume'):
+                    target_run = r
+                    break
         
         if not target_run:
-            return {'success': False, 'error': '未找到该数据集的训练记录'}
+            return {'success': False, 'error': '未找到可恢复的训练记录'}
             
         last_pt = os.path.join(target_run['path'], 'weights', 'last.pt')
         if not os.path.exists(last_pt):
             return {'success': False, 'error': '未找到断点文件 (last.pt)'}
             
-        # 启动恢复
         if training_status['is_running']:
             return {'success': False, 'error': '已有训练任务正在运行'}
 
+        run_config = target_run.get('config') or {}
+        total_epochs = run_config.get('epochs', training_status.get('epochs', 100))
+        try:
+            total_epochs = int(total_epochs)
+        except (TypeError, ValueError):
+            total_epochs = training_status.get('epochs', 100)
+
         training_status.update({
             'is_running': True,
-            'message': '恢复训练中...',
+            'epoch': 0,
+            'epochs': total_epochs,
+            'box_loss': 0,
+            'cls_loss': 0,
+            'dfl_loss': 0,
+            'map50': 0,
+            'map50_95': 0,
+            'progress': 0,
+            'message': f"恢复训练中: {target_run['id']}",
             'error': None,
-            'stop_requested': False
+            'stop_requested': False,
+            'history': []
         })
+        training_status['log'].clear()
+        training_status['log'].append(f"恢复训练: {target_run['id']}")
+        training_status['log'].append(f"断点权重: {last_pt}")
         
         def run_resume():
             try:
                 from ultralytics import YOLO
                 model = YOLO(last_pt)
+                
+                def on_train_epoch_end(trainer):
+                    if training_status['stop_requested']:
+                        trainer.stop = True
+                        raise InterruptedError("用户终止训练")
+
+                    metrics = trainer.metrics
+                    training_status['epoch'] = trainer.epoch + 1
+                    training_status['epochs'] = trainer.epochs
+                    training_status['box_loss'] = float(trainer.loss_items[0]) if len(trainer.loss_items) > 0 else 0
+                    training_status['cls_loss'] = float(trainer.loss_items[1]) if len(trainer.loss_items) > 1 else 0
+                    training_status['dfl_loss'] = float(trainer.loss_items[2]) if len(trainer.loss_items) > 2 else 0
+                    training_status['map50'] = float(metrics.get('metrics/mAP50(B)', 0))
+                    training_status['map50_95'] = float(metrics.get('metrics/mAP50-95(B)', 0))
+                    training_status['progress'] = int((trainer.epoch + 1) / trainer.epochs * 100)
+                    training_status['history'].append({
+                        'epoch': training_status['epoch'],
+                        'box_loss': training_status['box_loss'],
+                        'cls_loss': training_status['cls_loss'],
+                        'dfl_loss': training_status['dfl_loss'],
+                        'map50': training_status['map50'],
+                        'map50_95': training_status['map50_95']
+                    })
+                    msg = f"Epoch {trainer.epoch+1}/{trainer.epochs} box_loss:{training_status['box_loss']:.4f} mAP50:{training_status['map50']:.4f}"
+                    training_status['log'].append(msg)
+                    training_status['message'] = msg
+
+                model.add_callback("on_train_epoch_end", on_train_epoch_end)
                 model.train(resume=True)
                 training_status['message'] = '训练完成'
-                training_status['is_running'] = False
+                training_status['progress'] = 100
+                training_status['log'].append("训练成功完成")
+            except InterruptedError:
+                training_status['message'] = '训练已终止'
+                training_status['log'].append("用户手动停止训练")
             except Exception as e:
+                import traceback
+                err = traceback.format_exc()
                 training_status['error'] = str(e)
+                training_status['message'] = '训练出错'
+                training_status['log'].append(f"错误: {str(e)}\n{err}")
+            finally:
                 training_status['is_running'] = False
                 
         thread = threading.Thread(target=run_resume)
         thread.daemon = True
         thread.start()
         
-        return {'success': True, 'message': '训练已恢复'}
+        return {'success': True, 'message': '训练已恢复', 'training_id': target_run['id']}
 
     @staticmethod
     def evaluate_model(project_path, training_id, split='val'):

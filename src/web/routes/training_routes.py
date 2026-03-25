@@ -93,9 +93,10 @@ def api_training_resume():
         data = request.get_json()
         project_path = data.get('project_path')
         dataset_name = data.get('dataset_name', 'training')
+        training_id = data.get('training_id')
         if not project_path:
             return jsonify({'success': False, 'error': '缺少项目路径'})
-        result = TrainingManager.resume_last_run(project_path, dataset_name)
+        result = TrainingManager.resume_last_run(project_path, dataset_name, training_id)
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

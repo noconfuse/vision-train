@@ -16,7 +16,7 @@
            :key="p.id"
            class="p-4 mb-2 rounded-lg cursor-pointer transition-colors duration-200"
            :class="store.currentProject?.id === p.id ? 'bg-blue-500 text-white' : 'bg-gray-50 hover:bg-gray-100'"
-           @click="store.selectProject(p)">
+           @click="selectProject(p)">
         <div class="font-semibold mb-1">{{ p.name }}</div>
         <div class="text-xs opacity-80">
           Trainable: {{ p.datasets?.trainable?.length || 0 }} | 
@@ -30,8 +30,15 @@
 <script setup>
 import { useMainStore } from '../stores/main';
 import { onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 
 const store = useMainStore();
+const router = useRouter();
+
+const selectProject = (project) => {
+  store.selectProject(project);
+  router.push({ path: '/', query: { view: 'datasets' } });
+};
 
 onMounted(() => {
   store.fetchProjects();
