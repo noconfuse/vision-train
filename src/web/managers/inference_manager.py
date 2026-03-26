@@ -112,9 +112,19 @@ class InferenceManager:
                 infer_status['output_dir'] = out_dir
                 # Resolve model
                 model = None
+                ov_xml = None
+                use_openvino = False
+                
                 if weights_path and os.path.exists(weights_path):
-                    from ultralytics import YOLO
-                    model = YOLO(weights_path)
+                    if weights_path.lower().endswith('.xml'):
+                        from managers.annotation_manager import _pick_openvino_xml, _load_openvino, _openvino_predict_boxes
+                        ov_xml = _pick_openvino_xml(weights_path)
+                        if ov_xml:
+                            use_openvino = True
+                            _load_openvino(ov_xml)
+                    else:
+                        from ultralytics import YOLO
+                        model = YOLO(weights_path)
                 elif training_dataset and training_id:
                     from managers.training_manager import TrainingManager
                     arts = TrainingManager.get_run_artifacts(project_path, training_dataset, training_id)
@@ -128,29 +138,50 @@ class InferenceManager:
                     if choose and os.path.exists(choose):
                         from ultralytics import YOLO
                         model = YOLO(choose)
-                if model is None:
+                if model is None and not use_openvino:
                     # fallback: latest project best
                     model = ModelManager.get_auto_annotate_model(project_path, prefer_project_best=True)
-                if model is None:
+                if model is None and not use_openvino:
                     infer_status.update({'is_running': False, 'error': '模型不可用', 'message': '模型不可用'})
                     return
                 names = {}
-                try:
-                    names = {int(k): v for k, v in getattr(model, 'names', {}).items()}
-                except Exception:
-                    names = {}
+                if use_openvino:
+                    from managers.annotation_manager import _load_openvino
+                    _, meta = _load_openvino(ov_xml)
+                    names = meta.get('names', {})
+                else:
+                    try:
+                        names = {int(k): v for k, v in getattr(model, 'names', {}).items()}
+                    except Exception:
+                        names = {}
                 # Predict
                 for idx, img_path in enumerate(images):
                     try:
-                        res = model.predict(img_path, conf=float(conf), max_det=int(max_det), verbose=False)
                         boxes = []
-                        for r in res:
-                            if getattr(r, 'boxes', None) is not None:
-                                for b in r.boxes:
-                                    xyxy = b.xyxy[0].tolist()
-                                    cls = int(b.cls.item()) if hasattr(b, 'cls') else 0
-                                    cf = float(b.conf.item()) if hasattr(b, 'conf') else 0.0
-                                    boxes.append({'class': cls, 'x1': float(xyxy[0]), 'y1': float(xyxy[1]), 'x2': float(xyxy[2]), 'y2': float(xyxy[3]), 'conf': cf})
+                        if use_openvino:
+                            from managers.annotation_manager import _openvino_predict_boxes
+                            res_ov = _openvino_predict_boxes(ov_xml, [img_path], conf=float(conf), max_det=int(max_det))
+                            if res_ov and len(res_ov) > 0:
+                                for b in res_ov[0]:
+                                    if all(k in b for k in ('x1', 'y1', 'x2', 'y2')):
+                                        boxes.append({
+                                            'class': int(b.get('class', 0)),
+                                            'x1': float(b['x1']),
+                                            'y1': float(b['y1']),
+                                            'x2': float(b['x2']),
+                                            'y2': float(b['y2']),
+                                            'conf': float(b.get('conf', 0.0))
+                                        })
+                        else:
+                            res = model.predict(img_path, conf=float(conf), max_det=int(max_det), verbose=False)
+                            for r in res:
+                                if getattr(r, 'boxes', None) is not None:
+                                    for b in r.boxes:
+                                        xyxy = b.xyxy[0].tolist()
+                                        cls = int(b.cls.item()) if hasattr(b, 'cls') else 0
+                                        cf = float(b.conf.item()) if hasattr(b, 'conf') else 0.0
+                                        boxes.append({'class': cls, 'x1': float(xyxy[0]), 'y1': float(xyxy[1]), 'x2': float(xyxy[2]), 'y2': float(xyxy[3]), 'conf': cf})
+                        
                         rel = os.path.relpath(img_path, src_dir)
                         save_path = os.path.join(out_dir, os.path.splitext(rel)[0] + '_pred.jpg')
                         _draw_predictions(img_path, boxes, names, save_path)

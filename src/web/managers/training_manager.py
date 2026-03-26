@@ -413,6 +413,24 @@ class TrainingManager:
                     except:
                         pass
 
+                # Check for exports
+                exports = []
+                latest_export_dir = os.path.join(run_dir, 'export', 'latest')
+                if os.path.exists(latest_export_dir):
+                    files = []
+                    primary = ''
+                    for root, _, fs in os.walk(latest_export_dir):
+                        for f in fs:
+                            full_path = os.path.join(root, f)
+                            files.append(full_path)
+                            if f.endswith(('.onnx', '.xml', '.engine')):
+                                primary = full_path
+                    if files:
+                        exports.append({
+                            'primary_model_path': primary,
+                            'files': files
+                        })
+
                 runs.append({
                     'id': run_id,
                     'training_id': run_id,
@@ -428,6 +446,7 @@ class TrainingManager:
                     'has_last': has_last,
                     'can_resume': has_last,
                     'metrics': metrics,
+                    'exports': exports,
                     'created_at': datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S')
                 })
                 

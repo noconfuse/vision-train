@@ -654,15 +654,12 @@ const pretrainedModelOptions = computed(() => {
 
 const trainedModelOptions = computed(() => {
   return (trainingRuns.value || [])
-    .map(r => {
+    .flatMap(r => {
       const runDir = r?.path;
-      if (!runDir) return null;
-      const weightsDir = `${runDir}/weights`;
-      // Check if weights exist (backend checks this but we can trust the entry somewhat or check status)
-      // Actually backend returns all runs, status indicates completion.
-      // But we construct paths blindly here.
+      if (!runDir) return [];
       
-      const hasBest = true; // Simplified assumption or check r.status === 'completed'
+      const options = [];
+      const weightsDir = `${runDir}/weights`;
       const value = `${weightsDir}/best.pt`; // Default to best.pt
       
       const dataset = r.dataset || r.config?.dataset_name || 'Unknown Dataset';
@@ -670,16 +667,50 @@ const trainedModelOptions = computed(() => {
       const modelName = modelPath.split('/').pop(); // Get basename
       const map50 = r.metrics?.mAP50 ? ` mAP50:${(r.metrics.mAP50 * 100).toFixed(1)}%` : '';
       
-      const label = `[${dataset}] ${r.id} (Base: ${modelName})${map50}`;
-      return { key: `${r.id}:${value}`, value, label };
-    })
-    .filter(Boolean);
+      options.push({ 
+        key: `${r.id}:best.pt`, 
+        value, 
+        label: `[${dataset}] ${r.id} (Base: ${modelName})${map50} - PyTorch` 
+      });
+
+      if (r.exports && r.exports.length > 0) {
+        r.exports.forEach(exp => {
+          if (exp.primary_model_path) {
+            const expName = exp.primary_model_path.split('/').pop();
+            const formatType = expName.endsWith('.onnx') ? 'ONNX' : 
+                               expName.endsWith('.xml') ? 'OpenVINO' : 
+                               expName.endsWith('.engine') ? 'TensorRT' : '导出模型';
+            options.push({
+              key: `${r.id}:${expName}`,
+              value: exp.primary_model_path,
+              label: `[${dataset}] ${r.id} (Base: ${modelName}) - ${formatType} (${expName})`
+            });
+          }
+        });
+      }
+      
+      return options;
+    });
 });
 
 watch(() => showAutoAnnotateModal.value, (val) => {
   if (val) {
-    store.fetchModels();
+    store.fetchModels().then(() => {
+      if (autoAnnotateType.value === 'pretrained' && pretrainedModelOptions.value.length > 0) {
+        selectedModelPath.value = pretrainedModelOptions.value[0].path;
+      }
+    });
     fetchTrainingRuns();
+  }
+});
+
+watch(autoAnnotateType, (val) => {
+  if (val === 'pretrained' && pretrainedModelOptions.value.length > 0) {
+    selectedModelPath.value = pretrainedModelOptions.value[0].path;
+  } else if (val === 'trained' && trainedModelOptions.value.length > 0) {
+    selectedModelPath.value = trainedModelOptions.value[0].value;
+  } else {
+    selectedModelPath.value = '';
   }
 });
 
