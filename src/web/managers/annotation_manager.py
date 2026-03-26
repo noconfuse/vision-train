@@ -309,7 +309,7 @@ class AnnotationManager:
         return boxes
 
     @staticmethod
-    def start_batch_annotation(project_path, dataset_name, split, model_path, conf, max_det, batch_size, iou_thresh):
+    def start_batch_annotation(project_path, dataset_name, split, model_path, conf, max_det, batch_size, iou_thresh, image_paths=None):
         """启动批量自动标注"""
         if batch_status['is_running']:
             return {'success': False, 'error': '已有批量标注任务正在运行'}
@@ -346,10 +346,27 @@ class AnnotationManager:
                 os.makedirs(lbl_dir, exist_ok=True)
                 
                 images = []
-                for root, _, fs in os.walk(img_dir):
-                    for f in fs:
-                        if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                            images.append(os.path.join(root, f))
+                if isinstance(image_paths, list) and image_paths:
+                    img_dir_abs = os.path.abspath(img_dir)
+                    for p in image_paths:
+                        if not isinstance(p, str) or not p:
+                            continue
+                        ap = os.path.abspath(p)
+                        if not os.path.isfile(ap):
+                            continue
+                        try:
+                            if os.path.commonpath([img_dir_abs, ap]) != img_dir_abs:
+                                continue
+                        except Exception:
+                            continue
+                        if not ap.lower().endswith(('.jpg', '.jpeg', '.png')):
+                            continue
+                        images.append(ap)
+                else:
+                    for root, _, fs in os.walk(img_dir):
+                        for f in fs:
+                            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                                images.append(os.path.join(root, f))
                 images.sort()
                 
                 total = len(images)

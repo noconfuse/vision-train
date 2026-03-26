@@ -115,14 +115,38 @@ def api_model_exports():
             return jsonify({'success': False, 'error': '缺少项目路径'})
         exports = ExportManager.list_exports(project_path, training_id)
         
-        # 补充 download_url
+        # 补充下载链接
         for item in exports:
-            # 查找 zip
             zip_file = next((f for f in item.get('files', []) if f.endswith('.zip')), None)
             if zip_file:
-                item['download_url'] = f"/api/file?path={zip_file}"
+                item['zip_url'] = f"/api/file?path={zip_file}"
+
+            if item.get('primary_model_path'):
+                item['primary_model_url'] = f"/api/file?path={item['primary_model_path']}"
+
+            file_entries = []
+            for file_path in item.get('files', []):
+                try:
+                    size = os.path.getsize(file_path)
+                except OSError:
+                    size = 0
+                try:
+                    relative_path = os.path.relpath(file_path, item.get('export_dir') or project_path)
+                except ValueError:
+                    relative_path = os.path.basename(file_path)
+                file_entries.append({
+                    'name': os.path.basename(file_path),
+                    'path': file_path,
+                    'url': f"/api/file?path={file_path}",
+                    'size_bytes': size,
+                    'relative_path': relative_path
+                })
+            item['files'] = file_entries
+
+            if zip_file:
+                item['download_url'] = item['zip_url']
             elif item.get('primary_model_path'):
-                 item['download_url'] = f"/api/file?path={item['primary_model_path']}"
+                item['download_url'] = item['primary_model_url']
                  
         return jsonify({'success': True, 'exports': exports})
     except Exception as e:

@@ -236,7 +236,7 @@
        <span class="text-sm text-gray-500">共 {{ total }} 张图片</span>
        <div class="flex gap-2 relative">
          <button @click="showAutoAnnotateModal = true" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
-           自动标注 (整张表)...
+           自动标注 (当前筛选)...
          </button>
        </div>
     </div>
@@ -813,6 +813,45 @@ const fetchImages = async (reset = false) => {
   }
 };
 
+const listFilteredImagePaths = async () => {
+  const pageSize = 500;
+  let offset = 0;
+  const pathSet = new Set();
+
+  while (true) {
+    const params = {
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      split: filters.split,
+      offset,
+      limit: pageSize,
+      classes: selectedClassIds.value.length > 0 ? selectedClassIds.value.join(',') : undefined,
+      mode: filters.mode,
+      unannotated: filters.unannotated,
+      has_auto_label: filters.has_auto_label
+    };
+    const res = filters.person_review
+      ? await api.getPersonReview({ ...params })
+      : await api.getDatasetImages({ ...params });
+    if (!res.data.success) {
+      throw new Error(res.data.error || '获取筛选图片失败');
+    }
+    const pageItems = Array.isArray(res.data.images) ? res.data.images : [];
+    pageItems.forEach(it => {
+      if (it?.path) {
+        pathSet.add(it.path);
+      }
+    });
+    const totalCount = Number(res.data.total || 0);
+    offset += pageItems.length;
+    if (pageItems.length === 0 || offset >= totalCount) {
+      break;
+    }
+  }
+
+  return Array.from(pathSet);
+};
+
 const applyFilters = () => {
   selectedMap.value = {};
   filters.offset = 0;
@@ -1274,10 +1313,16 @@ const runAutoAnnotate = async () => {
   showAutoAnnotateModal.value = false;
   
   try {
+    const imagePaths = await listFilteredImagePaths();
+    if (imagePaths.length === 0) {
+      alert('当前筛选条件下没有可标注图片');
+      return;
+    }
     const res = await api.autoAnnotate({
       project_path: store.currentProject.path,
       dataset_name: store.selectedDataset.name,
       split: filters.split,
+      image_paths: imagePaths,
       model_path: selectedModelPath.value,
       conf: 0.25,
       iou: 0.7
@@ -1285,7 +1330,7 @@ const runAutoAnnotate = async () => {
     
     if (res.data.success) {
       autoAnnotating.value = true;
-      autoAnnotateStatus.value = { progress: 0, message: '初始化...', added: 0, pending: 0 };
+      autoAnnotateStatus.value = { progress: 0, message: `初始化(${imagePaths.length}张)...`, added: 0, pending: 0 };
       pollAutoAnnotateStatus();
     } else {
       alert('自动标注启动失败: ' + res.data.error);

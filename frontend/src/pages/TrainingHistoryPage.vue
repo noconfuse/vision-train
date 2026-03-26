@@ -219,20 +219,61 @@
                 <div class="text-sm font-semibold text-slate-800 mb-2">已有导出文件</div>
                 <div v-if="exportsLoading" class="text-sm text-gray-500">加载中...</div>
                 <div v-else-if="!currentExports.length" class="text-sm text-gray-400">暂无导出记录</div>
-                <div v-else class="space-y-2">
-                  <a
+                <div v-else class="space-y-3">
+                  <div
                     v-for="exp in currentExports"
                     :key="`${exp.training_id}-${exp.export_dir}`"
-                    :href="exp.download_url"
-                    target="_blank"
-                    class="flex items-center justify-between gap-3 px-3 py-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+                    class="rounded-lg border border-emerald-200 bg-emerald-50 p-3"
                   >
-                    <div class="min-w-0">
-                      <div class="text-sm font-medium text-emerald-800">{{ exportFormatLabel(exp) }}</div>
-                      <div class="text-xs text-emerald-700 truncate">{{ exp.primary_model_path || exp.export_dir }}</div>
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-emerald-800">{{ exportFormatLabel(exp) }}</div>
+                        <div class="text-xs text-emerald-700 truncate">{{ exp.primary_model_path || exp.export_dir }}</div>
+                      </div>
+                      <div class="text-xs text-emerald-700 shrink-0">{{ formatBytes(exp.total_size_bytes) }}</div>
                     </div>
-                    <div class="text-xs text-emerald-700 shrink-0">{{ formatBytes(exp.total_size_bytes) }}</div>
-                  </a>
+
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      <a
+                        v-if="exp.zip_url"
+                        :href="exp.zip_url"
+                        target="_blank"
+                        class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                      >
+                        下载量化包
+                      </a>
+                      <a
+                        v-if="!exp.zip_url && exp.primary_model_url"
+                        :href="exp.primary_model_url"
+                        target="_blank"
+                        class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                      >
+                        下载主模型
+                      </a>
+                    </div>
+
+                    <div v-if="exp.files?.length" class="mt-3 border-t border-emerald-200 pt-3">
+                      <div class="mb-2 text-xs font-medium text-emerald-800">文件列表</div>
+                      <div class="space-y-2">
+                        <div
+                          v-for="file in exp.files"
+                          :key="file.path"
+                          class="flex items-center justify-between gap-3 rounded-md bg-white/70 px-3 py-2"
+                        >
+                          <div class="min-w-0">
+                            <div class="truncate text-xs font-medium text-slate-700">{{ file.name }}</div>
+                            <div class="truncate text-[11px] text-slate-500">{{ file.relative_path }}</div>
+                          </div>
+                          <div class="flex items-center gap-3 shrink-0">
+                            <div class="text-[11px] text-slate-500">{{ formatBytes(file.size_bytes) }}</div>
+                            <a :href="file.url" target="_blank" class="text-xs font-medium text-emerald-700 hover:underline">
+                              下载
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 

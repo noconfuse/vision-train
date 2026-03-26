@@ -61,11 +61,12 @@ def api_auto_annotate():
 @bp.route('/api/auto_annotate/batch', methods=['POST'])
 def api_auto_annotate_batch():
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         project_path = data.get('project_path')
         dataset_name = data.get('dataset_name')
         split = data.get('split', 'train')
         model_path = data.get('model_path')
+        image_paths = data.get('image_paths') or []
         conf = float(data.get('conf', 0.25))
         max_det = int(data.get('max_det', 200))
         batch_size = int(data.get('batch_size', 1))
@@ -75,7 +76,7 @@ def api_auto_annotate_batch():
             return jsonify({'success': False, 'error': '缺少必要参数'})
             
         AnnotationManager.start_batch_annotation(
-            project_path, dataset_name, split, model_path, conf, max_det, batch_size, iou_thresh
+            project_path, dataset_name, split, model_path, conf, max_det, batch_size, iou_thresh, image_paths=image_paths
         )
         
         return jsonify({'success': True, 'message': '任务已启动'})
