@@ -18,7 +18,7 @@ _DEFAULTS = {
     },
     "server": {
         "host": "0.0.0.0",
-        "port": 8080,
+        "port": 8090,
         "debug": False,
         "cors_origins": "*",
     },
@@ -134,11 +134,11 @@ DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
 
 def get_server_config():
     """返回已归一化的服务监听与上传限制配置。"""
-    port = SERVER.get("port", 8080)
+    port = SERVER.get("port", 8090)
     try:
         port = int(port)
     except (TypeError, ValueError):
-        port = 8080
+        port = 8090
     return {
         "host": SERVER.get("host", "0.0.0.0"),
         "port": port,

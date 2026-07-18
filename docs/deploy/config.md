@@ -19,7 +19,7 @@ _DEFAULTS = {
     },
     "server": {
         "host": "0.0.0.0",
-        "port": 8080,
+        "port": 8090,
         "debug": False,
     },
 }
@@ -35,7 +35,7 @@ _DEFAULTS = {
 | `db_filename`           | `VISION_TRAIN_DB_FILENAME`        | SQLite 数据库文件名                    | `vision-train.db` |
 | `db_url`                | `VISION_TRAIN_DB_URL`             | 完整数据库连接串，优先级高于目录/文件名 | ``            |
 | `host`                  | `VISION_TRAIN_HOST`               | Flask 监听地址                          | `0.0.0.0`     |
-| `port`                  | `VISION_TRAIN_PORT`               | Flask 端口                              | `8080`        |
+| `port`                  | `VISION_TRAIN_PORT`               | Flask 端口                              | `8090`        |
 | `debug`                 | `VISION_TRAIN_DEBUG`              | Flask debug 模式                       | `false`       |
 
 > `VISION_TRAIN_PROJECTS_DIR` 与 `VISION_TRAIN_PRETRAINED_MODELS_DIR` 都必须设置；路径既支持相对也支持绝对。相对路径以启动进程的工作目录为基准，推荐从仓库根目录启动后端。
@@ -65,7 +65,7 @@ export VISION_TRAIN_PORT=9090
 `/api/health` 返回当前生效的路径：
 
 ```bash
-curl http://localhost:8080/api/health
+curl http://localhost:8090/api/health
 ```
 
 ```json
@@ -94,7 +94,7 @@ curl http://localhost:8080/api/health
 
 ```text
 🎯 数据集工具后端启动中...
-🌐 API 服务地址: http://0.0.0.0:8080
+🌐 API 服务地址: http://0.0.0.0:8090
 📁 projects_dir:         /Users/me/vision-train/projects
 📁 pretrained_models_dir: /Users/me/vision-train/pretrained_models
 📄 数据集配置:           dataset.yaml
@@ -102,4 +102,4 @@ curl http://localhost:8080/api/health
 
 ## 端口冲突处理
 
-默认端口是 `8080`。如被占用，修改环境变量 `VISION_TRAIN_PORT` 即可。
+默认端口是 `8090`。如被占用，修改环境变量 `VISION_TRAIN_PORT` 即可。

@@ -22,3 +22,5 @@ __pycache__/
 backups
 .env
 *.db
+.netlify/
+docs-netlify-upload.zip

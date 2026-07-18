@@ -28,7 +28,7 @@ cp .env.example .env
 
 默认可用地址：
 
-- API 健康检查：<http://localhost:8080/api/health>
+- API 健康检查：<http://localhost:8090/api/health>
 
 ## 3. 启动前端
 
@@ -42,7 +42,7 @@ npm run dev
 
 - Web UI：<http://localhost:5173>
 
-开发模式下，前端会把 `/api` 自动代理到 `http://127.0.0.1:8080`。
+开发模式下，前端会把 `/api` 自动代理到 `http://127.0.0.1:8090`。
 
 ## 4. 首次进入系统
 
