@@ -1,13 +1,72 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+import { useRouter } from 'vue-router';
 import { useMainStore } from '../stores/main';
 import api from '../api';
+import { useToast } from '../composables/useToast';
+import { useApiCall } from '../composables/useApiCall';
+import { useConfirm } from '../composables/useConfirm';
+import { useDatasets } from '../composables/useDatasets';
+import { useAutoFillGrid } from '../composables/useAutoFillGrid';
+import VideoUploadModal from './VideoUploadModal.vue';
+import AppIcon from './ui/AppIcon.vue';
+import UiTooltip from './ui/Tooltip.vue';
+import { TASK_STATUS, getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../taskStatus';
 
 const store = useMainStore();
+const router = useRouter();
+const toast = useToast();
+const apiCall = useApiCall();
+const { confirm: showConfirm } = useConfirm();
+const { allDatasets } = useDatasets();
 const videos = ref([]);
 const tasks = ref([]);
 const loading = ref(false);
 const error = ref(null);
+
+// Upload modal
+const showUploadModal = ref(false);
+const openUploadModal = () => {
+  if (!store.currentProject) return;
+  showUploadModal.value = true;
+};
+
+const handleUpload = async ({ formData, onProgress, onDone }) => {
+  try {
+    await apiCall(api.uploadVideo(formData, (e) => {
+      const p = e.total ? Math.round((e.loaded / e.total) * 100) : 0;
+      onProgress(p);
+    }), {
+      // successMsg 已在弹窗内显式 toast，这里不再显示
+      silent: true,
+      onSuccess: (data) => {
+        onDone && onDone();
+        toast.success(`视频「${data.video_name}」上传成功`);
+        fetchVideos();
+      },
+      onError: (_d, e) => { onDone && onDone(e); },
+    });
+  } catch (e) {
+    onDone && onDone(e);
+  }
+};
+
+const deleteVideo = async (video) => {
+  if (!video) return;
+  const ok = await showConfirm({
+    message: `确定要删除视频「${video.name}」吗？\n关联的抽帧任务需自行清理。`,
+    danger: true,
+    confirmText: '删除',
+  });
+  if (!ok) return;
+  await apiCall(api.deleteVideo({
+    project_path: store.currentProject.path,
+    video_name: video.name
+  }), {
+    successMsg: `视频「${video.name}」已删除`,
+    onSuccess: () => fetchVideos(),
+  });
+};
 
 // Polling timer
 let taskPollTimer = null;
@@ -67,12 +126,7 @@ const fetchVideos = async () => {
   loading.value = true;
   error.value = null;
   try {
-    const res = await api.getVideos({ project_path: store.currentProject.path });
-    if (res.data.success) {
-      videos.value = res.data.videos;
-    } else {
-      error.value = res.data.error;
-    }
+    videos.value = await api.getVideos({ project_path: store.currentProject.path });
   } catch (err) {
     error.value = 'Failed to load videos';
     console.error(err);
@@ -82,21 +136,32 @@ const fetchVideos = async () => {
 };
 
 const fetchTasks = async () => {
-  if (!store.currentProject) return;
+  if (!store.currentProject) {
+    tasks.value = [];
+    stopPolling();
+    return;
+  }
   try {
-    const res = await api.getTasks({ project_path: store.currentProject.path });
-    if (res.data.success) {
-      tasks.value = res.data.tasks;
+    const items = await api.getVideoTasks({
+      project_path: store.currentProject.path,
+    });
+    tasks.value = Array.isArray(items) ? items : [];
+    if (tasks.value.some((task) => isTaskActive(task))) {
+      if (!taskPollTimer) {
+        // 仅在存在活跃抽帧任务时保持轮询，避免页面空转。
+        taskPollTimer = setInterval(fetchTasks, 6000);
+      }
+    } else {
+      stopPolling();
     }
   } catch (err) {
-    console.error("Failed to fetch tasks", err);
+    console.error('Failed to fetch tasks', err);
   }
 };
 
 const startPolling = () => {
   stopPolling();
   fetchTasks();
-  taskPollTimer = setInterval(fetchTasks, 2000);
 };
 
 const stopPolling = () => {
@@ -120,26 +185,24 @@ const openPlayer = (video) => {
   showPlayer.value = true;
 };
 
+const closePlayer = () => {
+  showPlayer.value = false;
+  playerVideo.value = null;
+};
+
 const startExtraction = async () => {
-  try {
-    const res = await api.extractVideo({
-      project_path: store.currentProject.path,
-      video_name: currentVideo.value.name,
-      strategy: form.value.strategy,
-      value: Number(form.value.value)
-    });
-    
-    if (res.data.success) {
-      // alert('Task started');
+  await apiCall(api.extractVideo({
+    project_path: store.currentProject.path,
+    video_name: currentVideo.value.name,
+    strategy: form.value.strategy,
+    value: Number(form.value.value)
+  }), {
+    successMsg: '抽帧任务已启动',
+    onSuccess: () => {
       showModal.value = false;
-      fetchTasks(); // Immediate update
-    } else {
-      alert('Start failed: ' + res.data.error);
+      fetchTasks();
     }
-  } catch (err) {
-    alert('Request failed');
-    console.error(err);
-  }
+  });
 };
 
 const reviewTask = async (task) => {
@@ -151,23 +214,23 @@ const reviewTask = async (task) => {
   displayCount.value = 0;
   
   // Fetch images
-  try {
-    const res = await api.getTaskImages({
-      project_path: store.currentProject.path,
-      task_id: task.id
-    });
-    if (res.data.success) {
-      taskImages.value = res.data.images;
+  await apiCall(api.getTaskImages({
+    project_path: store.currentProject.path,
+    task_id: task.id
+  }), {
+    errorMsg: '加载任务图片失败',
+    onSuccess: (data) => {
+      taskImages.value = Array.isArray(data)
+        ? data
+        : (Array.isArray(data?.images) ? data.images : []);
       selectedImages.value.clear();
       taskImages.value.forEach(img => selectedImages.value.add(img.name));
       displayCount.value = Math.min(displayBatch, taskImages.value.length);
-      await nextTick();
-      if (reviewScrollEl.value) reviewScrollEl.value.scrollTop = 0;
+      nextTick(() => {
+        if (reviewScrollEl.value) reviewScrollEl.value.scrollTop = 0;
+      });
     }
-  } catch (err) {
-    console.error(err);
-    alert("Failed to load task images");
-  }
+  });
 };
 
 const toggleImage = (imgName) => {
@@ -328,48 +391,49 @@ const batchDeleteSelected = async () => {
   if (deletingImages.value) return;
   const selectedList = Array.from(selectedImages.value);
   if (selectedList.length === 0) {
-    alert('请选择要删除的图片');
+    toast.warn('请选择要删除的图片');
     return;
   }
-  if (!confirm(`确定要删除选中的 ${selectedList.length} 张图片吗？`)) return;
+  const ok = await showConfirm({
+    message: `确定要删除选中的 ${selectedList.length} 张图片吗？`,
+    danger: true,
+    confirmText: '删除',
+  });
+  if (!ok) return;
 
   deletingImages.value = true;
-  try {
-    const res = await api.batchDeleteTaskImages({
-      project_path: store.currentProject.path,
-      task_id: currentTask.value.id,
-      selected_images: selectedList
-    });
-    if (!res.data?.success) {
-      alert('删除失败: ' + (res.data?.error || 'unknown error'));
-      return;
-    }
-
-    const deleted = new Set(res.data.deleted_images || selectedList);
-    taskImages.value = taskImages.value.filter((img) => !deleted.has(img.name));
-    for (const n of deleted) selectedImages.value.delete(n);
-    displayCount.value = Math.min(displayCount.value, taskImages.value.length);
-    if (showImagePreview.value && deleted.has(previewImage.value?.name)) closePreview();
-    fetchTasks();
-  } catch (err) {
-    console.error(err);
-    alert('删除请求失败');
-  } finally {
-    deletingImages.value = false;
-  }
+  await apiCall(api.batchDeleteTaskImages({
+    project_path: store.currentProject.path,
+    task_id: currentTask.value.id,
+    selected_images: selectedList
+  }), {
+    successMsg: '已删除选中的图片',
+    onSuccess: (data) => {
+      const deleted = new Set(data.deleted_images || selectedList);
+      taskImages.value = taskImages.value.filter((img) => !deleted.has(img.name));
+      for (const n of deleted) selectedImages.value.delete(n);
+      displayCount.value = Math.min(displayCount.value, taskImages.value.length);
+      if (showImagePreview.value && deleted.has(previewImage.value?.name)) closePreview();
+      fetchTasks();
+    },
+    finally: () => { deletingImages.value = false; },
+  });
 };
 
 const deleteTask = async (task) => {
-  if (!confirm('确定要删除这个任务及其临时文件吗？')) return;
-  try {
-    await api.deleteTask({
-      project_path: store.currentProject.path,
-      task_id: task.id
-    });
-    fetchTasks();
-  } catch (err) {
-    alert("Delete failed");
-  }
+  const ok = await showConfirm({
+    message: '确定要删除这个任务及其临时文件吗？',
+    danger: true,
+    confirmText: '删除',
+  });
+  if (!ok) return;
+  await apiCall(api.deleteVideoTask({
+    project_path: store.currentProject.path,
+    task_id: task.id
+  }), {
+    successMsg: '任务已删除',
+    onSuccess: () => fetchTasks(),
+  });
 };
 
 const importImages = async () => {
@@ -377,54 +441,69 @@ const importImages = async () => {
   if (importForm.value.targetType === 'new') {
     datasetName = importForm.value.newDatasetName.trim();
     if (!datasetName) {
-      alert("请输入新数据集名称");
+      toast.warn('请输入新数据集名称');
       return;
     }
   } else {
     datasetName = importForm.value.existingDataset;
     if (!datasetName) {
-      alert("请选择已存在的数据集");
+      toast.warn('请选择已存在的数据集');
       return;
     }
   }
-  
+
   const selectedList = Array.from(selectedImages.value);
   if (selectedList.length === 0) {
-    alert('请选择要导入的图片');
+    toast.warn('请选择要导入的图片');
     return;
   }
 
   importing.value = true;
-  try {
-    const res = await api.importTaskImages({
-      project_path: store.currentProject.path,
-      task_id: currentTask.value.id,
-      dataset_name: datasetName,
-      selected_images: selectedList
-    });
-    
-    if (res.data.success) {
-      alert(`成功导入 ${res.data.imported_count} 张图片到数据集 ${datasetName}`);
+  await apiCall(api.importTaskImages({
+    project_path: store.currentProject.path,
+    task_id: currentTask.value.id,
+    dataset_name: datasetName,
+    selected_images: selectedList
+  }), {
+    onSuccess: async (data) => {
+      const finalDatasetName = String(data?.dataset_name || datasetName || '').trim();
+      toast.success(`成功导入 ${data.imported_count} 张图片到数据集 ${finalDatasetName}`);
       showReview.value = false;
-      // Refresh project to update dataset list if needed
-      store.fetchProjects(); 
-    } else {
-      alert("Import failed: " + res.data.error);
-    }
-  } catch (err) {
-    console.error(err);
-    alert("Import request failed");
-  } finally {
-    importing.value = false;
-  }
+      await store.fetchProjects({ silent: true });
+      const nextProject = store.projects.find(p => p.id === store.currentProject?.id)
+        || store.projects.find(p => p.path === store.currentProject?.path)
+        || store.currentProject;
+      const nextDataset = (nextProject?.datasets || []).find(d => d.name === finalDatasetName) || null;
+      if (nextProject) store.selectProject(nextProject);
+      if (nextDataset) store.selectDataset(nextDataset);
+      await router.push({
+        name: 'dataset-detail',
+        params: {
+          project: encodeURIComponent(nextProject?.name || store.currentProject?.name || ''),
+          name: encodeURIComponent(finalDatasetName),
+        },
+      });
+    },
+    finally: () => { importing.value = false; },
+  });
+};
+
+const getTaskVideoName = (task) => {
+  const rawName = task?.video_name ?? task?.payload?.video_name ?? '';
+  const normalized = String(rawName || '').trim();
+  return normalized || '未命名视频';
+};
+
+const getTaskExtractedCount = (task) => {
+  const rawCount = task?.extracted_count ?? task?.artifacts?.extracted_count;
+  const count = Number(rawCount);
+  return Number.isFinite(count) && count >= 0 ? count : null;
 };
 
 // Computed
 const existingDatasets = computed(() => {
-  const ds = store.currentProject?.datasets || {};
-  const merged = [...(ds.trainable || []), ...(ds.annotatable || [])].filter(Boolean);
   const byName = new Map();
-  for (const d of merged) {
+  for (const d of allDatasets.value) {
     if (d?.name && !byName.has(d.name)) byName.set(d.name, d);
   }
   return Array.from(byName.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -446,10 +525,10 @@ const boxStyle = computed(() => {
   };
 });
 
-const reviewGridClass = computed(() => {
-  return reviewMaximized.value
-    ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3'
-    : 'grid grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3';
+const { gridClass: reviewGridClass, gridStyle: reviewGridStyle } = useAutoFillGrid(reviewMaximized, {
+  compactTile: 112,
+  regularTile: 132,
+  gapClass: 'gap-3',
 });
 
 const previewImage = computed(() => taskImages.value[previewIndex.value] || null);
@@ -502,241 +581,315 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onBoxSelectMove);
   window.removeEventListener('mouseup', onBoxSelectEnd);
 });
+
 </script>
 
 <template>
-  <div class="h-full flex">
+  <div class="vt-view vt-view--cols">
     <!-- Main Content: Video List -->
-    <div class="flex-1 flex flex-col min-w-0 p-6 overflow-y-auto">
+    <div class="vt-view__main p-4">
       <!-- Toolbar -->
-      <div class="mb-6 flex justify-between items-center">
-        <h2 class="text-lg font-medium text-gray-800">视频列表</h2>
-        <button @click="fetchVideos" class="text-blue-600 hover:text-blue-800 text-sm">
-          刷新列表
-        </button>
+      <div class="flex justify-between items-center shrink-0">
+        <h2 class="text-sm font-semibold text-slate-800">视频列表 <span class="text-xs text-gray-400 font-normal">({{ videos.length }})</span></h2>
+        <div class="flex items-center gap-3">
+          <button @click="openUploadModal"
+                  class="vt-btn-solid-primary vt-btn-size-md">
+            <AppIcon name="video" class="h-4 w-4" />
+            <span>上传视频</span>
+          </button>
+          <button @click="fetchVideos" class="vt-link">
+            刷新列表
+          </button>
+        </div>
       </div>
 
-      <!-- Loading / Error -->
-      <div v-if="loading" class="text-center py-8 text-gray-500">加载中...</div>
-      <div v-else-if="error" class="text-center py-8 text-red-500">{{ error }}</div>
-      <div v-else-if="videos.length === 0" class="text-center py-8 text-gray-500">
-        当前项目下没有视频文件 (请将视频放入 projects/{{ store.currentProject?.name }}/videos 目录)
-      </div>
+      <div class="flex-1 min-h-0 flex flex-col">
+        <!-- Loading / Error -->
+        <div v-if="loading" class="vt-empty text-sm text-gray-500">加载中...</div>
+        <div v-else-if="error" class="vt-empty text-sm text-red-500">{{ error }}</div>
+        <div v-else-if="videos.length === 0" class="vt-empty text-sm text-gray-500">
+          <div class="mb-2 flex justify-center">
+            <AppIcon name="video" class="h-8 w-8 text-slate-400" />
+          </div>
+          <div class="mb-3">当前项目下还没有视频</div>
+          <button @click="openUploadModal"
+                  class="vt-btn-solid-primary vt-btn-size-md">
+            <AppIcon name="video" class="h-4 w-4" />
+            上传第一个视频
+          </button>
+        </div>
 
-      <!-- Video Grid -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        <div v-for="video in videos" :key="video.name" class="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col group">
+        <!-- Video Grid -->
+        <div v-else class="flex-1 min-h-0 overflow-y-auto">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div v-for="video in videos" :key="video.name" class="bg-white border border-gray-200 overflow-hidden flex flex-col group hover:border-[color:var(--vt-color-primary-border)] transition-colors">
           <!-- Thumbnail -->
-          <div class="relative h-36 bg-black flex items-center justify-center cursor-pointer group-hover:opacity-95 transition-opacity" @click="openPlayer(video)">
-            <img 
-              :src="video.thumbnail_url" 
-              class="w-full h-full object-cover" 
-              loading="lazy"
-              @error="$event.target.style.display='none'"
-            />
-            <!-- Play Icon Overlay -->
-            <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
-              <div class="w-12 h-12 rounded-full bg-white/80 flex items-center justify-center pl-1 shadow-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-900" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
-                </svg>
+            <div class="relative h-32 bg-black flex items-center justify-center cursor-pointer group-hover:opacity-95 transition-opacity" @click="openPlayer(video)">
+              <img
+                :src="video.thumbnail_url"
+                class="w-full h-full object-cover"
+                loading="lazy"
+                @error="$event.target.style.display='none'"
+              />
+              <!-- Play Icon Overlay -->
+              <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
+                <div class="vt-media-play-trigger">
+                  <AppIcon name="train" class="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <div class="p-3 flex-1 flex flex-col">
+              <div class="flex items-start justify-between mb-1">
+                <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-words text-left">
+                  <template #trigger>
+                    <h3 class="font-medium text-gray-900 text-sm truncate flex-1">{{ video.name }}</h3>
+                  </template>
+                  {{ video.name }}
+                </UiTooltip>
+                <UiTooltip side="top" align="center" content-class="max-w-[24rem] break-words text-left">
+                  <template #trigger>
+                    <button @click="deleteVideo(video)"
+                            class="vt-icon-btn ml-1 -mt-0.5 h-7 w-7 border-transparent bg-transparent text-gray-300 hover:bg-rose-50 hover:text-rose-500">
+                      <AppIcon name="delete" class="h-4 w-4" />
+                    </button>
+                  </template>
+                  {{ `删除 ${video.name}` }}
+                </UiTooltip>
+              </div>
+              <div class="text-xs text-gray-500 mb-3">
+                {{ video.size_mb }} MB • {{ video.modified }}
+              </div>
+
+              <div class="mt-auto">
+                <button @click="openExtractModal(video)" class="vt-btn-solid-primary vt-btn-size-md w-full justify-center">
+                  <AppIcon name="split" class="h-4 w-4" />
+                  抽帧构建数据集
+                </button>
               </div>
             </div>
           </div>
-          
-          <div class="p-4 flex-1 flex flex-col">
-            <h3 class="font-medium text-gray-900 truncate mb-1" :title="video.name">{{ video.name }}</h3>
-            <div class="text-xs text-gray-500 mb-4">
-              {{ video.size_mb }} MB • {{ video.modified }}
-            </div>
-            
-            <div class="mt-auto">
-              <button @click="openExtractModal(video)" class="w-full bg-blue-50 text-blue-600 hover:bg-blue-100 py-2 rounded-md text-sm font-medium transition-colors">
-                抽帧构建数据集
-              </button>
-            </div>
-          </div>
+        </div>
         </div>
       </div>
     </div>
 
     <!-- Right Sidebar: Task List -->
-    <div class="w-80 bg-white border-l border-gray-200 flex flex-col shadow-lg z-10">
-      <div class="p-4 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-        <h3 class="font-medium text-gray-800">任务列表</h3>
+    <div class="w-80 bg-white border-l border-gray-200 flex flex-col z-10 h-full min-h-0">
+      <div class="px-3 pt-4 pb-2 border-b border-gray-200 bg-gray-50 shrink-0">
+        <div class="h-8 flex justify-between items-center">
+        <h3 class="text-sm font-semibold text-gray-800">当前项目任务</h3>
         <span class="text-xs text-gray-500" v-if="tasks.length">{{ tasks.length }} 个任务</span>
-      </div>
-      
-      <div class="flex-1 overflow-y-auto p-4 space-y-4">
-        <div v-if="tasks.length === 0" class="text-center text-gray-400 text-sm py-8">
-          暂无抽帧任务
         </div>
-        
-        <div v-for="task in tasks" :key="task.id" class="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
-          <div class="flex justify-between items-start mb-2">
-            <div class="text-sm font-medium truncate w-40" :title="task.video_name">{{ task.video_name }}</div>
-            <button @click="deleteTask(task)" class="text-gray-400 hover:text-red-500">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        <div v-if="tasks.length === 0" class="text-center text-gray-400 text-xs py-8">
+          当前项目下暂无抽帧任务
+        </div>
+
+        <article
+          v-for="task in tasks"
+          :key="task.id"
+          class="vt-record-card"
+          :class="isTaskActive(task) ? 'vt-record-card--active' : ''"
+        >
+          <div class="vt-record-header mb-2">
+            <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-words text-left">
+              <template #trigger>
+                <div class="vt-record-main">
+                  <div class="vt-record-title truncate pr-2">{{ getTaskVideoName(task) }}</div>
+                  <div class="vt-record-meta">{{ task.created_at }}</div>
+                </div>
+              </template>
+              {{ getTaskVideoName(task) }}
+            </UiTooltip>
+            <div class="vt-record-side">
+              <div class="vt-record-badges">
+                <span class="vt-tag vt-tag--sm" :class="getTaskStatusTagClass(task.status)">
+                  {{ getTaskStatusLabel(task.status) }}
+                </span>
+              </div>
+              <button
+                @click="deleteTask(task)"
+                class="vt-icon-btn vt-icon-btn--sm border-transparent bg-transparent text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                aria-label="删除任务"
+              >
+                <AppIcon name="delete" class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-          
-          <div class="text-xs text-gray-500 mb-2">
-            {{ task.created_at }}
-          </div>
-          
+
           <!-- Status & Progress -->
-          <div v-if="task.status === 'running'" class="space-y-1">
+          <div v-if="task.status === TASK_STATUS.RUNNING || task.status === TASK_STATUS.PENDING || task.status === TASK_STATUS.STOPPING" class="space-y-1.5">
             <div class="flex justify-between text-xs">
-              <span class="text-blue-600">进行中...</span>
+              <span class="text-slate-500">{{ task.status === TASK_STATUS.PENDING ? '等待处理' : task.status === TASK_STATUS.STOPPING ? '停止中' : '进行中' }}</span>
               <span>{{ task.progress }}%</span>
             </div>
-            <div class="w-full bg-gray-100 rounded-full h-1.5">
-              <div class="bg-blue-600 h-1.5 rounded-full transition-all duration-300" :style="{ width: task.progress + '%' }"></div>
+            <div class="vt-meter h-1">
+              <div class="vt-meter__bar transition-all duration-300" :class="getTaskProgressBarClass(task.status)" :style="{ width: task.progress + '%' }"></div>
             </div>
           </div>
-          
-          <div v-else-if="task.status === 'completed'" class="space-y-2">
-            <div class="flex justify-between text-xs">
-              <span class="text-green-600">已完成</span>
-              <span>{{ task.extracted_count }} 张</span>
+
+          <div v-else-if="task.status === TASK_STATUS.COMPLETED" class="space-y-2">
+            <div class="flex items-center justify-between gap-2 text-xs">
+              <span class="text-slate-500">可进入审查并导入</span>
+              <span v-if="getTaskExtractedCount(task) !== null" class="vt-count-badge">
+                {{ getTaskExtractedCount(task) }} 张
+              </span>
             </div>
-            <button @click="reviewTask(task)" class="w-full bg-green-50 text-green-600 hover:bg-green-100 py-1.5 rounded text-xs font-medium">
+            <button @click="reviewTask(task)" class="vt-btn-solid-primary vt-btn-size-md w-full justify-center">
+              <AppIcon name="detail" class="h-4 w-4" />
               审查并导入
             </button>
           </div>
-          
-          <div v-else class="text-xs text-red-500">
-            失败: {{ task.error }}
+
+          <div v-else class="text-xs text-rose-500">
+            {{ task.error || '任务执行失败' }}
           </div>
-        </div>
+        </article>
       </div>
     </div>
 
     <!-- Modals -->
-    
+
     <!-- Extraction Config Modal -->
-    <div v-if="showModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-        <h3 class="text-lg font-bold mb-4">抽帧配置</h3>
+    <div v-if="showModal" class="vt-modal-backdrop">
+      <div class="vt-modal-panel vt-modal-panel--md p-5">
+        <h3 class="text-base font-semibold text-slate-800 mb-4">抽帧配置</h3>
         <p class="text-sm text-gray-600 mb-4">
           源视频: <span class="font-medium">{{ currentVideo?.name }}</span>
         </p>
-        
+
         <div class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">抽帧策略</label>
-            <select v-model="form.strategy" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500">
+            <label class="block text-xs font-medium text-gray-700 mb-1">抽帧策略</label>
+            <select v-model="form.strategy" class="vt-select">
               <option value="interval">按时间间隔 (秒)</option>
               <option value="count">按总帧数 (均匀抽取)</option>
             </select>
           </div>
-          
+
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
+            <label class="block text-xs font-medium text-gray-700 mb-1">
               {{ form.strategy === 'interval' ? '间隔时间 (秒)' : '抽取总张数' }}
             </label>
-            <input v-model="form.value" type="number" :step="form.strategy === 'interval' ? 0.1 : 1" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500">
+            <input v-model="form.value" type="number" :step="form.strategy === 'interval' ? 0.1 : 1" class="vt-input">
           </div>
         </div>
-        
+
         <div class="mt-6 flex justify-end gap-3">
-          <button @click="showModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">取消</button>
-          <button @click="startExtraction" class="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-md">开始抽帧</button>
+          <button @click="showModal = false" class="vt-btn-secondary vt-btn-size-md">取消</button>
+          <button @click="startExtraction" class="vt-btn-solid-primary vt-btn-size-md">
+            <AppIcon name="split" class="h-4 w-4" />
+            开始抽帧
+          </button>
         </div>
       </div>
     </div>
 
     <!-- Video Player Modal -->
-    <div v-if="showPlayer" class="fixed inset-0 bg-black/90 flex items-center justify-center z-50" @click.self="showPlayer = false">
-      <div class="w-full max-w-4xl p-4">
+    <div v-if="showPlayer" class="vt-media-backdrop" @click.self="closePlayer">
+      <div class="vt-media-panel">
         <div class="flex justify-between items-center mb-2 text-white">
           <h3 class="font-medium truncate">{{ playerVideo?.name }}</h3>
-          <button @click="showPlayer = false" class="hover:text-gray-300">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+          <button @click="closePlayer" class="vt-media-close" aria-label="关闭视频播放器">
+            <AppIcon name="close" class="h-4 w-4" />
           </button>
         </div>
-        <video 
+        <video
           v-if="playerVideo"
-          :src="playerVideo.stream_url" 
-          controls 
+          :src="playerVideo.stream_url"
+          controls
           autoplay
-          class="w-full max-h-[80vh] bg-black rounded-lg shadow-2xl"
+          playsinline
+          preload="metadata"
+          class="w-full max-h-[80vh] bg-black"
         ></video>
       </div>
     </div>
-    
+
     <!-- Review Modal -->
-    <div v-if="showReview" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div
+      v-if="showReview"
+      class="vt-workspace-backdrop"
+      :class="reviewMaximized ? 'vt-workspace-backdrop--full' : ''"
+    >
       <div
-        class="bg-white rounded-lg shadow-xl flex flex-col"
-        :class="reviewMaximized ? 'w-[98vw] max-w-none h-[95vh]' : 'w-full max-w-6xl h-[90vh]'"
+        class="vt-workspace-panel"
+        :class="reviewMaximized ? 'vt-workspace-panel--full' : 'vt-workspace-panel--lg'"
       >
         <!-- Header -->
         <div class="p-4 border-b border-gray-200 flex justify-between items-center">
           <div>
-            <h3 class="text-lg font-bold">抽帧结果审查</h3>
+            <h3 class="text-base font-semibold text-slate-800">抽帧结果审查</h3>
             <p class="text-sm text-gray-500">任务 ID: {{ currentTask?.id.slice(0, 8) }}...</p>
           </div>
           <div class="flex items-center gap-2">
             <button
               @click="reviewMaximized = !reviewMaximized"
-              class="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:bg-gray-50"
+              class="vt-icon-btn"
+              :aria-label="reviewMaximized ? '退出全屏审查弹窗' : '全屏审查弹窗'"
             >
-              {{ reviewMaximized ? '还原' : '放大' }}
+              <AppIcon :name="reviewMaximized ? 'minimize' : 'maximize'" class="h-4 w-4" />
             </button>
-            <button @click="showReview = false" class="text-gray-400 hover:text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+            <button @click="showReview = false" class="vt-modal-close">
+              <AppIcon name="close" class="h-4 w-4" />
             </button>
           </div>
         </div>
-        
+
         <!-- Main Content -->
         <div class="flex-1 flex min-h-0">
           <!-- Image Grid -->
           <div ref="reviewScrollEl" class="flex-1 p-4 overflow-y-auto bg-gray-50 relative" @scroll="onReviewScroll" @mousedown="onReviewMouseDown">
             <div class="flex justify-between items-center mb-4 gap-3">
               <span class="text-sm text-gray-600">
-                共 {{ taskImages.length }} 张，已显示 {{ visibleTaskImages.length }} 张，已选 <span class="font-bold text-blue-600">{{ selectedImages.size }}</span> 张
+                共 {{ taskImages.length }} 张，已显示 {{ visibleTaskImages.length }} 张，已选 <span class="font-bold text-[color:var(--vt-color-primary)]">{{ selectedImages.size }}</span> 张
               </span>
               <div class="flex items-center gap-3">
-                <button @click="batchDeleteSelected" class="text-red-600 text-sm hover:underline disabled:opacity-50" :disabled="deletingImages || selectedImages.size === 0">
+                <button @click="batchDeleteSelected" class="vt-btn-danger vt-btn-size-sm" :disabled="deletingImages || selectedImages.size === 0">
+                  <AppIcon name="delete" class="h-3.5 w-3.5" />
                   {{ deletingImages ? '删除中...' : '批量删除' }}
                 </button>
-                <button @click="selectAll" class="text-blue-600 text-sm hover:underline">
+                <button @click="selectAll" class="vt-btn-secondary vt-btn-size-sm">
                   {{ selectedImages.size === taskImages.length ? '取消全选' : '全选' }}
                 </button>
               </div>
             </div>
 
-            <div v-if="boxSelecting" class="absolute border-2 border-blue-500 bg-blue-200/20 pointer-events-none z-20" :style="boxStyle"></div>
-            
-            <div :class="reviewGridClass">
-              <div 
-                v-for="img in visibleTaskImages" 
-                :key="img.name" 
+            <div
+              v-if="boxSelecting"
+              class="absolute z-20 border-2 pointer-events-none"
+              :style="{
+                ...boxStyle,
+                borderColor: 'var(--vt-color-primary)',
+                background: 'color-mix(in srgb, var(--vt-color-primary-soft) 72%, transparent)',
+              }"
+            ></div>
+
+            <div :class="reviewGridClass" :style="reviewGridStyle">
+              <div
+                v-for="img in visibleTaskImages"
+                :key="img.name"
                 data-img-tile="1"
                 :data-img-name="img.name"
-                class="aspect-square relative group cursor-pointer border-2 rounded-lg overflow-hidden"
-                :class="selectedImages.has(img.name) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-gray-300'"
+                class="aspect-square relative group cursor-pointer border-2 overflow-hidden"
+                :class="selectedImages.has(img.name) ? 'vt-selectable--selected' : 'vt-selectable'"
                 @click="toggleImage(img.name)"
               >
                 <img :src="img.url" class="w-full h-full object-cover" loading="lazy" />
                 <button
-                  class="absolute bottom-1 left-1 px-2 py-1 rounded-md bg-black/40 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                  class="vt-overlay-icon-btn absolute bottom-1 left-1"
                   @click.stop="openPreview(img.name)"
+                  aria-label="放大预览图片"
                 >
-                  放大
+                  <AppIcon name="eye" class="h-3.5 w-3.5" />
                 </button>
                 <!-- Selection Overlay -->
                 <div class="absolute top-1 right-1">
-                  <div class="w-5 h-5 rounded-full border border-white shadow-sm flex items-center justify-center transition-colors"
-                    :class="selectedImages.has(img.name) ? 'bg-blue-500' : 'bg-black/30 group-hover:bg-black/50'"
+                  <div class="h-5 w-5 border border-white flex items-center justify-center transition-colors"
+                    :class="selectedImages.has(img.name) ? 'bg-[var(--vt-color-primary)]' : 'bg-black/30 group-hover:bg-black/50'"
                   >
                     <svg v-if="selectedImages.has(img.name)" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" viewBox="0 0 20 20" fill="currentColor">
                       <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
@@ -748,42 +901,42 @@ onUnmounted(() => {
 
             <div v-if="displayCount < taskImages.length" class="flex justify-center py-6">
               <button
-                class="px-4 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50"
+                class="vt-btn-secondary vt-btn-size-md"
                 @click="loadMoreImages"
               >
                 加载更多
               </button>
             </div>
           </div>
-          
+
           <!-- Sidebar: Import Settings -->
-          <div class="w-80 border-l border-gray-200 bg-white p-6 flex flex-col">
-            <h4 class="font-bold text-gray-800 mb-6">导入设置</h4>
-            
-            <div class="space-y-6 flex-1">
+          <div class="w-80 border-l border-gray-200 bg-white p-5 flex flex-col">
+            <h4 class="text-sm font-semibold text-slate-800 mb-5">导入设置</h4>
+
+            <div class="space-y-5 flex-1">
               <div>
                 <label class="flex items-center gap-2 mb-2 cursor-pointer">
-                  <input type="radio" v-model="importForm.targetType" value="new" class="text-blue-600 focus:ring-blue-500">
+                  <input type="radio" v-model="importForm.targetType" value="new" class="vt-radio">
                   <span class="text-sm font-medium">创建新数据集</span>
                 </label>
-                <input 
+                <input
                   v-if="importForm.targetType === 'new'"
                   v-model="importForm.newDatasetName"
-                  type="text" 
+                  type="text"
                   placeholder="输入数据集名称"
-                  class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                  class="vt-input"
                 >
               </div>
-              
+
               <div>
                 <label class="flex items-center gap-2 mb-2 cursor-pointer">
-                  <input type="radio" v-model="importForm.targetType" value="existing" class="text-blue-600 focus:ring-blue-500">
+                  <input type="radio" v-model="importForm.targetType" value="existing" class="vt-radio">
                   <span class="text-sm font-medium">添加到现有数据集</span>
                 </label>
-                <select 
+                <select
                   v-if="importForm.targetType === 'existing'"
                   v-model="importForm.existingDataset"
-                  class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                  class="vt-select"
                 >
                   <option value="" disabled>选择数据集...</option>
                   <option v-for="d in existingDatasets" :key="d.name" :value="d.name">
@@ -793,13 +946,14 @@ onUnmounted(() => {
                 <p v-if="existingDatasets.length === 0" class="text-xs text-red-500 mt-1">没有可用的数据集</p>
               </div>
             </div>
-            
+
             <div class="pt-4 border-t border-gray-200">
-              <button 
-                @click="importImages" 
-                class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              <button
+                @click="importImages"
+                class="w-full vt-btn-solid-primary vt-btn-size-md justify-center"
                 :disabled="importing || taskImages.length === 0 || selectedImages.size === 0 || (importForm.targetType === 'new' && !importForm.newDatasetName.trim()) || (importForm.targetType === 'existing' && !importForm.existingDataset)"
               >
+                <AppIcon name="download" class="h-4 w-4" />
                 {{ importing ? '导入中...' : '确认导入' }}
               </button>
             </div>
@@ -808,20 +962,20 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="showImagePreview" class="fixed inset-0 bg-black/90 z-[60]" @click.self="closePreview">
-      <div class="h-full w-full flex flex-col">
-        <div class="px-4 py-3 flex items-center justify-between text-white">
-          <div class="min-w-0">
-            <div class="font-medium truncate">{{ previewImage?.name }}</div>
-            <div class="text-xs text-white/70">{{ previewIndex + 1 }} / {{ taskImages.length }}</div>
+    <div v-if="showImagePreview" class="vt-media-backdrop z-[60]" @click.self="closePreview">
+      <div class="vt-media-viewer">
+        <div class="vt-media-header">
+          <div class="vt-media-meta">
+            <div class="vt-media-title">{{ previewImage?.name }}</div>
+            <div class="vt-media-subtitle">{{ previewIndex + 1 }} / {{ taskImages.length }}</div>
           </div>
-          <div class="flex items-center gap-2">
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="setPreviewScale(previewScale * 0.9)">-</button>
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="previewScale = 1; previewOffsetX = 0; previewOffsetY = 0">100%</button>
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="setPreviewScale(previewScale * 1.1)">+</button>
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" :disabled="previewIndex <= 0" @click="navPreview(-1)">上一张</button>
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" :disabled="previewIndex >= taskImages.length - 1" @click="navPreview(1)">下一张</button>
-            <button class="px-3 py-1.5 text-sm rounded-md bg-white/10 hover:bg-white/20" @click="closePreview">关闭</button>
+          <div class="vt-media-actions">
+            <button class="vt-btn-inverse" @click="setPreviewScale(previewScale * 0.9)">-</button>
+            <button class="vt-btn-inverse" @click="previewScale = 1; previewOffsetX = 0; previewOffsetY = 0">100%</button>
+            <button class="vt-btn-inverse" @click="setPreviewScale(previewScale * 1.1)">+</button>
+            <button class="vt-btn-inverse" :disabled="previewIndex <= 0" @click="navPreview(-1)">上一张</button>
+            <button class="vt-btn-inverse" :disabled="previewIndex >= taskImages.length - 1" @click="navPreview(1)">下一张</button>
+            <button class="vt-btn-inverse" @click="closePreview">关闭</button>
           </div>
         </div>
 
@@ -848,5 +1002,13 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Upload Modal -->
+    <VideoUploadModal
+      :visible="showUploadModal"
+      :project="store.currentProject"
+      @close="showUploadModal = false"
+      @submit="handleUpload"
+    />
   </div>
 </template>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="vtg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角底色 -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#vtg)"/>
+  <!-- 眼睛轮廓（简化 YOLO 检测框 + 眼睛） -->
+  <path d="M14 36 C 22 22, 42 22, 50 36 C 42 50, 22 50, 14 36 Z"
+        fill="none" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
+  <!-- 瞳孔（检测框中心点） -->
+  <circle cx="32" cy="36" r="6" fill="#ffffff"/>
+  <!-- 4 角检测框：YOLO bbox 风格 -->
+  <g stroke="#ffffff" stroke-width="2.5" fill="none" stroke-linecap="round">
+    <!-- top-left -->
+    <path d="M9 17 L9 12 L14 12"/>
+    <!-- top-right -->
+    <path d="M50 12 L55 12 L55 17"/>
+    <!-- bottom-left -->
+    <path d="M9 55 L9 60 L14 60"/>
+    <!-- bottom-right -->
+    <path d="M50 60 L55 60 L55 55"/>
+  </g>
+</svg>

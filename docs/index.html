@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vision Train · 文档</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Vision Train - YOLO 目标检测数据集、训练与评估一体化工作台 · 用户与运维文档" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4.12.2/themes/vue.css" />
+  <style>
+    :root {
+      --theme-color: #3b82f6;
+      --theme-color-secondary: #6366f1;
+    }
+    .app-name-link img { width: 36px; height: 36px; }
+    .markdown-body h1 { border-bottom: 2px solid var(--theme-color); padding-bottom: .3rem; }
+    .markdown-body h2 { border-left: 4px solid var(--theme-color); padding-left: .6rem; }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--theme-color);
+      background: rgba(59,130,246,0.06);
+    }
+    .markdown-body table thead { background: rgba(59,130,246,0.08); }
+    .sidebar-nav { font-size: 14px; }
+    .cover {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem;
+    }
+    .cover h1 { font-size: 2.5rem; border: none; }
+    .cover .lead { color: #475569; font-size: 1.1rem; }
+    .cover .actions a {
+      display: inline-block;
+      margin-right: .5rem;
+      padding: .4rem .9rem;
+      border: 1px solid var(--theme-color);
+      border-radius: 4px;
+      color: var(--theme-color);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .cover .actions a.primary {
+      background: var(--theme-color);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">Loading Vision Train Docs...</div>
+  <script>
+    window.$docsify = {
+      name: 'Vision Train',
+      nameLink: '/',
+      repo: '',
+      // 关键：显式指定 sidebar 路径，让 docsify 总是从根 fetch _sidebar.md，
+      // 不受当前路由影响（避免在子页面下渲染到子目录 _sidebar.md 不存在的情况）。
+      loadSidebar: '_sidebar.md',
+      loadNavbar: false,
+      coverpage: false,
+      homepage: 'README.md',
+      subMaxLevel: 3,
+      routerMode: 'hash',
+      // 保持 false：relativePath: true 在 docsify 4.12.x 会把主页 DOM 重复塞进 sidebar
+      relativePath: false,
+      // 显式声明 alias，确保所有子页面路由都解析到根域
+      alias: {
+        '/.*/_sidebar.md': '/_sidebar.md'
+      },
+      mergeNavbarAndSidebar: false,
+      auto2top: true,
+      search: { paths: 'auto', placeholder: '搜索文档…' },
+      copyCode: { buttonText: '复制', errorText: '复制失败', successText: '已复制' }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4.12.2/lib/docsify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4.12.2/lib/plugins/search.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4.12.2/lib/plugins/zoom-image.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@3.0.2/dist/docsify-copy-code.min.js"></script>
+</body>
+</html>

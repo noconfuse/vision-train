@@ -4,4 +4,7 @@ Pillow
 PyYAML
 requests
 ultralytics
+onnx
 openvino
+nncf
+SQLAlchemy>=2.0

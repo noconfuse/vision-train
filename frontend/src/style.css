@@ -1,7 +1,973 @@
 @import "tailwindcss";
 
+:root {
+  --vt-color-primary: #2563eb;
+  --vt-color-primary-hover: #1d4ed8;
+  --vt-color-primary-soft: #eff6ff;
+  --vt-color-primary-border: #bfdbfe;
+  --vt-color-secondary: #0f172a;
+  --vt-color-secondary-hover: #020617;
+  --vt-color-secondary-soft: #f8fafc;
+  --vt-color-secondary-border: #cbd5e1;
+  --vt-color-tertiary: #475569;
+  --vt-color-tertiary-soft: #f8fafc;
+  --vt-color-tertiary-border: #e2e8f0;
+  --vt-color-neutral-900: #0f172a;
+  --vt-color-neutral-800: #1e293b;
+  --vt-color-neutral-700: #334155;
+  --vt-color-neutral-600: #475569;
+  --vt-color-neutral-500: #64748b;
+  --vt-color-neutral-400: #94a3b8;
+  --vt-color-neutral-300: #cbd5e1;
+  --vt-color-neutral-200: #e2e8f0;
+  --vt-color-neutral-100: #f1f5f9;
+  --vt-color-success: #059669;
+  --vt-color-success-soft: #ecfdf5;
+  --vt-color-success-border: #a7f3d0;
+  --vt-color-warning: #d97706;
+  --vt-color-warning-soft: #fffbeb;
+  --vt-color-warning-border: #fcd34d;
+  --vt-color-danger: #e11d48;
+  --vt-color-danger-soft: #fff1f2;
+  --vt-color-danger-border: #fda4af;
+  --vt-color-info: #0284c7;
+  --vt-color-info-soft: #f0f9ff;
+  --vt-color-info-border: #bae6fd;
+}
+
 html, body, #app {
   height: 100%;
   margin: 0;
   overflow: hidden;
+}
+
+/* ==========================================================================
+ * 视觉规范：扁平 / 表格化
+ * - 无圆角、无阴影
+ * - header 一律 h-12 + 底部 1px border，无背景色块
+ * - 状态用文字 + 1px 边框 + 浅色背景色块，不使用圆角徽章阴影
+ * - 区块之间用 1px border / 背景色区分，不用卡片
+ * ========================================================================== */
+
+/* 通用外壳：所有顶层路由页面都套这一层 */
+.vt-shell {
+  @apply flex flex-col min-w-0 h-full bg-white;
+}
+
+/* 通用窄 header：扁平、无阴影、无圆角 */
+.vt-header {
+  @apply h-12 bg-white border-b border-gray-200 px-5 flex items-center justify-between gap-4 z-10 shrink-0 text-sm;
+}
+
+.vt-header-title {
+  @apply text-sm font-semibold text-slate-800 truncate;
+}
+
+.vt-text-accent {
+  color: var(--vt-color-primary);
+}
+
+.vt-text-accent-strong {
+  color: var(--vt-color-primary);
+  font-weight: 600;
+}
+
+.vt-hover-text-accent:hover {
+  color: var(--vt-color-primary-hover);
+}
+
+.vt-section {
+  @apply bg-white border border-gray-200 p-4;
+}
+
+.vt-section-muted {
+  @apply bg-gray-50 border border-gray-200 p-4;
+}
+
+.vt-modal-backdrop {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4;
+}
+
+.vt-modal-panel {
+  @apply w-full border border-gray-200 bg-white;
+}
+
+.vt-modal-panel--md {
+  @apply max-w-md;
+}
+.vt-modal-panel--lg {
+  @apply max-w-3xl;
+}
+.vt-modal-panel--xl {
+  @apply max-w-5xl;
+}
+
+.vt-modal-header {
+  @apply flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3;
+}
+
+.vt-modal-close {
+  @apply inline-flex h-8 w-8 items-center justify-center border border-transparent bg-transparent text-slate-400 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.vt-modal-body {
+  @apply p-4;
+}
+
+.vt-modal-footer {
+  @apply flex flex-wrap items-center justify-end gap-2 border-t border-gray-200 px-4 py-3 bg-gray-50;
+}
+
+.vt-workspace-backdrop {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4;
+}
+
+.vt-workspace-backdrop--full {
+  @apply p-0;
+}
+
+.vt-workspace-panel {
+  @apply w-full border border-gray-200 bg-white flex flex-col overflow-hidden;
+}
+
+.vt-workspace-panel--row {
+  @apply flex-row;
+}
+
+.vt-workspace-panel--lg {
+  width: min(96vw, 1280px);
+  height: min(90vh, 860px);
+}
+
+.vt-workspace-panel--xl {
+  width: min(98vw, 1440px);
+  height: min(95vh, 960px);
+}
+
+.vt-workspace-panel--full {
+  width: 100vw;
+  height: 100vh;
+  border: none;
+}
+
+.vt-media-backdrop {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4;
+}
+
+.vt-media-panel {
+  width: min(96vw, 1200px);
+}
+
+.vt-media-viewer {
+  @apply h-full w-full flex flex-col text-white;
+}
+
+.vt-media-header {
+  @apply flex items-center justify-between gap-4 px-4 py-3 text-white;
+}
+
+.vt-media-meta {
+  @apply min-w-0;
+}
+
+.vt-media-title {
+  @apply truncate font-medium text-white;
+}
+
+.vt-media-subtitle {
+  @apply text-xs text-white/70;
+}
+
+.vt-media-actions {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.vt-media-play-trigger {
+  @apply inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white transition-colors;
+}
+
+.vt-media-close {
+  @apply inline-flex h-8 w-8 items-center justify-center bg-transparent text-white/70 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.vt-btn-inverse {
+  @apply inline-flex items-center justify-center gap-1.5 border border-white/15 bg-white/10 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.vt-preview-panel {
+  @apply relative border border-slate-200 bg-white;
+}
+
+.vt-preview-panel--image {
+  max-width: 92vw;
+  max-height: 92vh;
+  padding: 0.75rem;
+}
+
+.vt-preview-panel--curve {
+  width: min(92vw, 1200px);
+  height: min(92vh, 820px);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.vt-toast-stack {
+  @apply fixed right-4 top-4 z-[100] flex max-w-sm flex-col gap-2 pointer-events-none;
+}
+
+.vt-toast {
+  @apply pointer-events-auto flex min-w-[260px] max-w-sm items-start gap-2 border px-3 py-2 text-sm shadow-lg backdrop-blur;
+}
+
+.vt-toast__icon {
+  @apply mt-0.5 shrink-0;
+}
+
+.vt-toast__message {
+  @apply flex-1 whitespace-pre-line break-words leading-relaxed;
+}
+
+.vt-toast__close {
+  @apply text-current opacity-50 transition-opacity hover:opacity-100;
+}
+
+.vt-toast--success {
+  border-color: var(--vt-color-success-border);
+  background: color-mix(in srgb, var(--vt-color-success-soft) 95%, white);
+  color: var(--vt-color-success);
+}
+
+.vt-toast--error {
+  border-color: var(--vt-color-danger-border);
+  background: color-mix(in srgb, var(--vt-color-danger-soft) 95%, white);
+  color: var(--vt-color-danger);
+}
+
+.vt-toast--warn {
+  border-color: var(--vt-color-warning-border);
+  background: color-mix(in srgb, var(--vt-color-warning-soft) 95%, white);
+  color: var(--vt-color-warning);
+}
+
+.vt-toast--info {
+  border-color: var(--vt-color-info-border);
+  background: color-mix(in srgb, var(--vt-color-info-soft) 95%, white);
+  color: var(--vt-color-info);
+}
+
+/* 内容区：撑满剩余高度 */
+.vt-body {
+  @apply flex-1 min-h-0 flex flex-col bg-gray-50;
+}
+
+/* ==========================================================================
+ * 内容容器（统一收口，扁平无圆角无阴影）
+ * - .vt-card     用于"撑满整个 body 的内容面板"（如数据集列表 / 数据集预览 / 训练面板）
+ * - .vt-section  用于"页面里的信息块"（如训练页左列的元信息 / 类别分布）
+ * - .vt-view     用于"HomePage 内的视图根容器"（数据集列表 / 视频列表 / 未来其他视图）
+ *               仅负责 flex 布局；具体内边距由内容容器自行控制
+ *
+ * 规则：必须用 1px border + 白底，无圆角，无阴影，无 mb-4（用父级 space-y 控间距）
+ * ========================================================================== */
+.vt-card {
+  @apply flex-1 min-h-0 flex flex-col bg-white border border-gray-200 overflow-hidden;
+}
+.vt-view {
+  /* 视图根容器（统一收口）：flex + gap-3 + overflow-hidden
+     - 单栏：默认 flex-col
+     - 多栏：搭配 .vt-view--cols 改为 flex-row
+     - 子区域：用 .vt-view__main（flex-1 撑满主区）或自定义尺寸（如 w-80 侧栏） */
+  @apply flex-1 min-h-0 flex flex-col gap-3 overflow-hidden;
+}
+.vt-view--cols {
+  @apply flex-row;
+}
+.vt-view__main {
+  /* 视图内的主内容区域（flex-1 撑满） */
+  @apply flex-1 min-w-0 flex flex-col overflow-hidden;
+}
+
+/* 空 / 加载 / 错误状态（保留 PageState 内部，但确保不引入卡片） */
+.vt-empty {
+  @apply flex-1 flex flex-col items-center justify-center text-gray-400 gap-2 px-4 text-center bg-gray-50;
+}
+
+/* 标签 / 状态文字块（替代圆角徽章） */
+.vt-tag {
+  @apply inline-flex items-center px-1.5 py-0.5 text-[11px] font-medium border border-gray-200 bg-gray-50 text-gray-600;
+}
+.vt-tag--sm {
+  @apply px-1.5 py-0 text-[10px];
+}
+.vt-tag-info {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+}
+.vt-tag-success {
+  border-color: var(--vt-color-success-border);
+  background: var(--vt-color-success-soft);
+  color: var(--vt-color-success);
+}
+.vt-tag-warn {
+  border-color: var(--vt-color-warning-border);
+  background: var(--vt-color-warning-soft);
+  color: var(--vt-color-warning);
+}
+.vt-tag-danger {
+  border-color: var(--vt-color-danger-border);
+  background: var(--vt-color-danger-soft);
+  color: var(--vt-color-danger);
+}
+
+.vt-status-dot {
+  @apply inline-block h-2.5 w-2.5 shrink-0 rounded-full;
+}
+.vt-status-dot--info {
+  background: var(--vt-color-primary);
+}
+
+.vt-note {
+  @apply text-[10px] leading-4;
+}
+.vt-note--warn {
+  color: var(--vt-color-warning);
+}
+.vt-status-dot--success {
+  background: var(--vt-color-success);
+}
+.vt-status-dot--warn {
+  background: var(--vt-color-warning);
+}
+.vt-status-dot--danger {
+  background: var(--vt-color-danger);
+}
+
+.vt-step-section-title {
+  @apply text-sm font-semibold text-slate-800 mb-3;
+}
+.vt-step-section-sub {
+  @apply text-xs text-gray-500 mb-3;
+}
+
+/* 交互分层
+ * - solid-primary   主操作
+ * - solid-secondary 强次操作
+ * - outline         默认次操作
+ * - ghost/link      轻操作
+ * - danger          危险操作
+ * - success/warn/info 仅用于结果/状态表达，不再承担 CTA 职责
+ */
+.vt-link {
+  @apply text-xs hover:underline cursor-pointer;
+  color: var(--vt-color-primary);
+}
+.vt-link:hover {
+  color: var(--vt-color-primary-hover);
+}
+.vt-btn-link {
+  @apply inline-flex items-center gap-1.5 text-xs font-medium px-1.5 py-1 cursor-pointer transition-colors;
+  color: var(--vt-color-tertiary);
+}
+.vt-btn-link:hover {
+  color: var(--vt-color-secondary);
+}
+
+.vt-action-btn {
+  @apply inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  color: var(--vt-color-tertiary);
+}
+
+.vt-action-btn:hover {
+  background: var(--vt-color-neutral-100);
+}
+
+.vt-action-btn--primary {
+  color: var(--vt-color-primary);
+}
+
+.vt-action-btn--primary:hover {
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary-hover);
+}
+
+.vt-action-btn--info {
+  color: var(--vt-color-info);
+}
+
+.vt-action-btn--info:hover {
+  background: var(--vt-color-info-soft);
+}
+
+.vt-action-btn--warning {
+  color: var(--vt-color-warning);
+}
+
+.vt-action-btn--warning:hover {
+  background: var(--vt-color-warning-soft);
+}
+
+.vt-action-btn--success {
+  color: var(--vt-color-success);
+}
+
+.vt-action-btn--success:hover {
+  background: var(--vt-color-success-soft);
+}
+
+.vt-action-btn--danger {
+  color: var(--vt-color-danger);
+}
+
+.vt-action-btn--danger:hover {
+  background: var(--vt-color-danger-soft);
+}
+.vt-btn-ghost {
+  @apply inline-flex items-center justify-center gap-1.5 border border-transparent bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.vt-btn-primary {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-primary);
+  background: var(--vt-color-primary);
+  color: white;
+}
+.vt-btn-secondary {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-tertiary-border);
+  background: white;
+  color: var(--vt-color-tertiary);
+}
+.vt-btn-success {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-primary);
+  background: var(--vt-color-primary);
+  color: white;
+}
+.vt-btn-muted {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-neutral-300);
+  background: var(--vt-color-neutral-100);
+  color: var(--vt-color-neutral-700);
+}
+.vt-btn-danger {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-danger-border);
+  background: var(--vt-color-danger-soft);
+  color: var(--vt-color-danger);
+}
+.vt-btn-solid-primary {
+  @apply inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  background: var(--vt-color-primary);
+  color: white;
+}
+.vt-btn-solid-secondary {
+  @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  border-color: var(--vt-color-secondary-border);
+  background: var(--vt-color-secondary-soft);
+  color: var(--vt-color-secondary);
+}
+/* 兼容别名：历史 success CTA 已收口到主品牌色，新代码不要继续使用 success 按钮承担主操作。 */
+.vt-btn-solid-success {
+  @apply inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  background: var(--vt-color-primary);
+  color: white;
+}
+.vt-btn-solid-danger {
+  @apply inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  background: var(--vt-color-danger);
+  color: white;
+}
+.vt-btn-primary:hover {
+  background: var(--vt-color-primary-hover);
+}
+.vt-btn-secondary:hover {
+  background: var(--vt-color-neutral-100);
+}
+.vt-btn-success:hover {
+  background: var(--vt-color-primary-hover);
+}
+.vt-btn-solid-primary:hover {
+  background: var(--vt-color-primary-hover);
+}
+.vt-btn-solid-success:hover {
+  background: var(--vt-color-primary-hover);
+}
+.vt-btn-muted:hover,
+.vt-btn-ghost:hover {
+  background: var(--vt-color-neutral-100);
+}
+.vt-btn-danger:hover,
+.vt-btn-solid-danger:hover {
+  background: color-mix(in srgb, var(--vt-color-danger) 10%, white);
+}
+.vt-btn-solid-primary:hover {
+  background: var(--vt-color-primary-hover);
+}
+.vt-btn-solid-secondary:hover {
+  background: var(--vt-color-neutral-100);
+}
+.vt-btn-primary,
+.vt-btn-secondary,
+.vt-btn-success,
+.vt-btn-muted,
+.vt-btn-danger {
+  @apply h-8 px-3;
+}
+.vt-btn-solid-primary,
+.vt-btn-solid-secondary,
+.vt-btn-solid-success,
+.vt-btn-solid-danger {
+  @apply h-8 px-3;
+}
+.vt-btn-size-sm {
+  @apply h-7 px-2.5 text-xs;
+}
+.vt-btn-size-md {
+  @apply h-8 px-3 text-xs;
+}
+.vt-btn-size-lg {
+  @apply h-9 px-3.5 text-sm;
+}
+.vt-icon-btn {
+  @apply inline-flex h-8 w-8 items-center justify-center border border-transparent bg-transparent text-slate-500 transition-colors hover:text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.vt-view-tab {
+  @apply inline-flex items-center gap-1 px-2.5 py-1 text-gray-600 border border-transparent transition-colors cursor-pointer;
+}
+.vt-view-tab--active {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+  font-weight: 600;
+}
+
+.vt-segmented-tab {
+  @apply inline-flex items-center gap-1.5 border border-transparent px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors;
+}
+.vt-segmented-tab--compact {
+  @apply px-2 py-0.5 text-[11px];
+}
+.vt-segmented-tab:hover {
+  @apply bg-slate-50 text-slate-900;
+}
+.vt-segmented-tab--active {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+}
+
+.vt-count-badge {
+  @apply inline-flex min-w-6 items-center justify-center border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-mono text-slate-500;
+}
+
+.vt-selectable {
+  @apply border border-gray-200 bg-white transition-colors;
+}
+.vt-selectable:hover {
+  border-color: var(--vt-color-primary-border);
+}
+.vt-selectable--selected {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+}
+.vt-selectable--selected:hover {
+  border-color: var(--vt-color-primary-border);
+}
+.vt-selectable--success {
+  border-color: var(--vt-color-success-border);
+  background: var(--vt-color-success-soft);
+}
+.vt-selectable--warn {
+  border-color: var(--vt-color-warning-border);
+  background: var(--vt-color-warning-soft);
+}
+.vt-selectable--disabled {
+  @apply cursor-not-allowed opacity-60;
+}
+
+.vt-surface-info {
+  border-color: var(--vt-color-primary-border);
+  background: color-mix(in srgb, var(--vt-color-primary-soft) 82%, white);
+  color: var(--vt-color-primary);
+}
+
+.vt-chip {
+  @apply inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-xs transition-colors;
+  border-color: var(--vt-color-tertiary-border);
+  background: white;
+  color: var(--vt-color-tertiary);
+}
+.vt-chip:hover {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-tertiary-soft);
+}
+.vt-chip--selected {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+}
+
+.vt-selection-indicator {
+  @apply flex items-center justify-center border text-xs font-bold transition-colors;
+  border-color: var(--vt-color-neutral-300);
+  background: color-mix(in srgb, white 90%, transparent);
+  color: transparent;
+}
+.vt-selection-indicator--selected {
+  border-color: var(--vt-color-primary);
+  background: white;
+  color: var(--vt-color-primary);
+}
+
+.vt-choice-card {
+  @apply border bg-white p-3 text-left transition-colors;
+}
+.vt-choice-card--compact {
+  @apply p-2.5;
+}
+.vt-choice-card--interactive {
+  @apply cursor-pointer border-gray-200;
+}
+.vt-choice-card--interactive:hover {
+  border-color: var(--vt-color-primary-border);
+}
+.vt-choice-card--selected {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
+}
+
+.vt-config-card {
+  @apply rounded-sm border border-slate-200 bg-white p-3 text-left;
+}
+
+.vt-config-card--muted {
+  @apply bg-slate-50/70;
+}
+
+.vt-config-card--dashed {
+  @apply border-dashed;
+}
+
+.vt-note {
+  @apply text-xs text-slate-500;
+}
+
+.vt-step-button {
+  @apply shrink-0 text-left transition-colors disabled:cursor-not-allowed;
+}
+.vt-step-button--current {
+  color: var(--vt-color-primary);
+  font-weight: 600;
+}
+.vt-step-button--completed {
+  color: var(--vt-color-success);
+}
+.vt-step-button--locked {
+  @apply text-gray-400;
+}
+.vt-step-button--idle {
+  @apply text-slate-600 hover:text-slate-900;
+}
+.vt-step-dot {
+  @apply inline-flex h-6 w-6 shrink-0 items-center justify-center border text-[11px] font-semibold transition-colors;
+}
+.vt-step-dot--current {
+  background: var(--vt-color-primary-soft);
+  border-color: var(--vt-color-primary-border);
+  color: var(--vt-color-primary);
+}
+.vt-step-dot--completed {
+  background: var(--vt-color-success);
+  border-color: var(--vt-color-success);
+  color: white;
+}
+.vt-step-dot--locked {
+  @apply border-gray-300 bg-white text-gray-400;
+}
+.vt-step-dot--idle {
+  @apply border-slate-300 bg-white text-slate-700;
+}
+.vt-step-connector {
+  @apply h-px min-w-8 flex-1 bg-gray-200;
+}
+.vt-step-connector--current {
+  background: color-mix(in srgb, var(--vt-color-primary) 20%, white);
+}
+
+.vt-badge-recommend {
+  @apply inline-flex items-center border px-1.5 py-0.5 text-[10px] font-mono font-medium;
+  border-color: var(--vt-color-primary-border);
+  background: color-mix(in srgb, var(--vt-color-primary-soft) 72%, white);
+  color: var(--vt-color-primary);
+}
+.vt-step-connector--completed {
+  background: color-mix(in srgb, var(--vt-color-success) 75%, white);
+}
+
+.vt-input,
+.vt-select {
+  @apply w-full border border-gray-300 bg-white px-3 text-sm text-slate-800 transition-colors outline-none;
+  min-height: 2rem;
+  line-height: 1.25rem;
+}
+.vt-input {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.vt-input--with-leading {
+  padding-left: 2.5rem;
+}
+.vt-input--with-trailing {
+  padding-right: 2.5rem;
+}
+.vt-input--with-both {
+  padding-left: 2.5rem;
+  padding-right: 2.5rem;
+}
+.vt-textarea {
+  @apply w-full border border-gray-300 bg-white px-3 py-2 text-sm text-slate-800 transition-colors outline-none;
+}
+.vt-select {
+  color-scheme: light;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.vt-select:not([multiple]) {
+  @apply h-8;
+}
+.vt-select option {
+  @apply bg-white text-slate-800;
+}
+.vt-control-sm {
+  @apply h-7 px-2 text-xs leading-4;
+}
+.vt-control-md {
+  @apply h-8 px-3 text-sm leading-5;
+}
+.vt-control-auto {
+  width: auto;
+}
+.vt-control-page {
+  width: 3rem;
+}
+.vt-field-label {
+  @apply mb-2 flex min-h-7 items-center gap-1.5 text-sm font-medium text-gray-700;
+}
+.vt-input:focus,
+.vt-select:focus,
+.vt-textarea:focus {
+  border-color: var(--vt-color-primary-border);
+  box-shadow: inset 0 0 0 1px var(--vt-color-primary-border);
+}
+.vt-input:disabled,
+.vt-select:disabled,
+.vt-textarea:disabled {
+  @apply cursor-not-allowed bg-gray-50 text-slate-500;
+}
+.vt-icon-btn--sm {
+  @apply h-7 w-7;
+}
+
+.vt-overlay-icon-btn {
+  @apply inline-flex h-7 w-7 items-center justify-center bg-black/45 text-white opacity-0 transition-all hover:bg-black/60 group-hover:opacity-100;
+}
+
+.vt-icon-btn--danger {
+  color: var(--vt-color-danger);
+}
+.vt-icon-btn--danger:hover {
+  background: var(--vt-color-danger-soft);
+  color: var(--vt-color-danger);
+}
+
+.vt-toolbar {
+  @apply flex items-center gap-2 flex-wrap;
+}
+.vt-toolbar--nowrap {
+  @apply flex-nowrap;
+}
+.vt-toolbar-field {
+  @apply inline-flex h-7 items-center gap-1.5 border border-gray-200 bg-white px-2 text-xs text-gray-600;
+}
+.vt-toolbar-check {
+  @apply inline-flex h-7 items-center gap-1.5 border border-gray-200 bg-white px-2 text-xs text-gray-600 transition-colors;
+}
+.vt-toolbar-check:hover {
+  @apply bg-gray-50 text-slate-800;
+}
+
+.vt-check-card {
+  @apply flex items-start gap-3 border border-gray-200 bg-white p-3 transition-colors;
+}
+.vt-check-card--interactive {
+  @apply cursor-pointer;
+}
+.vt-check-card--interactive:hover {
+  border-color: var(--vt-color-primary-border);
+}
+.vt-check-card--selected {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+}
+.vt-check-card--disabled {
+  @apply cursor-not-allowed opacity-50;
+}
+.vt-check-card__title {
+  @apply text-sm font-medium text-slate-800;
+}
+.vt-check-card__desc {
+  @apply mt-1 text-xs text-gray-500;
+}
+.vt-checkbox {
+  @apply mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 bg-white align-top;
+  accent-color: var(--vt-color-primary);
+}
+
+.vt-radio {
+  @apply h-4 w-4 align-middle;
+  accent-color: var(--vt-color-primary);
+}
+
+.vt-dropzone {
+  @apply border-2 border-dashed border-gray-300 bg-white p-4 text-center transition-colors;
+}
+.vt-dropzone--active {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+}
+
+.vt-inline-spinner {
+  @apply inline-block rounded-full border-2 animate-spin;
+  border-color: var(--vt-color-primary-border);
+  border-top-color: var(--vt-color-primary);
+}
+.vt-dropzone--disabled {
+  @apply pointer-events-none opacity-60;
+}
+
+.vt-stat-grid {
+  @apply grid gap-3;
+}
+.vt-stat-card {
+  @apply border border-gray-200 bg-gray-50 p-3;
+}
+.vt-stat-label {
+  @apply text-xs text-gray-500;
+}
+.vt-stat-value {
+  @apply text-xl font-semibold font-mono;
+}
+
+.vt-table-shell {
+  @apply bg-white border border-gray-200 overflow-hidden;
+}
+.vt-table {
+  @apply min-w-full text-sm;
+}
+.vt-table-head {
+  @apply bg-gray-50 text-gray-600;
+}
+.vt-table-head-cell {
+  @apply px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wide;
+}
+.vt-table-row {
+  @apply border-b border-gray-100 transition-colors;
+}
+.vt-table-row:last-child {
+  border-bottom: none;
+}
+.vt-table-row:hover {
+  @apply bg-gray-50;
+}
+.vt-table-cell {
+  @apply px-4 py-3 align-top text-gray-700;
+}
+.vt-list-row {
+  @apply border-b border-gray-100 transition-colors;
+}
+.vt-list-row:hover {
+  @apply bg-gray-50;
+}
+.vt-list-row--selected {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+}
+
+.vt-record-card {
+  @apply border border-gray-200 bg-white p-2.5 transition-colors;
+}
+
+.vt-record-card--active {
+  border-color: var(--vt-color-primary-border);
+  background: color-mix(in srgb, var(--vt-color-primary-soft) 45%, white);
+}
+
+.vt-record-header {
+  @apply flex items-start justify-between gap-3;
+}
+
+.vt-record-main {
+  @apply min-w-0;
+}
+
+.vt-record-title {
+  @apply text-[13px] font-semibold text-slate-800;
+}
+
+.vt-record-meta {
+  @apply mt-0.5 text-[11px] text-gray-500;
+}
+
+.vt-record-path {
+  @apply mt-0.5 text-[11px] text-slate-600 truncate;
+}
+
+.vt-record-side {
+  @apply shrink-0 flex flex-col items-end gap-1.5;
+}
+
+.vt-record-badges {
+  @apply flex items-center gap-1.5 flex-wrap justify-end;
+}
+
+.vt-record-size {
+  @apply text-[11px] text-slate-500;
+}
+
+.vt-record-progress {
+  @apply mt-2;
+}
+
+.vt-record-actions {
+  @apply mt-2 flex flex-wrap justify-end gap-1.5;
+}
+
+.vt-meter {
+  @apply h-1.5 overflow-hidden bg-gray-200;
+}
+.vt-meter__bar {
+  @apply h-full transition-all;
+}
+.vt-meter__bar--info {
+  background: var(--vt-color-primary);
+}
+.vt-meter__bar--success {
+  background: var(--vt-color-success);
+}
+.vt-meter__bar--warn {
+  background: var(--vt-color-warning);
+}
+.vt-meter__bar--danger {
+  background: var(--vt-color-danger);
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }

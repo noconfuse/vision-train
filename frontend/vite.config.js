@@ -13,9 +13,10 @@ export default defineConfig({
     }
   },
   server: {
+    allowedHosts: true,
     proxy: {
       '/api': {
-        target: 'http://10.147.17.59:5001',
+        target: 'http://127.0.0.1:8090',
         changeOrigin: true
       }
     }

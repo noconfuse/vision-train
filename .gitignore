@@ -2,7 +2,6 @@
 .pt
 lab_safety_env
 .trae
-docs
 projects
 pretrained_models
 myenv
@@ -10,3 +9,16 @@ runs
 *.pt
 videos
 venv
+
+# Local config overrides & build artifacts
+/config/config.yaml
+/frontend/dist
+/frontend/node_modules
+__pycache__/
+/tmp
+/.venv
+/test_datasets
+.DS_Store
+backups
+.env
+*.db

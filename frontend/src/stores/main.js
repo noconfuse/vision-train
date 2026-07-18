@@ -5,58 +5,114 @@ export const useMainStore = defineStore('main', {
   state: () => ({
     projects: [],
     currentProject: null,
-    pretrainedModels: [],
+    pretrainedModels: [],        // 已下载的预训练 + 项目历史
+    pretrainedOptions: [],       // 全部官方预设（含未下载）
     selectedDataset: null,
-    trainingStatus: {
-      is_running: false,
-      progress: 0,
-      message: '',
-      results: {}
-    },
-    trainingRuns: [],
-    exportStatus: {
-      is_running: false,
-      progress: 0,
-      message: '',
-      download_url: null
-    },
-    testInferStatus: {
-      is_running: false,
-      progress: 0,
-      message: '',
-      results: []
-    },
-    testDirs: [],
     isLoading: false,
     error: null
   }),
   
   actions: {
-    async fetchProjects() {
-      this.isLoading = true;
+    /**
+     * 拉取项目列表
+     * @param {Object} [opts]
+     * @param {boolean} [opts.silent=false] silent=true 时不切换 isLoading（用于后台局部刷新，不让 Sidebar 闪 loading）
+     */
+    async fetchProjects(opts = {}) {
+      const silent = opts.silent === true;
+      if (!silent) this.isLoading = true;
       try {
-        const res = await api.getProjects();
-        if (res.data.success) {
-          this.projects = res.data.projects;
+        const projects = await api.getProjects();
+        this.projects = projects;
+        // 同步当前项目
+        if (this.currentProject) {
+          const cur = this.projects.find(p => p.id === this.currentProject.id)
+                      || this.projects.find(p => p.path === this.currentProject.path);
+          if (cur) this.currentProject = cur;
         }
       } catch (err) {
         this.error = err.message;
       } finally {
-        this.isLoading = false;
+        if (!silent) this.isLoading = false;
       }
+    },
+
+    async createProject(name, description = '') {
+      const res = await api.createProject({ name, description });
+      await this.fetchProjects({ silent: true });
+      return res;
+    },
+
+    async updateProject({ name, new_name, description }) {
+      const res = await api.updateProject({ name, new_name, description });
+      await this.fetchProjects({ silent: true });
+      // 同步更新当前项目引用
+      if (this.currentProject && (this.currentProject.name === name)) {
+        this.currentProject = res;
+      }
+      return res;
+    },
+
+    async deleteProject(name) {
+      const res = await api.deleteProject({ name, confirm: true });
+      if (this.currentProject?.name === name) {
+        this.currentProject = null;
+        this.selectedDataset = null;
+      }
+      await this.fetchProjects({ silent: true });
+      return res;
+    },
+
+    async importDataset(file, projectPath, targetName, onProgress) {
+      // Phase 1: 上传
+      const fd = new FormData();
+      fd.append('file', file);
+      if (projectPath) fd.append('project_path', projectPath);
+      if (targetName) fd.append('target_name', targetName);
+      const upRes = await api.importDatasetUpload(fd, onProgress);
+      const jobId = upRes?.job_id;
+      if (!jobId) {
+        throw new Error('上传失败：未返回 job_id');
+      }
+      // Phase 2: SSE 处理（30%~100%）
+      const final = await api.importDatasetProcess(jobId, (ev) => {
+        if (!ev.done && onProgress) {
+          // 30% 起：保证 uploading 阶段完成后不再回退
+          const p = Math.max(30, ev.progress ?? 30);
+          onProgress({
+            phase: ev.phase,
+            progress: p,
+            message: ev.message,
+          });
+        }
+      });
+      // silent 刷新：不触发 Sidebar 的 loading
+      await this.fetchProjects({ silent: true });
+      return final.result || final;  // 含 source_format
+    },
+
+    async validateProjectName(name) {
+      const res = await api.validateProjectName({ name });
+      return res;
     },
     
     async fetchModels() {
       if (!this.currentProject) return;
       try {
-        const res = await api.getModels({ project_path: this.currentProject.path });
-        if (res.data?.success) {
-          this.pretrainedModels = res.data.models || [];
-        } else {
-          this.pretrainedModels = [];
-        }
+        const models = await api.getModels({ project_path: this.currentProject.path });
+        this.pretrainedModels = models || [];
       } catch (err) {
         console.error(err);
+      }
+    },
+
+    async fetchPretrainedOptions() {
+      try {
+        const res = await api.getPretrainedOptions();
+        this.pretrainedOptions = Array.isArray(res) ? res : [];
+      } catch (err) {
+        console.error(err);
+        this.pretrainedOptions = [];
       }
     },
 
@@ -68,167 +124,5 @@ export const useMainStore = defineStore('main', {
     selectDataset(dataset) {
       this.selectedDataset = dataset;
     },
-    
-    async pollTrainingStatus() {
-      if (!this.trainingStatus.is_running) return;
-      try {
-        const res = await api.getTrainingStatus();
-        if (res.data.success) {
-          this.trainingStatus = res.data.status;
-          if (this.trainingStatus.is_running) {
-            setTimeout(() => this.pollTrainingStatus(), 1000);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    
-    async startTraining(config) {
-      try {
-        const res = await api.startTraining(config);
-        if (res.data.success) {
-          this.trainingStatus.is_running = true;
-          this.pollTrainingStatus();
-        } else {
-          throw new Error(res.data.error);
-        }
-        return res.data;
-      } catch (err) {
-        throw err;
-      }
-    },
-    
-    async stopTraining() {
-      try {
-        await api.stopTraining();
-        this.trainingStatus.is_running = false;
-      } catch (err) {
-        console.error(err);
-      }
-    },
-
-    async fetchTrainingRuns() {
-      if (!this.currentProject) return;
-      try {
-        const res = await api.getTrainingRuns({ project_path: this.currentProject.path });
-        if (res.data.success) {
-          this.trainingRuns = res.data.runs;
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    },
-
-    async startExport(payload) {
-      try {
-        const res = await api.exportModel(payload);
-        if (res.data.success) {
-          this.exportStatus.is_running = true;
-          this.exportStatus.message = 'Starting export...';
-          this.pollExportStatus();
-          return { success: true };
-        } else {
-          return { success: false, error: res.data.error };
-        }
-      } catch (err) {
-        return { success: false, error: err.message };
-      }
-    },
-
-    async pollExportStatus() {
-      if (!this.exportStatus.is_running) return;
-      try {
-        const res = await api.getExportStatus();
-        if (res.data.success) {
-          const status = res.data.status;
-          this.exportStatus = { ...this.exportStatus, ...status };
-          
-          if (status.is_running) {
-            setTimeout(() => this.pollExportStatus(), 1000);
-          } else {
-             // Refresh runs or exports if needed?
-             // Maybe fetch exports for the specific run?
-          }
-        }
-      } catch (e) {
-        console.error(e);
-        this.exportStatus.is_running = false;
-      }
-    },
-
-    async getModelExports(trainingId) {
-        if (!this.currentProject) return [];
-        try {
-            const res = await api.getModelExports({ 
-                project_path: this.currentProject.path,
-                training_id: trainingId 
-            });
-            if (res.data.success) {
-                return res.data.exports;
-            }
-            return [];
-        } catch (e) {
-            console.error(e);
-            return [];
-        }
-    },
-
-    async startTestInference(payload) {
-      try {
-        const res = await api.startTestInference(payload);
-        if (res.data.success) {
-          this.testInferStatus.is_running = true;
-          this.testInferStatus.progress = 0;
-          this.testInferStatus.message = '启动推理...';
-          this.testInferStatus.results = [];
-          this.pollTestInferenceStatus();
-          return { success: true };
-        } else {
-          return { success: false, error: res.data.error };
-        }
-      } catch (err) {
-        return { success: false, error: err.message };
-      }
-    },
-
-    async pollTestInferenceStatus() {
-      if (!this.testInferStatus.is_running) return;
-      try {
-        const res = await api.getTestInferenceStatus();
-        if (res.data.success) {
-          const st = res.data.status;
-          this.testInferStatus = {
-            ...this.testInferStatus,
-            is_running: !!st.is_running,
-            progress: st.progress || 0,
-            message: st.message || '',
-            results: st.results || [],
-            output_dir_url: st.output_dir_url || null
-          };
-          if (st.is_running) {
-            setTimeout(() => this.pollTestInferenceStatus(), 1000);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-        this.testInferStatus.is_running = false;
-      }
-    },
-
-    async fetchTestDirs() {
-      if (!this.currentProject) return;
-      try {
-        const res = await api.getTestDirs({ project_path: this.currentProject.path });
-        if (res.data.success) {
-          this.testDirs = res.data.dirs || [];
-        } else {
-          this.testDirs = [];
-        }
-      } catch (e) {
-        console.error(e);
-        this.testDirs = [];
-      }
-    }
   }
 });
