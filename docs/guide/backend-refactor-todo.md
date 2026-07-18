@@ -700,7 +700,6 @@ contexts/<domain>/
 ### 36. 更新文档与导入路径
 
 - 更新：
-  - `docs/guide/architecture.md`
   - 启动说明
   - 开发约定
 - 清理所有旧 import
