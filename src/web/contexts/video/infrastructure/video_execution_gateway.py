@@ -20,7 +20,7 @@ from contexts.video.infrastructure.video_runtime import (
     get_video_frame_count_ffprobe,
     should_use_robust_mode,
 )
-from task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED
+from protocols.task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED
 
 logger = logging.getLogger(__name__)
 def execute_extraction_task(task_id):

@@ -3,24 +3,16 @@
 import os
 import threading
 
-from task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING
+from protocols.task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING
 
-from contexts.annotation.domain.services import filter_duplicate_boxes
 from contexts.annotation.infrastructure.annotation_io import (
-    decode_yolo_file,
+    build_dataset_image_context,
     get_dataset_root,
-    get_image_size_fallback as get_annotation_image_size,
 )
-from contexts.annotation.infrastructure.batch_helpers import (
-    append_auto_label_boxes,
-    build_auto_label_path,
-    extract_prediction_boxes,
-    list_batch_image_paths,
-    load_existing_manual_boxes,
-)
-from contexts.annotation.infrastructure.model_gateway import get_auto_annotate_model
-from contexts.annotation.infrastructure.openvino_gateway import predict_openvino_boxes
-from contexts.model.infrastructure.model_catalog import pick_openvino_xml
+from contexts.dataset.infrastructure.dataset_schema import find_dataset_config
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.annotation.infrastructure.batch_helpers import list_batch_image_paths
+from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
 from contexts.task.infrastructure.task_repository import (
     create_task as start_task,
     update_task as update_task_status,
@@ -28,38 +20,40 @@ from contexts.task.infrastructure.task_repository import (
 from contexts.task.infrastructure.task_runtime import list_tasks as list_task_items, load_task
 from shared.utils.path_utils import project_name_from_path, resolve_storage_path
 from shared.utils.time_utils import now_iso
-from shared.utils.value_utils import require_present
+
+
+def _find_dataset_root_for_image(project_path, image_path):
+    """在项目目录内自下而上定位图片所属的数据集根目录。"""
+    current_dir = os.path.dirname(resolve_storage_path(image_path) or image_path)
+    project_path = os.path.realpath(project_path)
+    while current_dir and os.path.realpath(current_dir).startswith(project_path):
+        if find_dataset_config(current_dir):
+            return current_dir
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir == current_dir:
+            break
+        current_dir = parent_dir
+    raise ValueError("无法根据图片路径定位所属数据集")
 
 
 def auto_annotate_image(project_path, image_ref, model_path=None, conf=0.25, max_det=200):
-    """对单张图片执行模型推理并返回检测框。"""
+    """对单张图片执行模型推理并返回当前任务类型对应的自动标注结果。"""
     image_path = resolve_storage_path(image_ref)
-    require_present("缺少图片路径", image_path=image_path)
     if not os.path.isfile(image_path):
         raise ValueError("图片不存在")
-
-    ov_xml = pick_openvino_xml(model_path) if model_path else None
-    if ov_xml:
-        result = predict_openvino_boxes(ov_xml, [image_path], conf=float(conf), max_det=int(max_det))
-        return result[0] if result else []
+    dataset_root = _find_dataset_root_for_image(project_path, image_path)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    strategy = resolve_annotation_task_strategy(vision_task_type)
 
     from ultralytics import YOLO
 
-    if model_path:
-        model = YOLO(model_path)
-    else:
-        model = get_auto_annotate_model(project_path, prefer_project_best=True)
+    model = YOLO(model_path)
     if model is None:
         raise ValueError("模型不可用")
 
     results = model.predict(image_path, conf=float(conf), max_det=int(max_det), verbose=False)
-    boxes = []
-    for prediction in results:
-        for box in prediction.boxes:
-            xyxy = box.xyxy[0].tolist()
-            cls = int(box.cls.item()) if hasattr(box, "cls") else 0
-            boxes.append({"class": cls, "x1": xyxy[0], "y1": xyxy[1], "x2": xyxy[2], "y2": xyxy[3]})
-    return boxes
+    prediction = results[0] if results else None
+    return strategy.extract_auto_annotation(prediction, use_openvino=False) if prediction is not None else {}
 
 
 def get_batch_auto_annotation_status(task_id=None):
@@ -101,16 +95,19 @@ def start_batch_auto_annotation(
     iou_thresh=0.5,
 ):
     """创建批量自动标注任务并启动后台线程。"""
-    require_present(project_path=project_path, dataset_name=dataset_name)
-
     project_name = project_name_from_path(project_path)
     dataset_root = get_dataset_root(project_path, dataset_name)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    strategy = resolve_annotation_task_strategy(vision_task_type)
+    if not strategy.supports_auto_annotation:
+        raise ValueError("当前任务类型暂不支持自动标注")
     task = start_task(
         project_path=project_path,
         project_name=project_name,
         type_="auto_annotation",
         dataset_name=dataset_name,
         dataset_path=dataset_root,
+        vision_task_type=vision_task_type,
         payload={
             "split": split,
             "model_path": model_path,
@@ -130,24 +127,13 @@ def start_batch_auto_annotation(
         added = 0
         pending = 0
         try:
-            ov_xml = pick_openvino_xml(model_path) if model_path else None
-            use_openvino = bool(ov_xml)
-            model = None
-            if not use_openvino:
-                from ultralytics import YOLO
+            from ultralytics import YOLO
 
-                if model_path:
-                    model = YOLO(model_path)
-                else:
-                    model = get_auto_annotate_model(project_path, prefer_project_best=True)
-            if model is None and not use_openvino:
+            model = YOLO(model_path)
+            if model is None:
                 raise ValueError("模型不可用")
 
-            ds_root = dataset_root
-            img_dir = os.path.join(ds_root, split, "images")
-            lbl_dir = os.path.join(ds_root, "auto_labels", split)
-            os.makedirs(lbl_dir, exist_ok=True)
-
+            img_dir = strategy.get_auto_annotation_image_dir(dataset_root, split)
             resolved_image_paths = [resolve_storage_path(path) for path in (image_paths or [])]
             images = list_batch_image_paths(img_dir, image_paths=resolved_image_paths)
             total = len(images)
@@ -160,37 +146,28 @@ def start_batch_auto_annotation(
 
             for index in range(0, len(images), int(batch_size)):
                 batch = images[index : index + int(batch_size)]
-                if use_openvino:
-                    results = predict_openvino_boxes(ov_xml, batch, conf=conf, max_det=max_det)
-                else:
-                    try:
-                        results = model.predict(batch, conf=float(conf), max_det=int(max_det), verbose=False)
-                    except Exception as exc:
-                        update_task_status(
-                            task_id,
-                            status=TASK_STATUS_FAILED,
-                            error=str(exc),
-                            message=f"推理失败: {exc}",
-                            finished_at=now_iso(),
-                        )
-                        return
+                try:
+                    results = model.predict(batch, conf=float(conf), max_det=int(max_det), verbose=False)
+                except Exception as exc:
+                    update_task_status(
+                        task_id,
+                        status=TASK_STATUS_FAILED,
+                        error=str(exc),
+                        message=f"推理失败: {exc}",
+                        finished_at=now_iso(),
+                    )
+                    return
 
                 for batch_index, result in enumerate(results):
                     image_path = batch[batch_index]
-                    auto_label_path = build_auto_label_path(img_dir, lbl_dir, image_path)
-                    boxes = extract_prediction_boxes(result, use_openvino=use_openvino)
-                    if not boxes:
-                        continue
-                    width, height = get_annotation_image_size(image_path)
-                    rel_noext = os.path.splitext(os.path.relpath(image_path, img_dir))[0]
-                    existing_manual = load_existing_manual_boxes(ds_root, split, rel_noext, width, height)
-                    existing_auto = decode_yolo_file(auto_label_path, width, height)
-                    filtered = filter_duplicate_boxes(boxes, existing_manual, existing_auto, float(iou_thresh))
-                    if not filtered:
+                    context = build_dataset_image_context(dataset_root, split, image_path)
+                    annotation = strategy.extract_auto_annotation(result, use_openvino=False)
+                    refined_annotation = strategy.refine_auto_annotation(context, annotation, float(iou_thresh))
+                    if not strategy.has_auto_annotation_content(refined_annotation):
                         continue
                     try:
-                        append_auto_label_boxes(auto_label_path, filtered, width, height)
-                        added += len(filtered)
+                        strategy.save_auto_annotation(context, refined_annotation)
+                        added += strategy.count_auto_annotation_items(refined_annotation)
                         pending += 1
                     except Exception:
                         pass
@@ -206,7 +183,7 @@ def start_batch_auto_annotation(
                 task_id,
                 status=TASK_STATUS_COMPLETED,
                 progress=100,
-                message=f"完成（新增 {added} 个框 / {pending} 张图）",
+                message=f"完成（新增 {added} 条自动标注 / {pending} 张图）",
                 finished_at=now_iso(),
                 artifacts={"added": added, "pending": pending},
             )

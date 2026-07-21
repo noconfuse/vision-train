@@ -32,11 +32,11 @@ from contexts.task.infrastructure.worker_task_ops import build_worker_artifacts,
 from contexts.video.infrastructure.video_runtime import generate_video_thumbnail
 from shared.infra.worker_process import spawn_worker_process
 from shared.utils.fs_utils import remove_file_silent, remove_tree
-from shared.utils.media_constants import IMAGE_FILE_EXTENSIONS, VIDEO_FILE_EXTENSIONS
+from constants.media import IMAGE_FILE_EXTENSIONS, VIDEO_FILE_EXTENSIONS
 from shared.utils.path_utils import project_name_from_path, validate_leaf_name
 from shared.utils.time_utils import now_iso
 from shared.utils.value_utils import require_present
-from task_status import is_active_task_status
+from protocols.task_status import is_active_task_status
 
 logger = logging.getLogger(__name__)
 

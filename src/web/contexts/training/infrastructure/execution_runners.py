@@ -2,14 +2,16 @@
 
 import os
 
+from contexts.dataset.infrastructure.dataset_schema import load_dataset_names
+from contexts.model.domain.capabilities import model_training_mode_for_task
 from contexts.task.domain.task_types import (
     TASK_TYPE_EVALUATE,
     TASK_TYPE_INFERENCE,
 )
 from contexts.task.domain.task_artifact_keys import (
-    ARTIFACT_MODEL_PATH,
     ARTIFACT_OUTPUT_DIR,
     ARTIFACT_STOP_SIGNAL_PATH,
+    ARTIFACT_TASK_DIR,
 )
 from contexts.task.infrastructure.task_repository import (
     append_task_history as write_task_history,
@@ -25,6 +27,14 @@ from contexts.task.infrastructure.worker_task_ops import (
 )
 from contexts.training.infrastructure.calibration_runtime import clear_accelerator_cache, run_batch_probe, search_calibration_limit
 from contexts.training.infrastructure.evaluate_runtime import build_evaluate_recommendations, resolve_evaluate_split
+from contexts.training.infrastructure.execution_context import (
+    require_existing_dir_path,
+    require_existing_file_path,
+    resolve_task_evaluate_runtime_context,
+    resolve_task_training_runtime_context,
+    resolve_task_vision_task_type,
+)
+from contexts.training.infrastructure.training_runtime_adapter import resolve_training_runtime_adapter
 from contexts.training.infrastructure.execution_support import (
     BATCH_CALIBRATION_FRACTION,
     BATCH_CALIBRATION_MAX_ATTEMPTS,
@@ -36,12 +46,36 @@ from contexts.training.infrastructure.execution_support import (
     get_device,
 )
 from contexts.training.infrastructure.training_artifacts import build_training_weight_artifacts
-from shared.utils.media_constants import IMAGE_FILE_EXTENSIONS
-from shared.utils.path_utils import file_api_url
-from shared.utils.path_utils import resolve_storage_path
+from constants.media import IMAGE_FILE_EXTENSIONS
+from shared.utils.path_utils import file_api_url, resolve_storage_path
 from shared.utils.time_utils import now_iso
-from task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED
+from protocols.task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED
 
+
+def _save_prediction_preview(output, preview_path):
+    """保存预测预览图，优先使用 OpenCV，失败时回退 Pillow。"""
+    preview = output.plot()
+    os.makedirs(os.path.dirname(preview_path), exist_ok=True)
+    try:
+        import cv2
+
+        return cv2.imwrite(preview_path, preview)
+    except Exception:
+        try:
+            from PIL import Image
+
+            image = Image.fromarray(preview[:, :, ::-1] if getattr(preview, "ndim", 0) == 3 else preview)
+            image.save(preview_path)
+            return True
+        except Exception:
+            return False
+
+
+def _build_preview_path(task_dir, image_path, relative_path=None):
+    """为一张图片生成稳定的推理预览图路径。"""
+    image_name = os.path.splitext(str(relative_path or os.path.basename(image_path)))[0]
+    safe_name = image_name.replace("\\", "__").replace("/", "__")
+    return os.path.join(task_dir, "preview", f"{safe_name}.jpg")
 
 def execute_training_task(task_id):
     """执行一个训练任务并持续回写进度与产物。"""
@@ -52,14 +86,13 @@ def execute_training_task(task_id):
     artifacts = task.get("artifacts") or {}
     model_name = payload.get("model_name") or ""
     training_config = payload.get("training_config") or {}
-    model_path = resolve_storage_path(artifacts.get(ARTIFACT_MODEL_PATH)) if artifacts.get(ARTIFACT_MODEL_PATH) else artifacts.get(ARTIFACT_MODEL_PATH)
-    data_yaml = resolve_storage_path(artifacts.get("dataset_yaml")) if artifacts.get("dataset_yaml") else artifacts.get("dataset_yaml")
+    training_context = resolve_task_training_runtime_context(task)
+    runtime_adapter = resolve_training_runtime_adapter(training_context["training_mode"])
+    model_path = training_context["model_path"]
     save_dir = resolve_storage_path(artifacts.get(ARTIFACT_OUTPUT_DIR)) if artifacts.get(ARTIFACT_OUTPUT_DIR) else artifacts.get(ARTIFACT_OUTPUT_DIR)
     stop_signal_path = resolve_storage_path(artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)) if artifacts.get(ARTIFACT_STOP_SIGNAL_PATH) else artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
-    if not model_path or not data_yaml or not save_dir:
+    if not model_path or not save_dir:
         raise ValueError(f"训练任务缺少必要产物信息: {task_id}")
-    if not os.path.isfile(data_yaml):
-        raise ValueError(f"训练数据配置不存在: {data_yaml}")
     mark_worker_started(task_id, os.getpid())
     try:
         update_task_status(task_id, status=TASK_STATUS_RUNNING, started_at=task.get("started_at") or now_iso(), progress=max(task.get("progress") or 0, 0), message=f"开始训练 {model_name}...")
@@ -73,21 +106,15 @@ def execute_training_task(task_id):
             if is_stop_requested(stop_signal_path):
                 trainer.stop = True
                 raise InterruptedError("用户终止训练")
-            metrics = trainer.metrics
             epoch = trainer.epoch + 1
             epochs = trainer.epochs
-            box_loss = float(trainer.loss_items[0]) if len(trainer.loss_items) > 0 else 0
-            cls_loss = float(trainer.loss_items[1]) if len(trainer.loss_items) > 1 else 0
-            dfl_loss = float(trainer.loss_items[2]) if len(trainer.loss_items) > 2 else 0
-            map50 = float(metrics.get("metrics/mAP50(B)", 0))
-            map50_95 = float(metrics.get("metrics/mAP50-95(B)", 0))
             progress = int(epoch / epochs * 100)
-            msg = f"Epoch {epoch}/{epochs} box_loss:{box_loss:.4f} mAP50:{map50:.4f}"
-            update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=progress, message=msg)
-            write_task_history(task_id, epoch=epoch, box_loss=box_loss, cls_loss=cls_loss, dfl_loss=dfl_loss, map50=map50, map50_95=map50_95)
+            epoch_update = runtime_adapter.build_epoch_update(trainer, epoch, epochs)
+            update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=progress, message=epoch_update["message"])
+            write_task_history(task_id, **epoch_update["history"])
 
         model.add_callback("on_train_epoch_end", on_train_epoch_end)
-        args = build_training_args(training_config, data_yaml, save_dir)
+        args = build_training_args(training_config, training_context, save_dir)
         update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=max(task.get("progress") or 0, 1), message="训练已开始，等待首轮 epoch 完成...")
         model.train(**args)
         finish_worker_task(
@@ -126,16 +153,14 @@ def execute_batch_calibration_task(task_id):
         raise ValueError(f"批次校准任务不存在: {task_id}")
     payload = task.get("payload") or {}
     artifacts = task.get("artifacts") or {}
+    training_context = resolve_task_training_runtime_context(task)
     stop_signal_path = resolve_storage_path(artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)) if artifacts.get(ARTIFACT_STOP_SIGNAL_PATH) else artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
-    model_path = resolve_storage_path(artifacts.get("model_path")) if artifacts.get("model_path") else artifacts.get("model_path")
-    data_yaml = resolve_storage_path(artifacts.get("dataset_yaml")) if artifacts.get("dataset_yaml") else artifacts.get("dataset_yaml")
+    model_path = training_context["model_path"]
     save_dir = resolve_storage_path(artifacts.get(ARTIFACT_OUTPUT_DIR)) if artifacts.get(ARTIFACT_OUTPUT_DIR) else artifacts.get(ARTIFACT_OUTPUT_DIR)
     imgsz = int(payload.get("imgsz") or 640)
     device_type = payload.get("device") or get_device()
     if not model_path or not os.path.isfile(model_path):
         raise ValueError("校准模型不存在")
-    if not data_yaml or not os.path.isfile(data_yaml):
-        raise ValueError("校准数据配置不存在")
     if not save_dir:
         raise ValueError("校准输出目录不存在")
     mark_worker_started(task_id, os.getpid())
@@ -152,7 +177,7 @@ def execute_batch_calibration_task(task_id):
                 task_id=task_id,
                 batch=batch,
                 model_path=model_path,
-                data_yaml=data_yaml,
+                data_yaml=training_context["data_ref"],
                 probe_dir=save_dir,
                 imgsz=imgsz,
                 device_type=device_type,
@@ -209,16 +234,14 @@ def execute_evaluate_task(task_id):
     task = load_task(task_id)
     if not task or task.get("type") != TASK_TYPE_EVALUATE:
         raise ValueError(f"评估任务不存在: {task_id}")
-    payload = task.get("payload") or {}
     artifacts = task.get("artifacts") or {}
     stop_signal_path = artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
-    weight_path = resolve_storage_path(payload.get("weight_path")) if payload.get("weight_path") else payload.get("weight_path")
-    data_yaml = resolve_storage_path(payload.get("data_yaml")) if payload.get("data_yaml") else payload.get("data_yaml")
-    if not weight_path or not os.path.isfile(weight_path):
-        raise ValueError("评估权重不存在")
-    if not data_yaml or not os.path.isfile(data_yaml):
-        raise ValueError("dataset.yaml 不可用")
-    evaluate_split = str(payload.get("split") or "").strip() or resolve_evaluate_split(data_yaml)
+    evaluate_context = resolve_task_evaluate_runtime_context(task)
+    runtime_adapter = resolve_training_runtime_adapter(evaluate_context["training_mode"])
+    weight_path = evaluate_context["weight_path"]
+    data_yaml = evaluate_context["data_yaml"]
+    vision_task_type = evaluate_context["vision_task_type"]
+    evaluate_split = evaluate_context["split"] or resolve_evaluate_split(data_yaml)
     if evaluate_split != "test":
         raise ValueError("当前数据集没有测试集，无法执行测试评估")
     mark_worker_started(task_id, os.getpid())
@@ -261,15 +284,13 @@ def execute_evaluate_task(task_id):
         model.add_callback("on_val_start", on_val_start)
         model.add_callback("on_val_batch_end", on_val_batch_end)
         model.add_callback("on_val_end", on_val_end)
-        metrics = model.val(data=data_yaml, device=get_device(), split=evaluate_split)
-        results = {
-            "split": evaluate_split,
-            "map50": float(getattr(metrics.box, "map50", 0)),
-            "map50_95": float(getattr(metrics.box, "map", 0)),
-            "precision": float(getattr(metrics.box, "mp", 0)),
-            "recall": float(getattr(metrics.box, "mr", 0)),
-        }
-        results["recommendations"] = build_evaluate_recommendations(results)
+        metrics = model.val(
+            data=evaluate_context["data_ref"],
+            device=get_device(),
+            split=evaluate_split,
+        )
+        results = runtime_adapter.build_evaluate_results(metrics, evaluate_split)
+        results["recommendations"] = build_evaluate_recommendations(results, vision_task_type)
         finish_worker_task(task_id, TASK_STATUS_COMPLETED, "测试评估完成", progress=100, artifacts_patch={"results": results}, stop_signal_path=stop_signal_path)
     except InterruptedError:
         finish_worker_task(task_id, TASK_STATUS_STOPPED, "测试评估已终止", stop_signal_path=stop_signal_path)
@@ -287,25 +308,27 @@ def execute_inference_task(task_id):
     payload = task.get("payload") or {}
     artifacts = task.get("artifacts") or {}
     stop_signal_path = artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
-    weight = resolve_storage_path(payload.get("weight_path")) if payload.get("weight_path") else payload.get("weight_path")
-    img_dir = resolve_storage_path(payload.get("img_dir")) if payload.get("img_dir") else payload.get("img_dir")
+    task_dir = resolve_storage_path(artifacts.get(ARTIFACT_TASK_DIR)) if artifacts.get(ARTIFACT_TASK_DIR) else artifacts.get(ARTIFACT_TASK_DIR)
+    weight = require_existing_file_path(payload.get("weight_path"), "推理权重不存在: {path}")
+    img_dir = require_existing_dir_path(payload.get("img_dir"), "测试目录不存在: {path}")
     project_path = task.get("project_path")
-    if not weight or not os.path.isfile(weight):
-        raise ValueError("推理权重不存在")
-    if not img_dir or not os.path.isdir(img_dir):
-        raise ValueError("测试目录不存在")
+    dataset_root = resolve_storage_path(task.get("dataset_path")) if task.get("dataset_path") else task.get("dataset_path")
+    vision_task_type = resolve_task_vision_task_type(task)
+    runtime_adapter = resolve_training_runtime_adapter(model_training_mode_for_task(vision_task_type))
     mark_worker_started(task_id, os.getpid())
     try:
         from ultralytics import YOLO
 
         update_task_status(task_id, status=TASK_STATUS_RUNNING, message="开始批量推理...")
         model = YOLO(weight)
+        class_names = load_dataset_names(dataset_root) if dataset_root else []
         images = [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.lower().endswith(IMAGE_FILE_EXTENSIONS)]
         total = len(images)
         results = []
         for index, image_path in enumerate(images, 1):
             if is_stop_requested(stop_signal_path):
                 raise InterruptedError("用户终止推理")
+            relative_image_path = os.path.relpath(image_path, project_path)
             pred = model.predict(
                 image_path,
                 conf=float(payload.get("conf", 0.25)),
@@ -315,24 +338,15 @@ def execute_inference_task(task_id):
                 verbose=False,
             )
             output = pred[0]
-            boxes = []
-            if output.boxes is not None:
-                for box in output.boxes:
-                    boxes.append(
-                        {
-                            "xyxy": [float(value) for value in box.xyxy[0].tolist()],
-                            "conf": float(box.conf[0]),
-                            "cls": int(box.cls[0]),
-                        }
-                    )
-            results.append(
-                {
-                    "image": os.path.relpath(image_path, project_path),
-                    "image_url": file_api_url(image_path),
-                    "pred_image_url": file_api_url(image_path),
-                    "boxes": boxes,
-                }
-            )
+            preview_path = _build_preview_path(task_dir, image_path, relative_image_path) if task_dir else ""
+            saved_preview = bool(preview_path) and _save_prediction_preview(output, preview_path)
+            result_item = {
+                "image": relative_image_path,
+                "image_url": file_api_url(image_path),
+                "pred_image_url": file_api_url(preview_path) if saved_preview else file_api_url(image_path),
+            }
+            result_item.update(runtime_adapter.build_inference_result(output, image_path, img_dir, class_names))
+            results.append(result_item)
             if total:
                 update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=int(index / total * 100), message=f"已推理 {index}/{total} 张")
         finish_worker_task(task_id, TASK_STATUS_COMPLETED, f"推理完成 {total} 张", progress=100, artifacts_patch={"results": results, "total": total}, stop_signal_path=stop_signal_path)

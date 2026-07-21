@@ -3,41 +3,35 @@
 from flask import Blueprint
 
 from app.http import json_body_endpoint, json_endpoint, json_error_response, param, query_params, query_params_endpoint
-from contexts.task.infrastructure.task_repository import get_task_history as load_task_history
-from contexts.training.infrastructure.execution_starters import (
-    start_inference_task,
+from contexts.training.application.commands import (
+    archive_training_workflow_record,
+    continue_training,
+    create_training_workflow_record,
+    delete_export_task_record,
+    delete_training_workflow_record,
+    restore_training_workflow_record,
+    resume_training,
     start_batch_calibration_task,
     start_evaluate_task,
+    start_export_task,
+    start_inference_task,
     start_retry_training_task,
     start_training_task,
 )
-from contexts.training.infrastructure.execution_support import get_batch_calibration as load_batch_calibration
-from contexts.training.infrastructure.export_gateway import (
-    delete_export_task as delete_export_task_record,
-    start_export_task,
-)
-from contexts.training.infrastructure.resume_utils import (
-    continue_training,
-    resume_training,
-)
-from contexts.training.infrastructure.query_gateway import (
+from contexts.training.application.queries import (
+    build_runtime_profile,
     get_training_artifacts,
+    get_training_model_export_bundle_info,
     get_training_model_exports,
     get_training_run_artifacts,
+    get_training_workflow_record,
+    list_task_history,
+    list_training_test_dirs,
+    list_training_workflow_records,
+    load_batch_calibration,
 )
-from contexts.training.infrastructure.runtime_profile import build_runtime_profile
-from contexts.training.infrastructure.test_dirs import list_training_test_dirs
-from contexts.training.infrastructure.workflow_repository import (
-    archive_training_workflow as archive_training_workflow_record,
-    create_training_workflow_record,
-    delete_training_workflow as delete_training_workflow_record,
-    get_training_workflow as get_training_workflow_record,
-    list_training_workflows as list_training_workflow_records,
-    restore_training_workflow as restore_training_workflow_record,
-)
-from contexts.training.presenters import build_bundle_name
 from shared.infra.zip_download import send_temp_zip
-from shared.utils.path_utils import resolve_allowed_dir_path, resolve_project_path
+from shared.utils.path_utils import resolve_project_path
 from shared.utils.value_utils import parse_bool
 from shared.utils.zip_utils import build_directory_zip
 
@@ -51,6 +45,7 @@ bp.add_url_rule(
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
         dataset_path=param("dataset_path"),
+        vision_task_type=param("vision_task_type"),
     ),
     methods=["POST"],
 )
@@ -253,15 +248,14 @@ def api_training_model_export_bundle():
     except ValueError as exc:
         return json_error_response(str(exc), status_code=400)
     try:
-        export_real = resolve_allowed_dir_path(params["export_dir_ref"], allowed_roots=[params["project_path"]])
+        info = get_training_model_export_bundle_info(params["project_path"], params["export_dir_ref"])
     except FileNotFoundError:
         return json_error_response("导出目录不存在", status_code=404)
     except Exception:
         return json_error_response("非法路径", status_code=400)
 
-    bundle_name = build_bundle_name(export_real)
-    tmp_zip = build_directory_zip(export_real, bundle_name)
-    return send_temp_zip(tmp_zip, f"{bundle_name}.zip")
+    tmp_zip = build_directory_zip(info["export_real"], info["bundle_name"])
+    return send_temp_zip(tmp_zip, f"{info['bundle_name']}.zip")
 
 
 bp.add_url_rule(
@@ -291,6 +285,6 @@ bp.add_url_rule(
 bp.add_url_rule("/api/training/runtime_profile", view_func=json_endpoint(build_runtime_profile), methods=["GET"])
 bp.add_url_rule(
     "/api/training/metrics_history",
-    view_func=query_params_endpoint(load_task_history, task_id=param("task_id", required=True)),
+    view_func=query_params_endpoint(list_task_history, task_id=param("task_id", required=True)),
     methods=["GET"],
 )

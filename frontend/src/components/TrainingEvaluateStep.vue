@@ -32,7 +32,7 @@
     <div class="mb-4">
       <div class="flex items-center justify-between gap-3 mb-3">
         <div>
-          <div class="vt-step-section-title mb-1">测试评估进度</div>
+          <div class="vt-step-section-title mb-1">测试集评估进度</div>
           <div class="text-sm font-semibold text-slate-800">
             {{ evaluateProgress }}%
           </div>
@@ -107,17 +107,15 @@
 
     <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
       <button @click="$emit('export')" class="vt-btn-secondary vt-btn-size-lg">导出</button>
-      <button
+      <AsyncButton
         @click="startEvaluate"
         class="vt-btn-solid-primary vt-btn-size-lg"
         :disabled="evaluateActionDisabled"
+        :pending="isActionPending(EVALUATE_ACTION_KEY) || isEvaluateRunning"
+        :loading-text="evaluateActionLabel"
       >
-        <span
-          v-if="starting || isEvaluateRunning"
-          class="inline-block h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin"
-        ></span>
-        {{ evaluateActionLabel }}
-      </button>
+        {{ evaluateIdleActionLabel }}
+      </AsyncButton>
     </div>
   </div>
 </template>
@@ -126,7 +124,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import api from '../api';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
+import { assertCapabilityGuard } from '../capabilityGuards';
+import { resolveEvaluateStartGuard } from '../trainingActionGuards';
+import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import {
@@ -137,6 +139,7 @@ import {
   getTaskStatusTagClass,
   isTaskActive,
 } from '../taskStatus';
+import { resolveTrainingResultProfile } from '../trainingResultProfile';
 
 const props = defineProps({
   projectPath: { type: String, required: true },
@@ -149,12 +152,14 @@ const props = defineProps({
 defineEmits(['export']);
 
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const workflowStore = useTrainingWorkflowStore();
 
 const evaluateTask = ref(null);
 const trainingMetricsHistory = ref([]);
-const starting = ref(false);
-let pollTimer = null;
+let evaluatePollTimer = null;
+const EVALUATE_ACTION_KEY = 'training-evaluate:start-evaluate';
+const isActionPending = (key) => asyncAction.isPending(key);
 
 const metrics = computed(() => evaluateTask.value?.artifacts?.results || null);
 const latestTrainingMetrics = computed(() => {
@@ -167,112 +172,77 @@ const recommendations = computed(() => {
 });
 const evaluateProgress = computed(() => evaluateTask.value?.progress || 0);
 const isEvaluateRunning = computed(() => isTaskActive(evaluateTask.value));
-const evaluateActionDisabled = computed(() => starting.value || isEvaluateRunning.value || !props.trainingTask || !props.hasTestSplit);
+const evaluateGuard = computed(() => resolveEvaluateStartGuard({
+  trainingTaskId: props.trainingTask?.id,
+  hasTestSplit: props.hasTestSplit,
+  isRunning: isEvaluateRunning.value,
+}));
+const evaluateActionDisabled = computed(() => !evaluateGuard.value.enabled);
+const evaluateIdleActionLabel = computed(() => (
+  evaluateTask.value ? '重新测试集评估' : '开始测试集评估'
+));
 const evaluateActionLabel = computed(() => {
-  if (starting.value || isEvaluateRunning.value) return '评估中...';
-  return evaluateTask.value ? '重新测试评估' : '开始测试评估';
+  if (isActionPending(EVALUATE_ACTION_KEY) || isEvaluateRunning.value) return '评估中...';
+  return evaluateIdleActionLabel.value;
 });
-const evaluateProgressSummary = computed(() => getTaskTerminalSummary(evaluateTask.value, '尚未开始测试评估'));
+const evaluateProgressSummary = computed(() => getTaskTerminalSummary(evaluateTask.value, '尚未开始测试集评估'));
 const evaluateProgressSummaryClass = computed(() => getTaskTerminalSummaryClass(evaluateTask.value));
 const evaluateSplitLabel = computed(() => {
   const split = String(metrics.value?.split || evaluateTask.value?.payload?.split || '').trim();
   if (split === 'test') return '测试集';
   return props.hasTestSplit ? '测试集' : '无测试集';
 });
-const METRIC_GUIDE_MAP = Object.freeze({
-  precision: {
-    description: '关注误报，越高越稳。',
-    range: '建议区间：>= 0.70 较稳，0.55~0.70 可继续观察，< 0.55 需重点排查误报',
-  },
-  recall: {
-    description: '关注漏检，越高越全。',
-    range: '建议区间：>= 0.70 较稳，0.55~0.70 可继续观察，< 0.55 需重点补漏检样本',
-  },
-  map50: {
-    description: '看整体可用性，越高越好。',
-    range: '建议区间：>= 0.75 表现较好，0.55~0.75 可按场景继续验证，< 0.55 需继续迭代',
-  },
-  map50_95: {
-    description: '更严格，适合做最终验收。',
-    range: '建议区间：>= 0.60 较稳，0.35~0.60 需结合场景验证，< 0.35 不建议直接导出上线',
-  },
-});
+const resultProfile = computed(() => resolveTrainingResultProfile(evaluateTask.value || props.trainingTask || null));
 const getMetricHelpText = (key) => {
-  const guide = METRIC_GUIDE_MAP[key];
-  if (!guide) return '';
-  return `${guide.description}\n${guide.range}`;
+  return resultProfile.value.metric_guides?.[key] || '';
 };
-const trainingMetricCards = computed(() => ([
-  {
-    key: 'train-map50',
-    label: '训练 mAP50',
-    value: formatMetric(latestTrainingMetrics.value?.map50),
-    valueClass: 'text-emerald-700',
-    helpText: getMetricHelpText('map50'),
-  },
-  {
-    key: 'train-map50-95',
-    label: '训练 mAP50-95',
-    value: formatMetric(latestTrainingMetrics.value?.map50_95),
-    valueClass: 'vt-text-accent',
-    helpText: getMetricHelpText('map50_95'),
-  },
-  {
+const trainingMetricCards = computed(() => {
+  const cards = (resultProfile.value.training_metric_cards || []).map((item) => ({
+    key: `train-${item.key}`,
+    label: item.label,
+    value: formatMetric(latestTrainingMetrics.value?.[item.key]),
+    valueClass: item.value_class,
+    helpText: item.help_text,
+  }));
+  cards.push({
     key: 'eval-data',
     label: '评估数据',
     value: evaluateSplitLabel.value,
     valueClass: 'text-slate-800',
     helpText: '',
-  },
-  {
+  });
+  cards.push({
     key: 'eval-status',
     label: '当前状态',
     value: evaluateTask.value ? getTaskStatusLabel(evaluateTask.value) : '未开始',
     valueClass: 'text-slate-800',
     helpText: '',
-  },
-]));
-const evaluateMetricCards = computed(() => ([
-  {
-    key: 'precision',
-    label: 'Precision',
-    value: formatMetric(metrics.value?.precision),
-    valueClass: 'text-slate-800',
-    helpText: getMetricHelpText('precision'),
-  },
-  {
-    key: 'recall',
-    label: 'Recall',
-    value: formatMetric(metrics.value?.recall),
-    valueClass: 'text-slate-800',
-    helpText: getMetricHelpText('recall'),
-  },
-  {
-    key: 'map50',
-    label: 'mAP50',
-    value: formatMetric(metrics.value?.map50),
-    valueClass: 'text-emerald-700',
-    helpText: getMetricHelpText('map50'),
-  },
-  {
-    key: 'map50-95',
-    label: 'mAP50-95',
-    value: formatMetric(metrics.value?.map50_95),
-    valueClass: 'vt-text-accent',
-    helpText: getMetricHelpText('map50_95'),
-  },
-]));
+  });
+  return cards;
+});
+const evaluateMetricCards = computed(() => {
+  return (resultProfile.value.evaluate_metric_cards || []).map((item) => ({
+    key: item.key,
+    label: item.label,
+    value: formatMetric(metrics.value?.[item.key]),
+    valueClass: item.value_class,
+    helpText: item.help_text || getMetricHelpText(item.key),
+  }));
+});
 
 const stopPolling = () => {
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
+  if (evaluatePollTimer) {
+    clearTimeout(evaluatePollTimer);
+    evaluatePollTimer = null;
   }
 };
 
 const pollEvaluateTask = async (taskId) => {
   if (!taskId) return;
-  stopPolling();
+  if (evaluatePollTimer) {
+    clearTimeout(evaluatePollTimer);
+    evaluatePollTimer = null;
+  }
   const tick = async () => {
     try {
       const task = await api.getTask(taskId);
@@ -280,12 +250,12 @@ const pollEvaluateTask = async (taskId) => {
         evaluateTask.value = task;
       }
       if (isTaskActive(task)) {
-        pollTimer = setTimeout(tick, 1000);
+        evaluatePollTimer = setTimeout(tick, 1000);
       } else {
-        pollTimer = null;
+        evaluatePollTimer = null;
       }
     } catch (_) {
-      pollTimer = null;
+      evaluatePollTimer = null;
     }
   };
   await tick();
@@ -294,7 +264,6 @@ const pollEvaluateTask = async (taskId) => {
 const loadEvaluateTask = async () => {
   stopPolling();
   evaluateTask.value = null;
-  trainingMetricsHistory.value = [];
   if (!props.projectPath || !props.datasetName || !props.trainingTask?.id || !props.workflowId) return;
   try {
     const [latestEvaluateTask] = await Promise.all([
@@ -320,26 +289,23 @@ const loadEvaluateTask = async () => {
 };
 
 const startEvaluate = async () => {
-  if (!props.trainingTask?.id || starting.value || !props.hasTestSplit) return;
-  starting.value = true;
-  try {
+  if (!assertCapabilityGuard(evaluateGuard.value)) return;
+  await asyncAction.run(EVALUATE_ACTION_KEY, async () => {
     const data = await apiCall(api.startEvaluate({
       project_path: props.projectPath,
       dataset_name: props.datasetName,
       task_id: props.trainingTask.id,
       use_best: true,
     }), {
-      successMsg: '测试评估已启动',
-      errorMsg: '启动测试评估失败',
+      successMsg: '测试集评估已启动',
+      errorMsg: '启动测试集评估失败',
     });
     if (data?.task_id) {
       await pollEvaluateTask(data.task_id);
     } else {
       await loadEvaluateTask();
     }
-  } finally {
-    starting.value = false;
-  }
+  });
 };
 
 const formatMetric = (value) => {
@@ -354,6 +320,7 @@ const recommendationClass = (tone) => {
 };
 
 watch(() => [props.trainingTask?.id, props.workflowId], () => {
+  trainingMetricsHistory.value = [];
   loadEvaluateTask().catch(() => {});
 }, { immediate: true });
 

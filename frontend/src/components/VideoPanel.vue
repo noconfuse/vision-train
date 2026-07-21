@@ -5,11 +5,14 @@ import { useMainStore } from '../stores/main';
 import api from '../api';
 import { useToast } from '../composables/useToast';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useConfirm } from '../composables/useConfirm';
 import { useDatasets } from '../composables/useDatasets';
 import { useAutoFillGrid } from '../composables/useAutoFillGrid';
+import { parseOptionalNumber } from '../utils';
 import VideoUploadModal from './VideoUploadModal.vue';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { TASK_STATUS, getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../taskStatus';
 
@@ -17,6 +20,7 @@ const store = useMainStore();
 const router = useRouter();
 const toast = useToast();
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const { confirm: showConfirm } = useConfirm();
 const { allDatasets } = useDatasets();
 const videos = ref([]);
@@ -59,12 +63,14 @@ const deleteVideo = async (video) => {
     confirmText: '删除',
   });
   if (!ok) return;
-  await apiCall(api.deleteVideo({
-    project_path: store.currentProject.path,
-    video_name: video.name
-  }), {
-    successMsg: `视频「${video.name}」已删除`,
-    onSuccess: () => fetchVideos(),
+  await asyncAction.run(deleteVideoActionKey(video), async () => {
+    await apiCall(api.deleteVideo({
+      project_path: store.currentProject.path,
+      video_name: video.name
+    }), {
+      successMsg: `视频「${video.name}」已删除`,
+      onSuccess: () => fetchVideos(),
+    });
   });
 };
 
@@ -118,6 +124,12 @@ const previewPanStartX = ref(0);
 const previewPanStartY = ref(0);
 const previewPanOriginX = ref(0);
 const previewPanOriginY = ref(0);
+
+const EXTRACT_ACTION_KEY = 'extract-video';
+const deleteVideoActionKey = (video) => `delete-video:${video?.name || ''}`;
+const deleteTaskActionKey = (task) => `delete-video-task:${task?.id || ''}`;
+const reviewTaskActionKey = (task) => `review-video-task:${task?.id || ''}`;
+const isActionPending = (key) => asyncAction.isPending(key);
 
 // Methods
 const fetchVideos = async () => {
@@ -191,45 +203,49 @@ const closePlayer = () => {
 };
 
 const startExtraction = async () => {
-  await apiCall(api.extractVideo({
-    project_path: store.currentProject.path,
-    video_name: currentVideo.value.name,
-    strategy: form.value.strategy,
-    value: Number(form.value.value)
-  }), {
-    successMsg: '抽帧任务已启动',
-    onSuccess: () => {
-      showModal.value = false;
-      fetchTasks();
-    }
+  if (!currentVideo.value?.name) return;
+  await asyncAction.run(EXTRACT_ACTION_KEY, async () => {
+    await apiCall(api.extractVideo({
+      project_path: store.currentProject.path,
+      video_name: currentVideo.value.name,
+      strategy: form.value.strategy,
+      value: Number(form.value.value)
+    }), {
+      successMsg: '抽帧任务已启动',
+      onSuccess: () => {
+        showModal.value = false;
+        fetchTasks();
+      }
+    });
   });
 };
 
 const reviewTask = async (task) => {
-  currentTask.value = task;
-  showReview.value = true;
-  reviewMaximized.value = false;
-  taskImages.value = [];
-  selectedImages.value.clear();
-  displayCount.value = 0;
-  
-  // Fetch images
-  await apiCall(api.getTaskImages({
-    project_path: store.currentProject.path,
-    task_id: task.id
-  }), {
-    errorMsg: '加载任务图片失败',
-    onSuccess: (data) => {
-      taskImages.value = Array.isArray(data)
-        ? data
-        : (Array.isArray(data?.images) ? data.images : []);
-      selectedImages.value.clear();
-      taskImages.value.forEach(img => selectedImages.value.add(img.name));
-      displayCount.value = Math.min(displayBatch, taskImages.value.length);
-      nextTick(() => {
-        if (reviewScrollEl.value) reviewScrollEl.value.scrollTop = 0;
-      });
-    }
+  if (!task?.id) return;
+  await asyncAction.run(reviewTaskActionKey(task), async () => {
+    currentTask.value = task;
+    showReview.value = true;
+    reviewMaximized.value = false;
+    taskImages.value = [];
+    selectedImages.value.clear();
+    displayCount.value = 0;
+    await apiCall(api.getTaskImages({
+      project_path: store.currentProject.path,
+      task_id: task.id
+    }), {
+      errorMsg: '加载任务图片失败',
+      onSuccess: (data) => {
+        taskImages.value = Array.isArray(data)
+          ? data
+          : (Array.isArray(data?.images) ? data.images : []);
+        selectedImages.value.clear();
+        taskImages.value.forEach(img => selectedImages.value.add(img.name));
+        displayCount.value = Math.min(displayBatch, taskImages.value.length);
+        nextTick(() => {
+          if (reviewScrollEl.value) reviewScrollEl.value.scrollTop = 0;
+        });
+      }
+    });
   });
 };
 
@@ -421,18 +437,21 @@ const batchDeleteSelected = async () => {
 };
 
 const deleteTask = async (task) => {
+  if (!task?.id) return;
   const ok = await showConfirm({
     message: '确定要删除这个任务及其临时文件吗？',
     danger: true,
     confirmText: '删除',
   });
   if (!ok) return;
-  await apiCall(api.deleteVideoTask({
-    project_path: store.currentProject.path,
-    task_id: task.id
-  }), {
-    successMsg: '任务已删除',
-    onSuccess: () => fetchTasks(),
+  await asyncAction.run(deleteTaskActionKey(task), async () => {
+    await apiCall(api.deleteVideoTask({
+      project_path: store.currentProject.path,
+      task_id: task.id
+    }), {
+      successMsg: '任务已删除',
+      onSuccess: () => fetchTasks(),
+    });
   });
 };
 
@@ -496,8 +515,7 @@ const getTaskVideoName = (task) => {
 
 const getTaskExtractedCount = (task) => {
   const rawCount = task?.extracted_count ?? task?.artifacts?.extracted_count;
-  const count = Number(rawCount);
-  return Number.isFinite(count) && count >= 0 ? count : null;
+  return parseOptionalNumber(rawCount, { integer: true, min: 0 });
 };
 
 // Computed
@@ -597,9 +615,9 @@ onUnmounted(() => {
             <AppIcon name="video" class="h-4 w-4" />
             <span>上传视频</span>
           </button>
-          <button @click="fetchVideos" class="vt-link">
+          <AsyncButton @click="fetchVideos" class="vt-link" :pending="loading" loading-text="刷新中...">
             刷新列表
-          </button>
+          </AsyncButton>
         </div>
       </div>
 
@@ -649,12 +667,15 @@ onUnmounted(() => {
                 </UiTooltip>
                 <UiTooltip side="top" align="center" content-class="max-w-[24rem] break-words text-left">
                   <template #trigger>
-                    <button @click="deleteVideo(video)"
-                            class="vt-icon-btn ml-1 -mt-0.5 h-7 w-7 border-transparent bg-transparent text-gray-300 hover:bg-rose-50 hover:text-rose-500">
+                    <AsyncButton
+                      @click="deleteVideo(video)"
+                      :pending="isActionPending(deleteVideoActionKey(video))"
+                      class="vt-icon-btn ml-1 -mt-0.5 h-7 w-7 border-transparent bg-transparent text-gray-300 hover:bg-rose-50 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
                       <AppIcon name="delete" class="h-4 w-4" />
-                    </button>
+                    </AsyncButton>
                   </template>
-                  {{ `删除 ${video.name}` }}
+                  {{ isActionPending(deleteVideoActionKey(video)) ? '删除中...' : `删除 ${video.name}` }}
                 </UiTooltip>
               </div>
               <div class="text-xs text-gray-500 mb-3">
@@ -662,7 +683,7 @@ onUnmounted(() => {
               </div>
 
               <div class="mt-auto">
-                <button @click="openExtractModal(video)" class="vt-btn-solid-primary vt-btn-size-md w-full justify-center">
+                <button @click="openExtractModal(video)" class="vt-btn-solid-primary vt-btn-size-md w-full justify-center" :disabled="isActionPending(EXTRACT_ACTION_KEY)">
                   <AppIcon name="split" class="h-4 w-4" />
                   抽帧构建数据集
                 </button>
@@ -710,13 +731,14 @@ onUnmounted(() => {
                   {{ getTaskStatusLabel(task.status) }}
                 </span>
               </div>
-              <button
+              <AsyncButton
                 @click="deleteTask(task)"
                 class="vt-icon-btn vt-icon-btn--sm border-transparent bg-transparent text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                :pending="isActionPending(deleteTaskActionKey(task))"
                 aria-label="删除任务"
               >
                 <AppIcon name="delete" class="h-3.5 w-3.5" />
-              </button>
+              </AsyncButton>
             </div>
           </div>
 
@@ -738,10 +760,15 @@ onUnmounted(() => {
                 {{ getTaskExtractedCount(task) }} 张
               </span>
             </div>
-            <button @click="reviewTask(task)" class="vt-btn-solid-primary vt-btn-size-md w-full justify-center">
+            <AsyncButton
+              @click="reviewTask(task)"
+              class="vt-btn-solid-primary vt-btn-size-md w-full justify-center"
+              :pending="isActionPending(reviewTaskActionKey(task))"
+              loading-text="加载中..."
+            >
               <AppIcon name="detail" class="h-4 w-4" />
               审查并导入
-            </button>
+            </AsyncButton>
           </div>
 
           <div v-else class="text-xs text-rose-500">
@@ -779,11 +806,16 @@ onUnmounted(() => {
         </div>
 
         <div class="mt-6 flex justify-end gap-3">
-          <button @click="showModal = false" class="vt-btn-secondary vt-btn-size-md">取消</button>
-          <button @click="startExtraction" class="vt-btn-solid-primary vt-btn-size-md">
+          <button @click="showModal = false" class="vt-btn-secondary vt-btn-size-md" :disabled="isActionPending(EXTRACT_ACTION_KEY)">取消</button>
+          <AsyncButton
+            @click="startExtraction"
+            class="vt-btn-solid-primary vt-btn-size-md"
+            :pending="isActionPending(EXTRACT_ACTION_KEY)"
+            loading-text="启动中..."
+          >
             <AppIcon name="split" class="h-4 w-4" />
             开始抽帧
-          </button>
+          </AsyncButton>
         </div>
       </div>
     </div>

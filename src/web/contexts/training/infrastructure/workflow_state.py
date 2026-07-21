@@ -8,7 +8,8 @@ from contexts.task.domain.task_types import (
     TASK_TYPE_TRAINING,
 )
 from contexts.training.infrastructure.training_artifacts import resolve_training_resume_weight
-from task_status import is_active_task_status
+from protocols.vision_task_type import VISION_TASK_TYPE_SET
+from protocols.task_status import is_active_task_status
 
 
 def workflow_sort_key(task):
@@ -79,6 +80,9 @@ def build_training_workflow(workflow_record, tasks):
         current_step = 'detail'
 
     workflow_status = (active_task or latest_task or {}).get('status') or 'pending'
+    vision_task_type = workflow_meta.get("vision_task_type")
+    if vision_task_type not in VISION_TASK_TYPE_SET:
+        raise ValueError("训练工作流缺少合法的 vision_task_type")
     return {
         'id': workflow_id,
         'type': TASK_TYPE_TRAINING,
@@ -86,6 +90,7 @@ def build_training_workflow(workflow_record, tasks):
         'project_name': workflow_meta.get('project_name') or (latest_task or {}).get('project_name'),
         'dataset_name': workflow_meta.get('dataset_name') or (latest_task or {}).get('dataset_name'),
         'dataset_path': workflow_meta.get('dataset_path') or (latest_task or {}).get('dataset_path'),
+        'vision_task_type': vision_task_type,
         'status': workflow_status,
         'current_step': current_step,
         'created_at': workflow_meta.get('created_at') or (ordered_tasks[0] if ordered_tasks else {}).get('created_at'),

@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 
 from .session import Base
 from shared.utils.time_utils import now_iso
-from task_status import TASK_STATUS_PENDING
+from protocols.task_status import TASK_STATUS_PENDING
 
 
 def _new_id():
@@ -31,6 +31,7 @@ class Task(Base):
     project_name = Column(String(128), nullable=True, index=True)
     dataset_name = Column(String(128), nullable=True, index=True)
     dataset_path = Column(String(512), nullable=True)
+    vision_task_type = Column(String(32), nullable=True, index=True)
 
     status = Column(String(16), nullable=False, default=TASK_STATUS_PENDING, index=True)
     progress = Column(Integer, nullable=False, default=0)
@@ -68,6 +69,7 @@ class Task(Base):
             'project_name': self.project_name,
             'dataset_name': self.dataset_name,
             'dataset_path': self.dataset_path,
+            'vision_task_type': self.vision_task_type,
             'status': self.status,
             'progress': self.progress or 0,
             'message': self.message,
@@ -94,6 +96,7 @@ class WorkflowRecord(Base):
     project_name = Column(String(128), nullable=True, index=True)
     dataset_name = Column(String(128), nullable=True, index=True)
     dataset_path = Column(String(512), nullable=True)
+    vision_task_type = Column(String(32), nullable=True, index=True)
     created_at = Column(String(32), nullable=False, default=now_iso)
     updated_at = Column(String(32), nullable=False, default=now_iso, index=True)
     archived_at = Column(String(32), nullable=True, index=True)
@@ -112,6 +115,7 @@ class WorkflowRecord(Base):
             'project_name': self.project_name,
             'dataset_name': self.dataset_name,
             'dataset_path': self.dataset_path,
+            'vision_task_type': self.vision_task_type,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
             'archived_at': self.archived_at,
@@ -139,7 +143,7 @@ class TaskHistory(Base):
 
     def to_dict(self):
         """把训练历史点转换为接口输出字典。"""
-        return {
+        data = {
             'task_id': self.task_id,
             'epoch': self.epoch,
             'box_loss': self.box_loss,
@@ -147,8 +151,14 @@ class TaskHistory(Base):
             'dfl_loss': self.dfl_loss,
             'map50': self.map50,
             'map50_95': self.map50_95,
+            'extra': self.extra_json or {},
             'created_at': self.created_at,
         }
+        if isinstance(self.extra_json, dict):
+            for key, value in self.extra_json.items():
+                if key not in data:
+                    data[key] = value
+        return data
 
 
 # ============================================================================

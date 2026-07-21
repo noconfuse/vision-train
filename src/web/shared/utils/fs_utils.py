@@ -5,6 +5,27 @@ import os
 import shutil
 
 
+def is_within_path(path, root):
+    """判断路径是否位于指定根目录内部。"""
+    if not path or not root:
+        return False
+    try:
+        path_real = os.path.realpath(path)
+        root_real = os.path.realpath(root)
+        common = os.path.commonpath([path_real, root_real])
+    except Exception:
+        return False
+    return common == root_real
+
+
+def resolve_safe_child_path(root, *parts):
+    """在指定根目录下拼接子路径并阻止路径逃逸。"""
+    path = os.path.join(str(root or ""), *[str(part or "") for part in parts])
+    if not is_within_path(path, root):
+        raise ValueError("非法路径")
+    return path
+
+
 def remove_file_silent(file_path):
     """静默删除单个文件并忽略常见文件系统错误。"""
     if not file_path:

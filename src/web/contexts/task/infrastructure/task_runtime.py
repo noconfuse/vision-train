@@ -17,7 +17,7 @@ from shared.utils.fs_utils import remove_file_silent
 from shared.utils.path_utils import resolve_project_path
 from shared.utils.time_utils import now_iso
 from shared.utils.value_utils import parse_bool
-from task_status import TASK_STATUS_FAILED, TASK_STATUS_STOPPED, TASK_STATUS_STOPPING, is_active_task_status
+from protocols.task_status import TASK_STATUS_FAILED, TASK_STATUS_STOPPED, TASK_STATUS_STOPPING, is_active_task_status
 
 from contexts.task.infrastructure.task_repository import get_task_record, update_task
 
@@ -133,7 +133,7 @@ def load_task_item(task_id):
 def list_tasks(**filters):
     """返回完成对账后的任务列表。"""
     from contexts.task.infrastructure.task_repository import list_task_records
-    from task_status import TASK_STATUS_ACTIVE
+    from protocols.task_status import TASK_STATUS_ACTIVE
 
     items = [reconcile_worker_task(item) for item in list_task_records(**filters)]
     status = filters.get("status")

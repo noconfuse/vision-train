@@ -16,7 +16,8 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_labels_dir,
 )
 from contexts.dataset.infrastructure.dataset_schema import save_standard_dataset_yaml
-from shared.utils.media_constants import DATASET_SPLITS, EVAL_SPLITS, IMAGE_FILE_EXTENSIONS
+from contexts.dataset.infrastructure.dataset_task_type import save_dataset_vision_task_type
+from constants.media import DATASET_SPLITS, EVAL_SPLITS, IMAGE_FILE_EXTENSIONS
 from shared.utils.yolo_utils import collect_yolo_class_counts
 
 
@@ -352,6 +353,7 @@ def build_augmented_subset(
     source_root,
     target_root,
     names,
+    vision_task_type,
     split,
     target_class_configs,
     non_target_keep_ratio,
@@ -552,6 +554,7 @@ def build_augmented_subset(
         include_test=os.path.isdir(get_dataset_images_dir(target_root, DATASET_SPLIT_TEST)),
         val_fallback_split=DATASET_SPLIT_VAL if os.path.isdir(get_dataset_images_dir(target_root, DATASET_SPLIT_VAL)) else DATASET_SPLIT_TRAIN,
     )
+    save_dataset_vision_task_type(target_root, vision_task_type)
 
     output_total_count = copied_base_count + augmented_count
     output_target_count = len(target_items) + augmented_count

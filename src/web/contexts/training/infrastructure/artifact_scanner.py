@@ -2,6 +2,7 @@
 
 import os
 
+from contexts.training.domain.export_profile import get_export_format_support
 from contexts.training.infrastructure.runtime_profile import get_device
 
 
@@ -12,9 +13,18 @@ EXPORT_FORMAT_OPTION_SUPPORT = {
 }
 
 
-def validate_export_request(export_format, export_half=False, export_int8=False):
+def validate_export_request(export_format, export_half=False, export_int8=False, vision_task_type=None):
     """校验导出格式、量化选项与硬件支持是否匹配。"""
-    option_support = EXPORT_FORMAT_OPTION_SUPPORT.get(export_format, {"half": True, "int8": False})
+    if vision_task_type:
+        format_support = get_export_format_support(vision_task_type, export_format)
+        if not format_support:
+            raise ValueError(f"当前任务类型不支持导出格式 {export_format}。")
+        option_support = {
+            "half": bool(format_support.get("supports_half")),
+            "int8": bool(format_support.get("supports_int8")),
+        }
+    else:
+        option_support = EXPORT_FORMAT_OPTION_SUPPORT.get(export_format, {"half": True, "int8": False})
     if export_half and not option_support.get("half", False):
         raise ValueError(f"导出格式 {export_format} 不支持 FP16。")
     if export_int8 and not option_support.get("int8", False):

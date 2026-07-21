@@ -2,16 +2,26 @@
 
 import logging
 import os
-import sys
 
 from app.config import PRETRAINED_MODELS_DIR
+from protocols.vision_task_type import (
+    VISION_TASK_TYPE_CLASSIFY,
+    VISION_TASK_TYPE_DETECT,
+    VISION_TASK_TYPE_POSE,
+    VISION_TASK_TYPE_SEGMENT,
+    VISION_TASK_TYPE_SET,
+)
 from shared.utils.fs_utils import directory_size, safe_size
 from shared.utils.path_utils import storage_path_ref
 from shared.utils.yaml_utils import load_yaml_file
 
 logger = logging.getLogger(__name__)
 
-_DETECT_SUFFIXES = ("-cls", "-seg", "-pose", "-obb", "-sem", "-grayscale", "-pf")
+_TASK_SUFFIXES = (
+    ("-cls", VISION_TASK_TYPE_CLASSIFY),
+    ("-seg", VISION_TASK_TYPE_SEGMENT),
+    ("-pose", VISION_TASK_TYPE_POSE),
+)
 _MODEL_FILE_EXTENSIONS = (".pt", ".onnx", ".xml")
 _SIZE_LABELS = {
     "n": "nano",
@@ -29,6 +39,25 @@ _SIZE_LABELS = {
 }
 
 _catalog_cache = None
+
+
+def resolve_model_vision_task_type(name):
+    """按模型命名规则解析视觉任务类型；无特殊后缀时视为检测模型。"""
+    stem = os.path.splitext(os.path.basename(str(name or "")))[0]
+    normalized = stem.split(" (", 1)[0].lower()
+    for suffix, vision_task_type in _TASK_SUFFIXES:
+        if normalized.endswith(suffix):
+            return vision_task_type
+    return VISION_TASK_TYPE_DETECT
+
+
+def is_model_allowed_for_task(name, vision_task_type=None):
+    """判断模型是否适用于指定任务类型；未指定时不做过滤。"""
+    if vision_task_type in (None, ""):
+        return True
+    if vision_task_type not in VISION_TASK_TYPE_SET:
+        return False
+    return resolve_model_vision_task_type(name) == vision_task_type
 
 def pick_openvino_xml(path):
     """从文件或目录中选出最合适的 OpenVINO XML。"""
@@ -153,11 +182,15 @@ def derive_family_and_size(name):
     return family, _SIZE_LABELS.get(size, size or "default")
 
 
-def load_ultralytics_catalog():
+def load_ultralytics_catalog(vision_task_type=None):
     """加载并缓存 Ultralytics 预训练模型目录。"""
     global _catalog_cache
     if _catalog_cache is not None:
-        return _catalog_cache
+        if vision_task_type in (None, ""):
+            return _catalog_cache
+        if vision_task_type not in VISION_TASK_TYPE_SET:
+            return []
+        return [item for item in _catalog_cache if item.get("vision_task_type") == vision_task_type]
     try:
         from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
     except Exception as exc:
@@ -169,30 +202,19 @@ def load_ultralytics_catalog():
     for stem in sorted(GITHUB_ASSETS_STEMS):
         if not stem.startswith("yolo") and not stem.startswith("rtdetr"):
             continue
-        if stem.startswith("yolo") and any(suffix in stem for suffix in _DETECT_SUFFIXES):
-            continue
         name = stem + ".pt"
+        model_vision_task_type = resolve_model_vision_task_type(name)
         family, size = derive_family_and_size(name)
-        items.append({"name": name, "family": family, "size": size, "params": None})
+        items.append({"name": name, "family": family, "size": size, "params": None, "vision_task_type": model_vision_task_type})
     _catalog_cache = items
-    return items
+    if vision_task_type in (None, ""):
+        return items
+    if vision_task_type not in VISION_TASK_TYPE_SET:
+        return []
+    return [item for item in items if item.get("vision_task_type") == vision_task_type]
 
 
 def local_path_for_name(name):
     """返回预训练模型在本地缓存目录中的路径。"""
     os.makedirs(PRETRAINED_MODELS_DIR, exist_ok=True)
     return os.path.join(PRETRAINED_MODELS_DIR, name)
-
-
-def resolve_ultralytics_download_path(name):
-    """查找 Ultralytics 默认下载落点。"""
-    candidates = [
-        os.path.join(os.getcwd(), name),
-        os.path.expanduser(f"~/.config/Ultralytics/{name}"),
-    ]
-    if sys.platform == "win32":
-        candidates.append(os.path.expanduser(f"~/AppData/Roaming/Ultralytics/{name}"))
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    return None

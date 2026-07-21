@@ -36,7 +36,7 @@
             <tr>
               <th class="vt-table-head-cell">数据集</th>
               <th class="vt-table-head-cell">类型</th>
-              <th class="vt-table-head-cell">图片 / 标签</th>
+              <th class="vt-table-head-cell">总 / 已标 / 未标</th>
               <th class="vt-table-head-cell">进度</th>
               <th class="vt-table-head-cell text-right">操作</th>
             </tr>
@@ -71,7 +71,9 @@
                 <div class="font-mono text-xs tabular-nums text-gray-600">
                   <span>{{ ds.image_count }}</span>
                   <span class="mx-1 text-gray-300">/</span>
-                  <span>{{ ds.label_count }}</span>
+                  <span>{{ ds.annotated_count ?? ds.label_count }}</span>
+                  <span class="mx-1 text-gray-300">/</span>
+                  <span>{{ ds.unannotated_count ?? Math.max(0, Number(ds.image_count || 0) - Number(ds.label_count || 0)) }}</span>
                 </div>
               </td>
               <td class="vt-table-cell">
@@ -90,13 +92,22 @@
               </td>
               <td class="vt-table-cell">
                 <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 whitespace-nowrap" @click.stop>
-                  <button class="vt-action-btn vt-action-btn--primary" @click="goToTraining(ds)">
+                  <button
+                    class="vt-action-btn vt-action-btn--primary"
+                    :class="!isTrainingSupported(ds) ? 'cursor-not-allowed opacity-50' : ''"
+                    :disabled="!isTrainingSupported(ds)"
+                    @click="goToTraining(ds)"
+                  >
                     <AppIcon name="train" class="h-3.5 w-3.5" />
                     <span>训练</span>
                   </button>
-                  <button class="vt-action-btn vt-action-btn--warning" @click="openSplit(ds)">
+                  <button
+                    v-if="isSplitSupported(ds)"
+                    class="vt-action-btn vt-action-btn--warning"
+                    @click="openSplit(ds)"
+                  >
                     <AppIcon name="split" class="h-3.5 w-3.5" />
-                    <span>分割</span>
+                    <span>重切分</span>
                   </button>
                   <button class="vt-action-btn vt-action-btn--info" @click="openTags(ds)">
                     <AppIcon name="tags" class="h-3.5 w-3.5" />
@@ -134,31 +145,39 @@
       </button>
     </div>
 
-    <!-- 分割 Modal -->
+    <!-- 重切分 Modal -->
     <div v-if="splitDataset" class="vt-modal-backdrop" @click.self="closeSplit">
       <div class="vt-modal-panel vt-modal-panel--md p-5">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-base font-semibold text-slate-800">分割数据集：{{ splitDataset.name }}</h3>
-          <button class="vt-modal-close" aria-label="关闭分割数据集弹窗" @click="closeSplit">
+          <h3 class="text-base font-semibold text-slate-800">重切分数据集：{{ splitDataset.name }}</h3>
+          <button class="vt-modal-close" aria-label="关闭重切分数据集弹窗" @click="closeSplit">
             <AppIcon name="close" class="h-4 w-4" />
           </button>
         </div>
         <div class="space-y-4">
+          <div class="text-sm leading-6 text-slate-500">
+            按整个数据集总样本重新生成 `train / val / test`，并尽量保持类别分布一致。
+          </div>
           <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">验证集比例 (val)</label>
+            <label class="block text-xs font-medium text-gray-700 mb-1">val 占总样本比例</label>
             <input v-model.number="valRatio" type="number" min="0" max="0.9" step="0.05"
                    class="vt-input" />
           </div>
           <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">测试集比例 (test)</label>
+            <label class="block text-xs font-medium text-gray-700 mb-1">test 占总样本比例</label>
             <input v-model.number="testRatio" type="number" min="0" max="0.9" step="0.05"
                    class="vt-input" />
           </div>
           <div class="flex justify-end gap-2">
-            <button class="vt-btn-link" @click="closeSplit">取消</button>
-            <button class="vt-btn-solid-primary vt-btn-size-md" :disabled="splitLoading" @click="runSplit">
-              {{ splitLoading ? '处理中...' : '开始分割' }}
-            </button>
+            <button class="vt-btn-link" :disabled="isActionPending(SPLIT_ACTION_KEY)" @click="closeSplit">取消</button>
+            <AsyncButton
+              class="vt-btn-solid-primary vt-btn-size-md"
+              :pending="isActionPending(SPLIT_ACTION_KEY)"
+              loading-text="处理中..."
+              @click="runSplit"
+            >
+              开始重切分
+            </AsyncButton>
           </div>
         </div>
       </div>
@@ -189,9 +208,14 @@
         </div>
         <div class="flex justify-end gap-2">
           <button class="vt-btn-link" @click="closeTags">取消</button>
-          <button class="vt-btn-solid-primary vt-btn-size-md" :disabled="tagsSaving" @click="saveTags">
-            {{ tagsSaving ? '保存中...' : '保存' }}
-          </button>
+          <AsyncButton
+            class="vt-btn-solid-primary vt-btn-size-md"
+            :pending="isActionPending(TAGS_ACTION_KEY)"
+            loading-text="保存中..."
+            @click="saveTags"
+          >
+            保存
+          </AsyncButton>
         </div>
       </div>
     </div>
@@ -204,10 +228,15 @@
           将删除目录：<span class="font-mono">{{ deleteDataset.path }}</span>
         </div>
         <div class="flex justify-end gap-2">
-          <button class="vt-btn-link" @click="closeDelete">取消</button>
-          <button class="vt-btn-danger" :disabled="deleteLoading" @click="runDelete">
-            {{ deleteLoading ? '删除中...' : '确认删除' }}
-          </button>
+          <button class="vt-btn-link" :disabled="isActionPending(DELETE_ACTION_KEY)" @click="closeDelete">取消</button>
+          <AsyncButton
+            class="vt-btn-danger"
+            :pending="isActionPending(DELETE_ACTION_KEY)"
+            loading-text="删除中..."
+            @click="runDelete"
+          >
+            确认删除
+          </AsyncButton>
         </div>
       </div>
     </div>
@@ -219,23 +248,33 @@ import { useMainStore } from '../stores/main';
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '../api';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useToast } from '../composables/useToast';
 import { useApiCall } from '../composables/useApiCall';
 import { useDatasets } from '../composables/useDatasets';
 import ImportDatasetModal from './ImportDatasetModal.vue';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 import {
   getDatasetTypeLabel,
   getDatasetTypeProgressClass,
   getDatasetTypeTagClass,
 } from '../datasetType';
+import { DATASET_OPERATION, resolveDatasetOperationGuard } from '../datasetCapabilities';
+import { assertCapabilityGuard } from '../capabilityGuards';
+import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
 import { buildDatasetZipFilename, triggerBlobDownload } from '../utils';
 
 const store = useMainStore();
 const router = useRouter();
 const toast = useToast();
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const { allDatasets } = useDatasets();
+const SPLIT_ACTION_KEY = 'dataset-list:split';
+const TAGS_ACTION_KEY = 'dataset-list:save-tags';
+const DELETE_ACTION_KEY = 'dataset-list:delete';
+const isActionPending = (key) => asyncAction.isPending(key);
 
 // 打开数据集详情页
 const openDataset = (ds) => {
@@ -254,9 +293,9 @@ const openDataset = (ds) => {
 const showImportModal = ref(false);
 const openImportDatasetModal = () => { showImportModal.value = true; };
 const closeImportModal = () => { showImportModal.value = false; };
-const handleImportDataset = async ({ file, projectPath, targetName, onProgress, onDone }) => {
+const handleImportDataset = async ({ file, projectPath, targetName, visionTaskType, onProgress, onDone }) => {
   try {
-    const res = await store.importDataset(file, projectPath, targetName, onProgress);
+    const res = await store.importDataset(file, projectPath, targetName, visionTaskType, onProgress);
     const fmt = res.source_format || 'yolo';
     const note = fmt === 'yolo' ? '' : `（原 ${fmt.toUpperCase()} 格式，已自动转换为 YOLO）`;
     toast.success(`数据集「${res.dataset_name}」已导入${note}`);
@@ -270,21 +309,22 @@ const handleImportDataset = async ({ file, projectPath, targetName, onProgress, 
 };
 
 const splitDataset = ref(null);
-const splitLoading = ref(false);
 const valRatio = ref(0.2);
 const testRatio = ref(0.0);
 
 const tagsDataset = ref(null);
 const editTags = ref([]);
 const newTag = ref('');
-const tagsSaving = ref(false);
 
 const deleteDataset = ref(null);
-const deleteLoading = ref(false);
 
 const downloadingMap = ref({});
 
 const getDatasetProgressPercent = (dataset) => Math.min(100, (Number(dataset?.annotation_rate) || 0) * 100);
+const getTrainingGuard = (dataset) => resolveTrainingDatasetGuard(dataset);
+const getSplitGuard = (dataset) => resolveDatasetOperationGuard(dataset, DATASET_OPERATION.SPLIT_DATASET);
+const isTrainingSupported = (dataset) => getTrainingGuard(dataset).enabled;
+const isSplitSupported = (dataset) => getSplitGuard(dataset).enabled;
 
 const refreshProjectsKeepSelection = async () => {
   const cur = store.currentProject;
@@ -323,6 +363,7 @@ const downloadDataset = async (ds) => {
 
 const goToTraining = (ds) => {
   if (!store.currentProject || !ds) return;
+  if (!assertCapabilityGuard(getTrainingGuard(ds), toast.warn)) return;
   store.selectDataset(ds);
   router.push({
     name: 'dataset-train',
@@ -334,6 +375,7 @@ const goToTraining = (ds) => {
 };
 
 const openSplit = (ds) => {
+  if (!assertCapabilityGuard(getSplitGuard(ds), toast.warn)) return;
   splitDataset.value = ds;
   valRatio.value = 0.2;
   testRatio.value = 0.0;
@@ -346,23 +388,23 @@ const closeSplit = () => {
 const runSplit = async () => {
   if (!splitDataset.value) return;
   if (valRatio.value < 0 || testRatio.value < 0 || valRatio.value + testRatio.value >= 1) {
-    toast.warn('比例设置不合法：val + test 需要小于 1');
+    toast.warn('比例设置不合法：val + test 占比之和需要小于 1');
     return;
   }
-  splitLoading.value = true;
-  await apiCall(api.splitDataset({
-    project_path: store.currentProject.path,
-    dataset_name: splitDataset.value.name,
-    val_ratio: valRatio.value,
-    test_ratio: testRatio.value
-  }), {
-    onSuccess: async (data) => {
-      await refreshProjectsKeepSelection();
-      closeSplit();
-      const c = data.counts || {};
-      toast.success(`分割完成：train=${c.train ?? '-'} val=${c.val ?? '-'} test=${c.test ?? '-'}`);
-    },
-    finally: () => { splitLoading.value = false; },
+  await asyncAction.run(SPLIT_ACTION_KEY, async () => {
+    await apiCall(api.splitDataset({
+      project_path: store.currentProject.path,
+      dataset_name: splitDataset.value.name,
+      val_ratio: valRatio.value,
+      test_ratio: testRatio.value
+    }), {
+      onSuccess: async (data) => {
+        await refreshProjectsKeepSelection();
+        closeSplit();
+        const c = data.counts || {};
+        toast.success(`重切分完成：train=${c.train ?? '-'} val=${c.val ?? '-'} test=${c.test ?? '-'}`);
+      },
+    });
   });
 };
 
@@ -393,18 +435,18 @@ const removeTag = (t) => {
 
 const saveTags = async () => {
   if (!tagsDataset.value) return;
-  tagsSaving.value = true;
-  await apiCall(api.updateDatasetTags({
-    project_path: store.currentProject.path,
-    dataset_name: tagsDataset.value.name,
-    tags: editTags.value
-  }), {
-    onSuccess: async () => {
-      await refreshProjectsKeepSelection();
-      closeTags();
-      toast.success('标签已保存');
-    },
-    finally: () => { tagsSaving.value = false; },
+  await asyncAction.run(TAGS_ACTION_KEY, async () => {
+    await apiCall(api.updateDatasetTags({
+      project_path: store.currentProject.path,
+      dataset_name: tagsDataset.value.name,
+      tags: editTags.value
+    }), {
+      onSuccess: async () => {
+        await refreshProjectsKeepSelection();
+        closeTags();
+        toast.success('标签已保存');
+      },
+    });
   });
 };
 
@@ -418,18 +460,18 @@ const closeDelete = () => {
 
 const runDelete = async () => {
   if (!deleteDataset.value) return;
-  deleteLoading.value = true;
-  await apiCall(api.deleteDatasetFolder({
-    project_path: store.currentProject.path,
-    dataset_name: deleteDataset.value.name,
-    dataset_path: deleteDataset.value.path
-  }), {
-    onSuccess: async () => {
-      await refreshProjectsKeepSelection();
-      closeDelete();
-      toast.success('数据集已删除');
-    },
-    finally: () => { deleteLoading.value = false; },
+  await asyncAction.run(DELETE_ACTION_KEY, async () => {
+    await apiCall(api.deleteDatasetFolder({
+      project_path: store.currentProject.path,
+      dataset_name: deleteDataset.value.name,
+      dataset_path: deleteDataset.value.path
+    }), {
+      onSuccess: async () => {
+        await refreshProjectsKeepSelection();
+        closeDelete();
+        toast.success('数据集已删除');
+      },
+    });
   });
 };
 </script>

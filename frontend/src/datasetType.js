@@ -1,34 +1,30 @@
+import {
+  VISION_TASK_TYPE,
+  getVisionTaskTypeValue,
+  getVisionTaskTypeLabel,
+  getVisionTaskTypeProgressClass,
+  getVisionTaskTypeTagClass,
+} from './visionTaskType';
+
 export const DATASET_TYPE = Object.freeze({
   TRAINING: 'training',
 });
 
-const DATASET_TYPE_LABELS = {
-  [DATASET_TYPE.TRAINING]: '训练数据集',
-};
-
-const DATASET_TYPE_TAG_CLASSES = {
-  [DATASET_TYPE.TRAINING]: 'vt-tag-info',
-};
-
-const DATASET_TYPE_PROGRESS_CLASSES = {
-  [DATASET_TYPE.TRAINING]: 'vt-meter__bar--info',
-};
-
 export const isTrainingDataset = (datasetOrType) => {
-  return !!datasetOrType;
+  const datasetType = typeof datasetOrType === 'string' ? datasetOrType : datasetOrType?.type;
+  return datasetType === DATASET_TYPE.TRAINING;
 };
 
 export const getDatasetTypeLabel = (datasetOrType) => {
-  const type = typeof datasetOrType === 'string' ? datasetOrType : datasetOrType?.type;
-  return DATASET_TYPE_LABELS[type] || DATASET_TYPE_LABELS[DATASET_TYPE.TRAINING];
+  return getVisionTaskTypeLabel(datasetOrType);
 };
 
 export const getDatasetTypeTagClass = (datasetOrType) => {
-  const type = typeof datasetOrType === 'string' ? datasetOrType : datasetOrType?.type;
-  return DATASET_TYPE_TAG_CLASSES[type] || DATASET_TYPE_TAG_CLASSES[DATASET_TYPE.TRAINING];
+  return getVisionTaskTypeTagClass(datasetOrType);
 };
 
 export const getDatasetTypeProgressClass = (datasetOrType) => {
-  const type = typeof datasetOrType === 'string' ? datasetOrType : datasetOrType?.type;
-  return DATASET_TYPE_PROGRESS_CLASSES[type] || DATASET_TYPE_PROGRESS_CLASSES[DATASET_TYPE.TRAINING];
+  return getVisionTaskTypeProgressClass(datasetOrType);
 };
+
+export const isDetectDataset = (datasetOrType) => getVisionTaskTypeValue(datasetOrType) === VISION_TASK_TYPE.DETECT;

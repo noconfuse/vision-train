@@ -3,7 +3,8 @@
 import os
 
 from shared.utils.path_utils import normalize_path_ref
-from shared.utils.media_constants import DATASET_SPLITS
+from constants.media import DATASET_SPLITS
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 
 DATASET_SPLIT_TRAIN = "train"
 DATASET_SPLIT_VAL = "val"
@@ -12,6 +13,7 @@ STANDARD_DATASET_SPLITS = DATASET_SPLITS
 DATASET_IMAGES_DIRNAME = "images"
 DATASET_LABELS_DIRNAME = "labels"
 DATASET_AUTO_LABELS_DIRNAME = "auto_labels"
+DATASET_UNLABELED_DIRNAME = "unlabeled"
 
 
 def get_dataset_split_dir(dataset_root, split):
@@ -39,9 +41,21 @@ def get_dataset_labels_dir(dataset_root, split):
     return os.path.join(get_dataset_split_dir(dataset_root, split), DATASET_LABELS_DIRNAME)
 
 
+def get_dataset_split_content_dir(dataset_root, split, vision_task_type):
+    """返回当前任务类型下 split 的样本内容目录。"""
+    if vision_task_type == VISION_TASK_TYPE_CLASSIFY:
+        return get_dataset_split_dir(dataset_root, split)
+    return get_dataset_images_dir(dataset_root, split)
+
+
 def get_dataset_auto_labels_dir(dataset_root, split):
     """返回某个 split 的自动标注目录。"""
     return os.path.join(dataset_root, DATASET_AUTO_LABELS_DIRNAME, str(split))
+
+
+def get_dataset_unlabeled_dir(dataset_root, split):
+    """返回某个 split 的未标注图片区。"""
+    return os.path.join(dataset_root, DATASET_UNLABELED_DIRNAME, str(split))
 
 
 def get_dataset_root_images_dir(dataset_root):
@@ -59,9 +73,16 @@ def get_dataset_legacy_labels_dir(dataset_root, split):
     return os.path.join(get_dataset_root_labels_dir(dataset_root), str(split))
 
 
-def build_dataset_yaml_image_ref(split):
-    """生成写入 dataset.yaml 的图片相对引用。"""
+def build_dataset_yaml_split_ref(split, vision_task_type):
+    """生成写入 dataset.yaml 的 split 相对引用。"""
+    if vision_task_type == VISION_TASK_TYPE_CLASSIFY:
+        return str(split)
     return f"{split}/{DATASET_IMAGES_DIRNAME}"
+
+
+def build_dataset_yaml_image_ref(split):
+    """生成检测任务写入 dataset.yaml 的图片相对引用。"""
+    return build_dataset_yaml_split_ref(split, vision_task_type=None)
 def strip_dataset_images_ref(value):
     """去掉图片引用末尾的 images 片段。"""
     normalized = normalize_path_ref(value)
@@ -105,3 +126,11 @@ def resolve_existing_label_path_for_image(image_path):
 def build_label_relpath(image_relpath):
     """把图片相对路径转换为标签相对路径。"""
     return os.path.splitext(str(image_relpath or ""))[0] + ".txt"
+
+
+def extract_classification_class_name(relative_path):
+    """从分类样本相对路径中解析类别目录名。"""
+    normalized = normalize_path_ref(relative_path)
+    if not normalized:
+        return ""
+    return normalized.split("/", 1)[0].strip()

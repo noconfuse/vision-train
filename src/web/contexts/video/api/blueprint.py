@@ -6,23 +6,21 @@ import os
 from flask import Blueprint, send_file
 
 from app.http import form_body_endpoint, json_body_endpoint, param, query_params, query_params_endpoint
-from contexts.task.domain.task_types import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.infrastructure.task_runtime import list_project_tasks
-from contexts.video.infrastructure.video_access import append_video_urls, build_task_image_items
-from contexts.video.infrastructure.video_file_gateway import remove_video_file, save_uploaded_video
-from contexts.video.infrastructure.video_task_gateway import (
+from contexts.video.application.use_cases import (
     delete_task_images,
-    delete_extraction_task as gateway_delete_extraction_task,
+    delete_video_extraction_task,
     import_task_images,
-    list_task_images,
-    list_videos as gateway_list_videos,
-    start_extraction,
+    list_project_videos,
+    list_video_extraction_tasks,
+    list_video_task_image_items,
+    remove_video_file,
+    resolve_video_stream_path,
+    resolve_video_task_image_path,
+    resolve_video_thumbnail_path,
+    save_uploaded_video,
+    start_video_extraction,
 )
-from contexts.project.infrastructure.project_paths import (
-    get_project_task_images_dir,
-    get_project_videos_dir,
-)
-from shared.utils.path_utils import resolve_and_validate_project, resolve_project_path, resolve_safe_child_path, validate_leaf_name
+from shared.utils.path_utils import resolve_and_validate_project, resolve_project_path
 
 bp = Blueprint("video", __name__)
 
@@ -30,7 +28,7 @@ bp = Blueprint("video", __name__)
 bp.add_url_rule(
     "/api/videos",
     view_func=query_params_endpoint(
-        lambda project_path: append_video_urls(project_path, gateway_list_videos(project_path)),
+        list_project_videos,
         project_path=param(
             "project_path",
             required=True,
@@ -81,11 +79,7 @@ def api_video_thumbnail():
             ),
             video_name=param("video_name", required=True),
         )
-        video_name = validate_leaf_name(params["video_name"], field_name="video_name")
-        thumb_path = resolve_safe_child_path(
-            os.path.join(get_project_videos_dir(params["project_path"]), ".thumbnails"),
-            f"{video_name}.jpg",
-        )
+        thumb_path = resolve_video_thumbnail_path(params["project_path"], params["video_name"])
     except ValueError as exc:
         return str(exc), 400
     if os.path.exists(thumb_path):
@@ -105,8 +99,7 @@ def api_video_stream():
             ),
             video_name=param("video_name", required=True),
         )
-        video_name = validate_leaf_name(params["video_name"], field_name="video_name")
-        video_path = resolve_safe_child_path(get_project_videos_dir(params["project_path"]), video_name)
+        video_path = resolve_video_stream_path(params["project_path"], params["video_name"])
     except ValueError as exc:
         return str(exc), 400
     if not os.path.exists(video_path):
@@ -118,9 +111,7 @@ def api_video_stream():
 bp.add_url_rule(
     "/api/video/extract",
     view_func=json_body_endpoint(
-        lambda project_path, video_name, strategy, value: {
-            "task_id": start_extraction(project_path, video_name, strategy, value)
-        },
+        start_video_extraction,
         project_path=param(
             "project_path",
             required=True,
@@ -135,7 +126,7 @@ bp.add_url_rule(
 bp.add_url_rule(
     "/api/video/tasks",
     view_func=query_params_endpoint(
-        lambda project_path: list_project_tasks(project_path, type_=TASK_TYPE_FRAME_EXTRACTION, limit=500),
+        list_video_extraction_tasks,
         project_path=param(
             "project_path",
             required=True,
@@ -147,7 +138,7 @@ bp.add_url_rule(
 bp.add_url_rule(
     "/api/video/task/images",
     view_func=query_params_endpoint(
-        lambda project_path, task_id: build_task_image_items(project_path, task_id, list_task_images(project_path, task_id)),
+        list_video_task_image_items,
         project_path=param(
             "project_path",
             required=True,
@@ -168,8 +159,7 @@ def api_video_task_image_file():
             task_id=param("task_id", required=True),
             image_name=param("image_name", required=True),
         )
-        valid_name = validate_leaf_name(params["image_name"], field_name="image_name")
-        image_path = resolve_safe_child_path(get_project_task_images_dir(params["project_path"], params["task_id"]), valid_name)
+        image_path = resolve_video_task_image_path(params["project_path"], params["task_id"], params["image_name"])
     except ValueError as exc:
         return str(exc), 400
     if os.path.exists(image_path):
@@ -211,7 +201,7 @@ bp.add_url_rule(
 bp.add_url_rule(
     "/api/video/task/delete",
     view_func=json_body_endpoint(
-        gateway_delete_extraction_task,
+        delete_video_extraction_task,
         project_path=param(
             "project_path",
             required=True,

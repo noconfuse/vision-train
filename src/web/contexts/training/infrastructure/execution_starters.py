@@ -27,6 +27,11 @@ from contexts.training.domain.training_constants import (
 )
 from contexts.task.infrastructure.worker_task_ops import build_worker_artifacts
 from contexts.training.infrastructure.evaluate_runtime import resolve_evaluate_split
+from contexts.training.infrastructure.execution_context import (
+    resolve_dataset_root,
+    resolve_task_vision_task_type,
+    resolve_training_sources_context,
+)
 from contexts.training.infrastructure.execution_support import (
     BATCH_CALIBRATION_TYPE,
     find_existing_batch_calibration,
@@ -34,7 +39,6 @@ from contexts.training.infrastructure.execution_support import (
     make_batch_calibration_key,
     new_run_token,
     normalize_training_config,
-    prepare_training_sources,
     start_worker_task,
 )
 from contexts.training.infrastructure.training_artifacts import (
@@ -53,8 +57,6 @@ from contexts.training.infrastructure.runtime_profile import get_device
 from shared.utils.json_utils import save_json_file
 from shared.utils.path_utils import project_name_from_path
 from shared.utils.value_utils import require_present
-
-
 def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=640, dataset_path=None, force=False, workflow_id=None, model_path=None):
     """创建或复用批次校准任务并启动 worker。"""
     try:
@@ -69,7 +71,9 @@ def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=6
     calibration_id = new_run_token()
     save_dir = build_training_calibration_dir(project_path, dataset_name, calibration_id)
     worker_artifacts = build_worker_artifacts(save_dir, "batch-calibration-worker.log", "task_worker")
-    sources = prepare_training_sources(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
+    training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
+    if not training_context["training_profile"]["supports_batch_calibration"]:
+        raise ValueError("当前任务类型暂不支持批次校准")
     device_type = get_device()
     calibration_key = make_batch_calibration_key(project_path, dataset_name, model_name, imgsz, device_type)
     task = start_task(
@@ -77,20 +81,30 @@ def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=6
         project_name=project_name_from_path(project_path),
         type_=BATCH_CALIBRATION_TYPE,
         dataset_name=dataset_name,
-        dataset_path=sources["dataset_path"],
+        dataset_path=training_context["dataset_path"],
+        vision_task_type=training_context["vision_task_type"],
         payload={
             "model_name": model_name,
-            "model_path": sources["model_path"],
+            "model_path": training_context["model_path"],
             "imgsz": imgsz,
             "device": device_type,
             "calibration_key": calibration_key,
         },
         message="等待开始批次校准...",
-        artifacts={ARTIFACT_OUTPUT_DIR: save_dir, ARTIFACT_DATASET_YAML: sources["data_yaml"], ARTIFACT_MODEL_PATH: sources["model_path"], **worker_artifacts},
+        artifacts={
+            ARTIFACT_OUTPUT_DIR: save_dir,
+            ARTIFACT_DATASET_YAML: training_context["data_yaml"],
+            ARTIFACT_MODEL_PATH: training_context["model_path"],
+            **worker_artifacts,
+        },
     )
     task = update_task_status(task["id"], workflow_id=workflow_id, workflow_type=WORKFLOW_TYPE_TRAINING if workflow_id else None)
     if workflow_id:
-        touch_training_workflow_record(workflow_id, dataset_path=sources["dataset_path"])
+        touch_training_workflow_record(
+            workflow_id,
+            dataset_path=training_context["dataset_path"],
+            vision_task_type=training_context["vision_task_type"],
+        )
     return {
         **start_worker_task(
             task["id"],
@@ -123,14 +137,15 @@ def start_training_task(
     train_id = new_run_token()
     save_dir = build_training_output_dir(project_path, dataset_name, train_id)
     worker_artifacts = build_worker_artifacts(save_dir, "training-worker.log", "task_worker")
-    sources = prepare_training_sources(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
+    training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
     config_save = {
         "dataset_name": dataset_name,
         "model_name": model_name,
         "config": training_config,
-        "dataset_path": sources["dataset_path"],
+        "dataset_path": training_context["dataset_path"],
         "start_time": train_id,
-        "dataset_yaml": sources["data_yaml"],
+        "dataset_yaml": training_context["data_yaml"],
+        "vision_task_type": training_context["vision_task_type"],
     }
     save_json_file(os.path.join(save_dir, "training_config.json"), config_save)
     if not workflow_id and resume_from_task_id:
@@ -140,17 +155,19 @@ def start_training_task(
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
-        dataset_path=sources["dataset_path"],
+        dataset_path=training_context["dataset_path"],
+        vision_task_type=training_context["vision_task_type"],
     )
     task = start_task(
         project_path=project_path,
         project_name=project_name_from_path(project_path),
         type_=TASK_TYPE_TRAINING,
         dataset_name=dataset_name,
-        dataset_path=sources["dataset_path"],
+        dataset_path=training_context["dataset_path"],
+        vision_task_type=training_context["vision_task_type"],
         payload={
             "model_name": model_name,
-            "model_path": sources["model_path"],
+            "model_path": training_context["model_path"],
             "training_config": training_config,
             "resume_from_task_id": resume_from_task_id,
             "resume_weight": resume_weight,
@@ -159,14 +176,18 @@ def start_training_task(
         artifacts={
             ARTIFACT_RUN_ID: train_id,
             ARTIFACT_OUTPUT_DIR: save_dir,
-            ARTIFACT_DATASET_YAML: sources["data_yaml"],
-            ARTIFACT_MODEL_PATH: sources["model_path"],
+            ARTIFACT_DATASET_YAML: training_context["data_yaml"],
+            ARTIFACT_MODEL_PATH: training_context["model_path"],
             **build_training_weight_artifacts(save_dir),
             **worker_artifacts,
         },
     )
     task = update_task_status(task["id"], workflow_id=workflow["id"], workflow_type=WORKFLOW_TYPE_TRAINING)
-    touch_training_workflow_record(workflow["id"], dataset_path=sources["dataset_path"])
+    touch_training_workflow_record(
+        workflow["id"],
+        dataset_path=training_context["dataset_path"],
+        vision_task_type=training_context["vision_task_type"],
+    )
     return start_worker_task(
         task["id"],
         running_message=f"训练进程已启动，准备训练 {model_name}...",
@@ -182,11 +203,13 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
     if not src_task or not src_task.get("artifacts", {}).get(ARTIFACT_OUTPUT_DIR):
         raise ValueError("任务不存在或产物不可用")
     workflow_id = src_task.get("workflow_id") or src_task_id
+    vision_task_type = resolve_task_vision_task_type(src_task)
     ensure_training_workflow_record(
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
     )
     artifacts = src_task.get("artifacts") or {}
     weights_dir = artifacts[ARTIFACT_OUTPUT_DIR]
@@ -206,6 +229,7 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
         type_=TASK_TYPE_EVALUATE,
         dataset_name=dataset_name,
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
         payload={"src_task_id": src_task_id, "weight": weight, "weight_path": weight_path, "data_yaml": data_yaml, "split": evaluate_split},
         message="开始测试评估...",
         artifacts={},
@@ -213,7 +237,7 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
     eval_task = update_task_status(eval_task["id"], workflow_id=workflow_id, workflow_type=WORKFLOW_TYPE_TRAINING)
     task_dir = build_training_task_run_dir(weights_dir, TASK_TYPE_EVALUATE, eval_task["id"])
     update_task_status(eval_task["id"], artifacts=build_worker_artifacts(task_dir, "evaluate-worker.log", "task_worker"))
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"))
+    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
     return start_worker_task(eval_task["id"], "评估进程已启动...", "评估进程启动失败", "task_worker")
 
 
@@ -223,19 +247,19 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
     if not src_task or not src_task.get("artifacts", {}).get(ARTIFACT_OUTPUT_DIR):
         raise ValueError("任务或产物不可用")
     workflow_id = src_task.get("workflow_id") or src_task_id
+    vision_task_type = resolve_task_vision_task_type(src_task)
     ensure_training_workflow_record(
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
     )
     artifacts = src_task.get("artifacts") or {}
     weight = artifacts.get(ARTIFACT_BEST_WEIGHT_PATH)
     if not weight or not os.path.isfile(weight):
         raise ValueError("best.pt 不存在")
-    from contexts.training.infrastructure.execution_support import resolve_and_validate_dataset
-
-    dataset_root = resolve_and_validate_dataset(project_path, dataset_name, src_task.get("dataset_path"))
+    dataset_root = resolve_dataset_root(project_path, dataset_name, src_task.get("dataset_path"))
     img_dir = os.path.join(dataset_root, test_subdir, "images")
     if not os.path.isdir(img_dir):
         raise ValueError(f"测试目录不存在: {img_dir}")
@@ -245,6 +269,7 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
         type_=TASK_TYPE_INFERENCE,
         dataset_name=dataset_name,
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
         payload={"src_task_id": src_task_id, "weight_path": weight, "img_dir": img_dir, "test_subdir": test_subdir, "conf": conf, "max_det": max_det},
         message="开始批量推理...",
         artifacts={},
@@ -252,7 +277,7 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
     inf_task = update_task_status(inf_task["id"], workflow_id=workflow_id, workflow_type=WORKFLOW_TYPE_TRAINING)
     task_dir = build_training_inference_dir(artifacts[ARTIFACT_OUTPUT_DIR], inf_task["id"])
     update_task_status(inf_task["id"], artifacts=build_worker_artifacts(task_dir, "inference-worker.log", "task_worker"))
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"))
+    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
     return start_worker_task(inf_task["id"], "推理进程已启动...", "推理进程启动失败", "task_worker")
 
 

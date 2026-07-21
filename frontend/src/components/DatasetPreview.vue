@@ -22,7 +22,16 @@
           @click="toggleSelectionMode"
         >
           <AppIcon :name="selectionMode ? 'check' : 'select'" class="h-4 w-4" />
-          {{ selectionMode ? '选择模式' : '选择模式' }}
+          {{ selectionMode ? '退出选择模式' : '选择模式' }}
+        </button>
+        <button
+          v-if="uploadImagesGuard.visible"
+          class="vt-btn-solid-primary vt-btn-size-md"
+          :disabled="!store.selectedDataset || !uploadImagesGuard.enabled"
+          @click="openUploadImagesModal"
+        >
+          <AppIcon name="upload" class="h-4 w-4" />
+          上传图片
         </button>
       </div>
     </div>
@@ -35,8 +44,8 @@
       <div class="flex items-center gap-2 flex-wrap">
         <button class="vt-btn-secondary vt-btn-size-sm"
                 @click="selectAllCurrentPage">全选本页</button>
-        <button class="vt-btn-solid-primary vt-btn-size-sm"
-                :disabled="selectedCount === 0"
+        <button v-if="createSubsetGuard.visible" class="vt-btn-solid-primary vt-btn-size-sm"
+                :disabled="selectedCount === 0 || !createSubsetGuard.enabled"
                 @click="openCreateSubset">
           生成子集
         </button>
@@ -56,8 +65,8 @@
             类别筛选
           </div>
           <div class="inline-flex h-7 items-center text-xs text-slate-500">
-            总目标
-            <span class="ml-1 font-mono font-medium text-slate-700">{{ datasetInfo.total_objects || 0 }}</span>
+            {{ datasetMetricLabel }}
+            <span class="ml-1 font-mono font-medium text-slate-700">{{ datasetMetricValue }}</span>
           </div>
           <button
             v-for="s in datasetInfo.class_stats || []"
@@ -79,7 +88,7 @@
         </div>
 
         <div v-if="datasetInfo" class="flex items-center gap-2 shrink-0">
-          <div class="relative" @mouseenter="showAutoAnnotateHelp = true" @mouseleave="showAutoAnnotateHelp = false">
+          <div v-if="hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE)" class="relative" @mouseenter="showAutoAnnotateHelp = true" @mouseleave="showAutoAnnotateHelp = false">
             <button
               @click="showAutoAnnotateModal = true"
               class="vt-btn-solid-primary vt-btn-size-sm"
@@ -99,8 +108,7 @@
               </div>
             </Transition>
           </div>
-
-          <div class="relative" ref="advancedMenuRef">
+          <div v-if="hasAdvancedOperations" class="relative" ref="advancedMenuRef">
             <button
               class="vt-btn-secondary vt-btn-size-sm"
               @click="showAdvancedMenu = !showAdvancedMenu"
@@ -112,46 +120,51 @@
             </button>
             <div v-if="showAdvancedMenu"
                  class="absolute right-0 top-full z-30 mt-1 w-44 border border-gray-200 bg-white py-1 shadow-sm">
-              <button class="w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              <button v-if="canReorderLabels" class="w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                       :disabled="!canReorderLabels || reorderingLabels"
                       @click="onAdvanced(openReorderLabels)">
                 调整标签顺序
                 <span v-if="reorderingLabels" class="text-gray-400 text-[10px]">处理中...</span>
               </button>
-              <button class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      :disabled="!canReorderLabels || deletingLabel"
+              <button v-if="hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      :disabled="!hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL) || deletingLabel"
                       @click="onAdvanced(openDeleteLabel)">
                 删除标签
                 <span v-if="deletingLabel" class="text-gray-400 text-[10px]">处理中...</span>
               </button>
-              <div class="border-t border-gray-100 my-1"></div>
-              <button class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              <div v-if="hasLabelOperations && hasDatasetOperations" class="border-t border-gray-100 my-1"></div>
+              <button v-if="hasDatasetOperation(DATASET_OPERATION.DEDUPLICATE_IMAGES)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       :disabled="deduplicatingImages"
                       @click="onAdvanced(deduplicateImages)">
                 图片去重（MD5）
                 <span v-if="deduplicatingImages" class="text-gray-400 text-[10px]">处理中...</span>
               </button>
-              <button class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              <button v-if="hasDatasetOperation(DATASET_OPERATION.MERGE_DATASETS)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       :disabled="mergingDatasets || mergeCandidates.length === 0"
                       @click="onAdvanced(openMergeDatasets)">
                 合并数据集
                 <span v-if="mergingDatasets" class="text-gray-400 text-[10px]">处理中...</span>
               </button>
-              <div class="border-t border-gray-100 my-1"></div>
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="clearingAutoLabels"
-                @click="onAdvanced(clearAutoLabels)"
-              >
-                清除待复核标注
-                <span v-if="clearingAutoLabels" class="text-rose-300 text-[10px]">处理中...</span>
-              </button>
-              <div class="border-t border-gray-100 my-1"></div>
-              <button class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      :disabled="augmentSubmitting"
+              <template v-if="hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE)">
+                <div class="border-t border-gray-100 my-1"></div>
+                <button
+                  class="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="clearingAutoLabels"
+                  @click="onAdvanced(clearAutoLabels)"
+                >
+                  清除待复核标注
+                  <span v-if="clearingAutoLabels" class="text-rose-300 text-[10px]">处理中...</span>
+                </button>
+              </template>
+              <div v-if="(hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE) || hasDatasetOperations) && hasDatasetOperation(DATASET_OPERATION.AUGMENT_DATASET)" class="border-t border-gray-100 my-1"></div>
+              <button v-if="hasDatasetOperation(DATASET_OPERATION.AUGMENT_DATASET)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      :disabled="isActionPending(AUGMENT_PREVIEW_ACTION_KEY) || isActionPending(AUGMENT_SUBMIT_ACTION_KEY)"
                       @click="onAdvanced(openAugmentSubsetModal)">
                 弱类补偿采样
-                <span v-if="augmentSubmitting" class="text-gray-400 text-[10px]">处理中...</span>
+                <span
+                  v-if="isActionPending(AUGMENT_PREVIEW_ACTION_KEY) || isActionPending(AUGMENT_SUBMIT_ACTION_KEY)"
+                  class="text-gray-400 text-[10px]"
+                >处理中...</span>
               </button>
             </div>
           </div>
@@ -179,9 +192,10 @@
 
         <button
           class="vt-btn-secondary vt-btn-size-sm"
+          :disabled="loading"
           @click="applyFilters"
         >
-          应用筛选
+          {{ loading ? '筛选中...' : '应用筛选' }}
         </button>
         </div>
 
@@ -189,7 +203,7 @@
         <div class="vt-toolbar vt-toolbar--nowrap shrink-0">
         <button
           class="vt-icon-btn vt-icon-btn--sm"
-          :disabled="currentPage <= 1"
+          :disabled="loading || currentPage <= 1"
           @click="goPrevPage"
         >
           <AppIcon name="previous" class="h-3.5 w-3.5" />
@@ -205,7 +219,7 @@
         <span class="text-xs text-gray-500">/ {{ totalPages }}</span>
         <button
           class="vt-icon-btn vt-icon-btn--sm"
-          :disabled="currentPage >= totalPages"
+          :disabled="loading || currentPage >= totalPages"
           @click="goNextPage"
         >
           <AppIcon name="next" class="h-3.5 w-3.5" />
@@ -273,11 +287,11 @@
        <span class="text-sm text-gray-500">共 {{ total }} 张图片</span>
        <button
          @click="goToTrain"
-         :disabled="!store.selectedDataset"
+         :disabled="!store.selectedDataset || !hasDatasetOperation(DATASET_OPERATION.TRAIN)"
          class="vt-btn-solid-primary vt-btn-size-lg"
        >
          <AppIcon name="train" class="h-4 w-4" />
-         <span>去训练</span>
+         <span>{{ hasDatasetOperation(DATASET_OPERATION.TRAIN) ? '去训练' : '训练待接入' }}</span>
          <AppIcon name="next" class="h-4 w-4" />
        </button>
     </div>
@@ -335,23 +349,40 @@
           </select>
           
           <select v-else v-model="selectedModelPath" class="vt-select">
-             <option v-if="trainingWorkflows.length === 0" disabled>无可用工作流记录</option>
+             <option v-if="trainedModelOptions.length === 0" disabled>无可用历史模型</option>
              <option v-for="opt in trainedModelOptions" :key="opt.key" :value="opt.value">{{ opt.label }}</option>
           </select>
         </div>
         
         <div class="flex justify-end gap-2">
-          <button @click="showAutoAnnotateModal = false" class="vt-btn-secondary vt-btn-size-md">取消</button>
-          <button @click="runAutoAnnotate" class="vt-btn-solid-primary vt-btn-size-md" :disabled="!selectedModelPath">
+          <button @click="showAutoAnnotateModal = false" class="vt-btn-secondary vt-btn-size-md" :disabled="isActionPending(AUTO_ANNOTATE_ACTION_KEY)">取消</button>
+          <AsyncButton
+            @click="runAutoAnnotate"
+            class="vt-btn-solid-primary vt-btn-size-md"
+            :disabled="!selectedModelPath || autoAnnotating"
+            :pending="isActionPending(AUTO_ANNOTATE_ACTION_KEY)"
+            loading-text="启动中..."
+          >
             开始标注
-          </button>
+          </AsyncButton>
         </div>
       </div>
     </div>
 
     <!-- Annotator Modal -->
     <ImageAnnotator 
-      v-if="currentImage && store.selectedDataset?.name"
+      v-if="currentImage && store.selectedDataset?.name && annotationMode === DATASET_ANNOTATION_MODE.DETECT_BOXES"
+      :image="currentImage"
+      :class-list="classList"
+      :dataset-name="store.selectedDataset?.name || ''"
+      :split="filters.split"
+      @close="currentImage = null"
+      @prev="navImage(-1)"
+      @next="navImage(1)"
+      @update="onImageUpdate"
+    />
+    <ClassificationAnnotator
+      v-if="currentImage && store.selectedDataset?.name && annotationMode === DATASET_ANNOTATION_MODE.IMAGE_CLASS"
       :image="currentImage"
       :class-list="classList"
       :dataset-name="store.selectedDataset?.name || ''"
@@ -362,19 +393,25 @@
       @update="onImageUpdate"
     />
 
-    <div v-if="showCreateSubsetModal" class="vt-modal-backdrop" @click.self="closeCreateSubset">
+    <div v-if="showCreateSubsetModal" class="vt-modal-backdrop" @click.self="!isActionPending(CREATE_SUBSET_ACTION_KEY) && closeCreateSubset()">
       <div class="vt-modal-panel vt-modal-panel--md p-5">
         <h3 class="text-lg font-bold mb-4">生成独立数据集</h3>
         <div class="mb-4 text-sm text-gray-600">已选择 <span class="font-mono">{{ selectedCount }}</span> 张图片</div>
         <div class="mb-6">
           <label class="block text-sm font-medium text-gray-700 mb-2">新数据集名称</label>
-          <input v-model.trim="subsetName" class="vt-input" placeholder="例如：datasets_04_subset" />
+          <input v-model.trim="subsetName" class="vt-input" :disabled="isActionPending(CREATE_SUBSET_ACTION_KEY)" placeholder="例如：datasets_04_subset" />
         </div>
         <div class="flex justify-end gap-2">
-          <button class="vt-btn-secondary vt-btn-size-md" @click="closeCreateSubset">取消</button>
-          <button class="vt-btn-solid-primary vt-btn-size-md" :disabled="creatingSubset || !subsetName" @click="createSubset">
-            {{ creatingSubset ? '创建中...' : '创建' }}
-          </button>
+          <button class="vt-btn-secondary vt-btn-size-md" :disabled="isActionPending(CREATE_SUBSET_ACTION_KEY)" @click="closeCreateSubset">取消</button>
+          <AsyncButton
+            class="vt-btn-solid-primary vt-btn-size-md"
+            :disabled="!subsetName"
+            :pending="isActionPending(CREATE_SUBSET_ACTION_KEY)"
+            loading-text="创建中..."
+            @click="createSubset"
+          >
+            创建
+          </AsyncButton>
         </div>
       </div>
     </div>
@@ -682,13 +719,29 @@
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button class="vt-btn-secondary vt-btn-size-md" :disabled="augmentSubmitting" @click="closeAugmentSubsetModal">取消</button>
-          <button class="vt-btn-secondary vt-btn-size-md" :disabled="augmentSubmitting" @click="runAugmentPreview">
-            {{ augmentSubmitting ? '处理中...' : '先预估' }}
-          </button>
-          <button class="vt-btn-solid-primary vt-btn-size-md" :disabled="augmentSubmitting || !augmentConfig.newDatasetName" @click="runAugmentSubset">
-            {{ augmentSubmitting ? '生成中...' : '开始生成' }}
-          </button>
+          <button
+            class="vt-btn-secondary vt-btn-size-md"
+            :disabled="isActionPending(AUGMENT_PREVIEW_ACTION_KEY) || isActionPending(AUGMENT_SUBMIT_ACTION_KEY)"
+            @click="closeAugmentSubsetModal"
+          >取消</button>
+          <AsyncButton
+            class="vt-btn-secondary vt-btn-size-md"
+            :pending="isActionPending(AUGMENT_PREVIEW_ACTION_KEY)"
+            :disabled="isActionPending(AUGMENT_SUBMIT_ACTION_KEY)"
+            loading-text="处理中..."
+            @click="runAugmentPreview"
+          >
+            先预估
+          </AsyncButton>
+          <AsyncButton
+            class="vt-btn-solid-primary vt-btn-size-md"
+            :pending="isActionPending(AUGMENT_SUBMIT_ACTION_KEY)"
+            :disabled="isActionPending(AUGMENT_PREVIEW_ACTION_KEY) || !augmentConfig.newDatasetName"
+            loading-text="生成中..."
+            @click="runAugmentSubset"
+          >
+            开始生成
+          </AsyncButton>
         </div>
       </div>
     </div>
@@ -796,6 +849,14 @@
       </div>
     </div>
 
+    <UploadDatasetImagesModal
+      :visible="showUploadImagesModal"
+      :dataset-name="store.selectedDataset?.name || '数据集'"
+      :split="uploadTargetSplit"
+      @close="showUploadImagesModal = false"
+      @submit="handleUploadImages"
+    />
+
   </div>
 </template>
 
@@ -809,22 +870,31 @@ import {
 } from 'reka-ui';
 import { useRouter } from 'vue-router';
 import { useMainStore } from '../stores/main';
-import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
 import api from '../api';
 import { useToast } from '../composables/useToast';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useConfirm } from '../composables/useConfirm';
+import { useDatasetCapabilities } from '../composables/useDatasetCapabilities';
 import { useDatasets } from '../composables/useDatasets';
 import { useAutoFillGrid } from '../composables/useAutoFillGrid';
-import { getModelExportFormatLabel } from '../utils';
+import {
+  DATASET_ANNOTATION_MODE,
+  DATASET_OPERATION,
+} from '../datasetCapabilities';
+import { assertCapabilityGuard } from '../capabilityGuards';
+import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
+import ClassificationAnnotator from './ClassificationAnnotator.vue';
 import ImageAnnotator from './ImageAnnotator.vue';
+import UploadDatasetImagesModal from './UploadDatasetImagesModal.vue';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
 const store = useMainStore();
-const workflowStore = useTrainingWorkflowStore();
 const toast = useToast();
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const router = useRouter();
 const { confirm: showConfirm } = useConfirm();
 const { allDatasets, findDataset } = useDatasets();
@@ -837,18 +907,11 @@ const currentImage = ref(null);
 const showAutoAnnotateModal = ref(false);
 const autoAnnotateType = ref('pretrained');
 const selectedModelPath = ref('');
-const workflowListKey = computed(() => workflowStore.getDatasetCacheKey({
-  project_path: store.currentProject?.path || '',
-  dataset_name: store.selectedDataset?.name || '',
-  archived_only: false,
-}));
-const trainingWorkflows = computed(() => workflowStore.workflowLists[workflowListKey.value] || []);
 const selectionMode = ref(false);
 const selectedClassIds = ref([]);
 const selectedMap = ref({});
 const showCreateSubsetModal = ref(false);
 const subsetName = ref('');
-const creatingSubset = ref(false);
 const deleting = ref(false);
 const showReorderLabelsModal = ref(false);
 const reorderItems = ref([]);
@@ -863,8 +926,9 @@ const mergeOtherDataset = ref('');
 const mergeNewDatasetName = ref('');
 const mergingDatasets = ref(false);
 const showAugmentSubsetModal = ref(false);
-const augmentSubmitting = ref(false);
 const augmentPreview = ref(null);
+const AUGMENT_PREVIEW_ACTION_KEY = 'dataset-preview:augment-preview';
+const AUGMENT_SUBMIT_ACTION_KEY = 'dataset-preview:augment-submit';
 const augmentTargetClassPickerOpen = ref(false);
 const showAugmentAdvancedOptions = ref(false);
 const augmentConfig = reactive({
@@ -882,6 +946,7 @@ const augmentConfig = reactive({
 });
 const pageInput = ref(1);
 const isFullScreen = ref(false);
+let activeImageRequestController = null;
 const { gridClass: imageGridClass, gridStyle: imageGridStyle } = useAutoFillGrid(isFullScreen, {
   compactTile: 112,
   regularTile: 136,
@@ -890,12 +955,17 @@ const { gridClass: imageGridClass, gridStyle: imageGridStyle } = useAutoFillGrid
 const showAdvancedMenu = ref(false);
 const showAutoAnnotateHelp = ref(false);
 const advancedMenuRef = ref(null);
+const showUploadImagesModal = ref(false);
+const uploadTargetSplit = ref('train');
 const buildDatasetNameSuffix = () => {
   const datePart = new Date().toISOString().slice(0, 10).replaceAll('-', '');
   const randomPart = Math.random().toString(36).slice(2, 6);
   return `${datePart}_${randomPart}`;
 };
 const buildDerivedDatasetName = (baseName, kind) => `${baseName || 'dataset'}_${kind}_${buildDatasetNameSuffix()}`;
+const CREATE_SUBSET_ACTION_KEY = 'dataset-preview:create-subset';
+const AUTO_ANNOTATE_ACTION_KEY = 'dataset-preview:auto-annotate-start';
+const isActionPending = (key) => asyncAction.isPending(key);
 const onAdvanced = (fn) => {
   showAdvancedMenu.value = false;
   fn && fn();
@@ -925,6 +995,24 @@ const openCreatedDataset = async (datasetName) => {
   return nextDataset;
 };
 
+const refreshSelectedDataset = async () => {
+  const selectedName = store.selectedDataset?.name || '';
+  const selectedPath = store.selectedDataset?.path || '';
+  await store.fetchProjects({ silent: true });
+  const nextDataset = findDataset(selectedName)
+    || allDatasets.value.find(d => d.path === selectedPath)
+    || null;
+  if (nextDataset) {
+    store.selectDataset(nextDataset);
+  }
+  return nextDataset;
+};
+
+const openUploadImagesModal = () => {
+  uploadTargetSplit.value = String(filters.split || 'train');
+  showUploadImagesModal.value = true;
+};
+
 const autoAnnotating = ref(false);
 const autoAnnotateStatus = ref({ progress: 0, message: '', added: 0, pending: 0 });
 const autoAnnotateTaskId = ref('');
@@ -947,15 +1035,42 @@ const filters = reactive({
 });
 
 const openAnnotator = (img) => {
+  if (!manualAnnotationGuard.value.enabled) return;
   currentImage.value = img;
 };
 
 const selectedCount = computed(() => Object.keys(selectedMap.value).length);
+const selectedDatasetSource = computed(() => datasetInfo.value || store.selectedDataset || null);
+const { annotationMode, hasDatasetOperation, getDatasetOperationGuard } = useDatasetCapabilities(selectedDatasetSource);
+const uploadImagesGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.UPLOAD_IMAGES));
+const manualAnnotationGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.MANUAL_ANNOTATION));
+const trainGuard = computed(() => resolveTrainingDatasetGuard(selectedDatasetSource.value));
+const createSubsetGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.CREATE_SUBSET));
+const autoAnnotateGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.AUTO_ANNOTATE, {
+  visibleWhenUnsupported: true,
+}));
+const deleteLabelGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.DELETE_LABEL));
+const deduplicateGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.DEDUPLICATE_IMAGES));
+const mergeDatasetsGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.MERGE_DATASETS));
+const augmentDatasetGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.AUGMENT_DATASET));
+const datasetMetricLabel = computed(() => annotationMode.value === DATASET_ANNOTATION_MODE.IMAGE_CLASS ? '总样本' : '总目标');
+const datasetMetricValue = computed(() => annotationMode.value === DATASET_ANNOTATION_MODE.IMAGE_CLASS
+  ? Number(datasetInfo.value?.image_count || 0)
+  : Number(datasetInfo.value?.total_objects || 0));
 const canReorderLabels = computed(() => {
+  if (!hasDatasetOperation(DATASET_OPERATION.REORDER_LABELS)) return false;
   const v = classList.value;
   if (Array.isArray(v)) return v.length > 0;
   if (v && typeof v === 'object') return Object.keys(v).length > 0;
   return false;
+});
+const hasLabelOperations = computed(() => canReorderLabels.value || hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL));
+const hasDatasetOperations = computed(() => hasDatasetOperation(DATASET_OPERATION.DEDUPLICATE_IMAGES) || hasDatasetOperation(DATASET_OPERATION.MERGE_DATASETS));
+const hasAdvancedOperations = computed(() => {
+  return hasLabelOperations.value
+    || hasDatasetOperations.value
+    || hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE)
+    || hasDatasetOperation(DATASET_OPERATION.AUGMENT_DATASET);
 });
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (filters.limit || 1))));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor((filters.offset || 0) / (filters.limit || 1)) + 1));
@@ -1082,58 +1197,36 @@ watch(augmentClassOptions, (options) => {
 });
 
 const pretrainedModelOptions = computed(() => {
-  return (store.pretrainedModels || []).filter(m => m.type === 'pretrained');
+  return (store.autoAnnotateModels || []).filter((model) => model.type === 'pretrained');
 });
 
 const trainedModelOptions = computed(() => {
-  return (trainingWorkflows.value || [])
-    .flatMap(workflow => {
-      const trainingTask = workflow?.latest_training_task;
-      const outputDir = trainingTask?.artifacts?.output_dir;
-      if (!trainingTask?.id || !outputDir) return [];
-
-      const options = [];
-      const dataset = workflow?.dataset_name || store.selectedDataset?.name || 'Unknown Dataset';
-      const modelName = trainingTask?.payload?.model_name || '';
-      const weightPath = `${outputDir}/weights/best.pt`;
-
-      options.push({
-        key: `${workflow.id}:${trainingTask.id}:best.pt`,
-        value: weightPath,
-        label: `[${dataset}] ${workflow.id} (Base: ${modelName}) - PyTorch`,
-      });
-
-      const exportTasks = workflow?.tasks?.export || [];
-      exportTasks.forEach((task) => {
-        const files = task?.artifacts?.files || [];
-        files.forEach((file) => {
-          const path = file?.path || '';
-          if (!path) return;
-          const formatType = getModelExportFormatLabel({ path });
-          options.push({
-            key: `${workflow.id}:${task.id}:${file.name}`,
-            value: path,
-            label: `[${dataset}] ${workflow.id} (Base: ${modelName}) - ${formatType} (${file.name})`,
-          });
-        });
-      });
-
-      return options;
+  return (store.autoAnnotateModels || [])
+    .filter((model) => model.type === 'trained')
+    .sort((a, b) => {
+      if (a.created_at && b.created_at) {
+        return new Date(b.created_at) - new Date(a.created_at);
+      }
+      return 0;
+    })
+    .map((model) => {
+      const dataset = model?.dataset || store.selectedDataset?.name || 'Unknown Dataset';
+      const runId = model?.source_run || '';
+      return {
+        key: `${runId}:${model.path}`,
+        value: model.path,
+        label: `[${dataset}] ${runId} - ${model.name}`,
+      };
     });
 });
 
 const ensureAutoAnnotateModelsLoaded = async (type) => {
-  if (type === 'pretrained') {
-    if (!store.pretrainedModels.length) {
-      await store.fetchModels();
-    }
-    if (pretrainedModelOptions.value.length > 0) {
-      selectedModelPath.value = pretrainedModelOptions.value[0].path;
-    }
-    return;
+  if (!store.autoAnnotateModels.length) {
+    await store.fetchModels(store.selectedDataset?.vision_task_type, 'auto_annotate');
   }
-  if (!trainingWorkflows.value.length) {
-    await fetchTrainingWorkflows();
+  if (type === 'pretrained' && pretrainedModelOptions.value.length > 0) {
+    selectedModelPath.value = pretrainedModelOptions.value[0].path;
+    return;
   }
   if (trainedModelOptions.value.length > 0) {
     selectedModelPath.value = trainedModelOptions.value[0].value;
@@ -1211,12 +1304,21 @@ const navImage = (dir) => {
 };
 
 const onImageUpdate = (img) => {
-  // Update the pending status locally
-  const target = images.value.find(i => i.path === img.path);
-  if (target) {
-    target.pending = false;
-    target.has_auto_label = false;
-    target.annotated = true;
+  const targetIndex = images.value.findIndex(i => i.path === img.old_path || i.path === img.path);
+  if (targetIndex !== -1) {
+    images.value[targetIndex] = {
+      ...images.value[targetIndex],
+      ...img,
+    };
+  }
+  if (currentImage.value && (currentImage.value.path === img.old_path || currentImage.value.path === img.path)) {
+    currentImage.value = targetIndex !== -1 ? images.value[targetIndex] : {
+      ...currentImage.value,
+      ...img,
+    };
+  }
+  if (filters.unannotated || filters.has_auto_label) {
+    fetchImages(false);
   }
 };
 
@@ -1233,14 +1335,6 @@ const fetchDatasetInfo = async () => {
   } catch (e) { console.error('Failed to load classes', e); }
 };
 
-const fetchTrainingWorkflows = async () => {
-  await workflowStore.fetchWorkflows({
-    project_path: store.currentProject?.path,
-    dataset_name: store.selectedDataset?.name,
-    archived_only: false,
-  });
-};
-
 const fetchImages = async (reset = false) => {
   if (!store.currentProject || !store.selectedDataset) return;
   
@@ -1250,6 +1344,11 @@ const fetchImages = async (reset = false) => {
     pageInput.value = 1;
   }
   
+  if (activeImageRequestController) {
+    activeImageRequestController.abort();
+  }
+  const controller = new AbortController();
+  activeImageRequestController = controller;
   loading.value = true;
   try {
     const params = {
@@ -1262,14 +1361,17 @@ const fetchImages = async (reset = false) => {
       unannotated: filters.unannotated,
       has_auto_label: filters.has_auto_label
     };
-    const res = await api.getDatasetImages({ ...params });
-
+    const res = await api.getDatasetImages({ ...params }, { signal: controller.signal });
     images.value = res.items;
-      total.value = res.total;
+    total.value = res.total;
   } catch (err) {
+    if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
     console.error('Failed to fetch images:', err);
   } finally {
-    loading.value = false;
+    if (activeImageRequestController === controller) {
+      activeImageRequestController = null;
+      loading.value = false;
+    }
   }
 };
 
@@ -1313,19 +1415,47 @@ const applyFilters = () => {
   fetchImages(true);
 };
 
+const handleUploadImages = async ({ split, files, onProgress, onDone }) => {
+  try {
+    const formData = new FormData();
+    formData.append('project_path', store.currentProject.path);
+    formData.append('dataset_name', store.selectedDataset.name);
+    formData.append('split', split);
+    for (const file of files || []) {
+      formData.append('files', file);
+    }
+    const res = await api.uploadDatasetImages(formData, onProgress);
+    await refreshSelectedDataset();
+    await fetchDatasetInfo();
+    if (filters.split !== split) {
+      filters.split = split;
+    } else {
+      applyFilters();
+    }
+    toast.success(`已上传 ${res?.count || 0} 张图片到 ${split}`);
+    showUploadImagesModal.value = false;
+    onDone && onDone();
+  } catch (err) {
+    onDone && onDone(err);
+  }
+};
+
 const goPrevPage = () => {
+  if (loading.value) return;
   if (currentPage.value <= 1) return;
   pageInput.value = currentPage.value - 1;
   jumpPage();
 };
 
 const goNextPage = () => {
+  if (loading.value) return;
   if (currentPage.value >= totalPages.value) return;
   pageInput.value = currentPage.value + 1;
   jumpPage();
 };
 
 const jumpPage = () => {
+  if (loading.value) return;
   const p = Math.max(1, Math.min(totalPages.value, Number(pageInput.value || 1)));
   pageInput.value = p;
   if (!selectionMode.value) {
@@ -1338,6 +1468,7 @@ const jumpPage = () => {
 // 跳转到训练页
 const goToTrain = () => {
   if (!store.selectedDataset) return;
+  if (!assertCapabilityGuard(trainGuard.value, toast.warn)) return;
   router.push({
     name: 'dataset-train',
     params: {
@@ -1348,6 +1479,7 @@ const goToTrain = () => {
 };
 
 const openCreateSubset = () => {
+  if (!createSubsetGuard.value.enabled) return;
   const base = store.selectedDataset?.name || 'dataset';
   subsetName.value = buildDerivedDatasetName(base, 'subset');
   showCreateSubsetModal.value = true;
@@ -1359,6 +1491,7 @@ const closeCreateSubset = () => {
 };
 
 const openAugmentSubsetModal = () => {
+  if (!augmentDatasetGuard.value.enabled) return;
   const classes = augmentClassOptions.value;
   const first = classes[0];
   const base = store.selectedDataset?.name || 'dataset';
@@ -1420,13 +1553,13 @@ const buildAugmentPayload = (withDryRun = false) => {
 
 const runAugmentPreview = async () => {
   if (!store.currentProject?.path || !store.selectedDataset?.name) return;
-  augmentSubmitting.value = true;
-  await apiCall(api.previewAugmentedSubset(buildAugmentPayload(true)), {
-    errorMsg: '预估失败',
-    onSuccess: (data) => {
-      augmentPreview.value = data;
-    },
-    finally: () => { augmentSubmitting.value = false; },
+  await asyncAction.run(AUGMENT_PREVIEW_ACTION_KEY, async () => {
+    await apiCall(api.previewAugmentedSubset(buildAugmentPayload(true)), {
+      errorMsg: '预估失败',
+      onSuccess: (data) => {
+        augmentPreview.value = data;
+      },
+    });
   });
 };
 
@@ -1448,20 +1581,21 @@ const runAugmentSubset = async () => {
     confirmText: '生成',
   })) return;
 
-  augmentSubmitting.value = true;
-  await apiCall(api.createAugmentedSubset(buildAugmentPayload(false)), {
-    onSuccess: async (data) => {
-      await store.fetchProjects({ silent: true });
-      await openCreatedDataset(augmentConfig.newDatasetName);
-      closeAugmentSubsetModal();
-      toast.success(data.message || '增强子集创建成功');
-    },
-    errorMsg: '增强子集创建失败',
-    finally: () => { augmentSubmitting.value = false; },
+  await asyncAction.run(AUGMENT_SUBMIT_ACTION_KEY, async () => {
+    await apiCall(api.createAugmentedSubset(buildAugmentPayload(false)), {
+      onSuccess: async (data) => {
+        await store.fetchProjects({ silent: true });
+        await openCreatedDataset(augmentConfig.newDatasetName);
+        closeAugmentSubsetModal();
+        toast.success(data.message || '增强子集创建成功');
+      },
+      errorMsg: '增强子集创建失败',
+    });
   });
 };
 
 const openReorderLabels = () => {
+  if (!canReorderLabels.value) return;
   const v = classList.value;
   let names = [];
   if (Array.isArray(v)) {
@@ -1482,6 +1616,7 @@ const closeReorderLabels = () => {
 };
 
 const openDeleteLabel = () => {
+  if (!deleteLabelGuard.value.enabled) return;
   const stats = datasetInfo.value?.class_stats || [];
   deleteLabelItems.value = (stats || [])
     .map(s => ({ id: Number(s.id), name: String(s.name ?? ''), count: Number(s.count ?? 0) }))
@@ -1495,7 +1630,7 @@ const closeDeleteLabel = () => {
 };
 
 const confirmDeleteLabel = async (it) => {
-  if (!it) return;
+  if (!it || deletingLabel.value) return;
   if (!await showConfirm({
     message: `确定要删除标签「${it.name}」吗？\n该操作会批量修改标注文件，且不可撤销。`,
     title: '删除标签',
@@ -1525,6 +1660,7 @@ const confirmDeleteLabel = async (it) => {
 };
 
 const deduplicateImages = async () => {
+  if (!deduplicateGuard.value.enabled || deduplicatingImages.value) return;
   if (!store.currentProject?.path || !store.selectedDataset?.name) return;
   if (!await showConfirm({
     message: '确定要按图片MD5去重吗？\n该操作会删除重复图片及其对应的标签文件，且不可撤销。',
@@ -1549,7 +1685,8 @@ const deduplicateImages = async () => {
 };
 
 const clearAutoLabels = async () => {
-  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  if (!store.currentProject?.path || !store.selectedDataset?.name || clearingAutoLabels.value) return;
+  if (!assertCapabilityGuard(autoAnnotateGuard.value, toast.warn)) return;
   if (!await showConfirm({
     message: '确定要清除当前数据集中的所有待复核标注吗？\n该操作只会删除自动标注文件，不会删除人工标签，且不可撤销。',
     title: '清除待复核标注',
@@ -1591,6 +1728,7 @@ const normalizeNames = (v) => {
 };
 
 const openMergeDatasets = () => {
+  if (!mergeDatasetsGuard.value.enabled) return;
   const cand = mergeCandidates.value;
   mergeOtherDataset.value = cand[0] || '';
   const a = store.selectedDataset?.name || 'dataset';
@@ -1606,7 +1744,7 @@ const closeMergeDatasets = () => {
 };
 
 const runMergeDatasets = async () => {
-  if (!store.currentProject?.path || !store.selectedDataset?.name) return;
+  if (!store.currentProject?.path || !store.selectedDataset?.name || mergingDatasets.value) return;
   const other = String(mergeOtherDataset.value || '').trim();
   const newName = String(mergeNewDatasetName.value || '').trim();
   if (!other || !newName) return;
@@ -1661,6 +1799,7 @@ const moveReorderItem = (idx, dir) => {
 };
 
 const applyReorderLabels = async () => {
+  if (reorderingLabels.value) return;
   const order = reorderItems.value.map(it => it.oldIndex);
   if (order.length === 0) return;
   if (!await showConfirm({
@@ -1695,27 +1834,28 @@ const createSubset = async () => {
   if (!subsetName.value) return;
   const imagePaths = Object.keys(selectedMap.value);
   if (imagePaths.length === 0) return;
-  creatingSubset.value = true;
-  await apiCall(api.createDatasetSubset({
-    project_path: store.currentProject.path,
-    source_dataset: store.selectedDataset.name,
-    new_dataset_name: subsetName.value,
-    image_paths: imagePaths
-  }), {
-    onSuccess: async (data) => {
-      await store.fetchProjects({ silent: true });
-      await openCreatedDataset(subsetName.value);
-      closeCreateSubset();
-      selectionMode.value = false;
-      selectedMap.value = {};
-      toast.success(data.message || '创建成功');
-    },
-    errorMsg: '创建失败',
-    finally: () => { creatingSubset.value = false; },
+  const nextSubsetName = subsetName.value;
+  await asyncAction.run(CREATE_SUBSET_ACTION_KEY, async () => {
+    const data = await apiCall(api.createDatasetSubset({
+      project_path: store.currentProject.path,
+      source_dataset: store.selectedDataset.name,
+      new_dataset_name: nextSubsetName,
+      image_paths: imagePaths
+    }), {
+      errorMsg: '创建失败',
+    });
+    if (!data) return;
+    await store.fetchProjects({ silent: true });
+    await openCreatedDataset(nextSubsetName);
+    closeCreateSubset();
+    selectionMode.value = false;
+    selectedMap.value = {};
+    toast.success(data.message || '创建成功');
   });
 };
 
 const batchDelete = async () => {
+  if (deleting.value) return;
   const imagePaths = Object.keys(selectedMap.value);
   if (imagePaths.length === 0) return;
   if (!await showConfirm({
@@ -1747,36 +1887,39 @@ const batchDelete = async () => {
 };
 
 const runAutoAnnotate = async () => {
-  showAutoAnnotateModal.value = false;
-
-  const imagePaths = await listFilteredImagePaths();
-  if (imagePaths.length === 0) {
-    toast.warn('当前筛选条件下没有可标注图片');
-    return;
-  }
-  await apiCall(api.autoAnnotate({
-    project_path: store.currentProject.path,
-    dataset_name: store.selectedDataset.name,
-    split: filters.split,
-    image_paths: imagePaths,
-    model_path: selectedModelPath.value,
-    conf: 0.25,
-    iou: 0.7
-  }), {
-    errorMsg: '自动标注启动失败',
-    onSuccess: (data) => {
-      const taskId = String(data?.task_id || '').trim();
-      if (!taskId) {
-        autoAnnotating.value = false;
-        autoAnnotateTaskId.value = '';
-        toast.error('自动标注启动成功，但未返回 task_id');
-        return;
-      }
-      autoAnnotateTaskId.value = taskId;
-      autoAnnotating.value = true;
-      autoAnnotateStatus.value = { progress: 0, message: `初始化(${imagePaths.length}张)...`, added: 0, pending: 0 };
-      pollAutoAnnotateStatus();
+  if (autoAnnotating.value) return;
+  if (!assertCapabilityGuard(autoAnnotateGuard.value, toast.warn)) return;
+  await asyncAction.run(AUTO_ANNOTATE_ACTION_KEY, async () => {
+    const imagePaths = await listFilteredImagePaths();
+    if (imagePaths.length === 0) {
+      toast.warn('当前筛选条件下没有可标注图片');
+      return;
     }
+    showAutoAnnotateModal.value = false;
+    await apiCall(api.autoAnnotate({
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      split: filters.split,
+      image_paths: imagePaths,
+      model_path: selectedModelPath.value,
+      conf: 0.25,
+      iou: 0.7
+    }), {
+      errorMsg: '自动标注启动失败',
+      onSuccess: (data) => {
+        const taskId = String(data?.task_id || '').trim();
+        if (!taskId) {
+          autoAnnotating.value = false;
+          autoAnnotateTaskId.value = '';
+          toast.error('自动标注启动成功，但未返回 task_id');
+          return;
+        }
+        autoAnnotateTaskId.value = taskId;
+        autoAnnotating.value = true;
+        autoAnnotateStatus.value = { progress: 0, message: `初始化(${imagePaths.length}张)...`, added: 0, pending: 0 };
+        pollAutoAnnotateStatus();
+      }
+    });
   });
 };
 
@@ -1816,15 +1959,15 @@ const pollAutoAnnotateStatus = () => {
   }, 1000);
 };
 
-watch(() => store.selectedDataset, () => {
-  if (store.selectedDataset) {
+watch(() => store.selectedDataset?.path || '', () => {
+  if (store.selectedDataset?.path) {
     fetchImages(true);
     fetchDatasetInfo();
     selectionMode.value = false;
     selectedMap.value = {};
     selectedClassIds.value = [];
   }
-});
+}, { immediate: true });
 
 watch(() => filters.split, () => applyFilters());
 
@@ -1852,16 +1995,16 @@ const handleGlobalKeydown = (e) => {
 };
 
 onMounted(() => {
-  if (store.selectedDataset) {
-    fetchImages(true);
-    fetchDatasetInfo();
-  }
   window.addEventListener('keydown', handleGlobalKeydown);
   document.addEventListener('click', onDocClick);
 });
 
 onUnmounted(() => {
   stopAutoAnnotatePolling();
+  if (activeImageRequestController) {
+    activeImageRequestController.abort();
+    activeImageRequestController = null;
+  }
   window.removeEventListener('keydown', handleGlobalKeydown);
   document.removeEventListener('click', onDocClick);
 });

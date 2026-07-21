@@ -2,8 +2,8 @@
 
 import os
 
-from contexts.annotation.infrastructure.annotation_io import decode_yolo_file, encode_yolo_lines
-from shared.utils.media_constants import IMAGE_FILE_EXTENSIONS
+from contexts.annotation.infrastructure.annotation_io import decode_detect_file, encode_detect_lines
+from constants.media import IMAGE_FILE_EXTENSIONS
 from shared.utils.path_utils import is_within_path
 from shared.utils.yolo_utils import read_yolo_lines, write_yolo_lines
 
@@ -75,13 +75,13 @@ def load_existing_manual_boxes(ds_root, split, rel_noext, width, height):
     ]
     for candidate in manual_candidates:
         if os.path.exists(candidate):
-            return decode_yolo_file(candidate, width, height)
+            return decode_detect_file(candidate, width, height)
     return []
 
 
 def append_auto_label_boxes(auto_label_path, boxes, width, height):
     """把新框追加写入自动标签文件。"""
     lines = read_yolo_lines(auto_label_path)
-    lines.extend(encode_yolo_lines(boxes, width, height))
+    lines.extend(encode_detect_lines(boxes, width, height))
     write_yolo_lines(auto_label_path, lines)
     return len(lines)

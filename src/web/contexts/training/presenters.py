@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 from contexts.task.domain.task_artifact_keys import ARTIFACT_EXPORT_PATH
 from contexts.task.presenters import present_task, present_tasks
+from contexts.training.domain.capability_snapshot import build_training_capabilities_snapshot
 from contexts.training.infrastructure.artifact_scanner import scan_export_outputs, scan_training_run_artifacts
 from shared.utils.path_utils import build_file_item, build_file_items, storage_path_ref
 
@@ -49,6 +50,8 @@ def present_training_workflow_record(workflow_record):
         item["project_path"] = storage_path_ref(item["project_path"])
     if item.get("dataset_path"):
         item["dataset_path"] = storage_path_ref(item["dataset_path"])
+    if item.get("vision_task_type"):
+        item["capabilities_snapshot"] = build_training_capabilities_snapshot(item["vision_task_type"])
     return item
 
 

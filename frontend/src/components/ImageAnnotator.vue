@@ -159,22 +159,23 @@
             删除选中标注 (Delete)
           </button>
 
-          <button 
-            @click="save" 
+          <AsyncButton
+            @click="save"
             class="vt-btn-solid-primary vt-btn-size-lg w-full justify-center"
-            :disabled="saving"
+            :disabled="loading"
+            :pending="isActionPending(SAVE_ACTION_KEY)"
+            loading-text="保存标注 (Ctrl+S)"
           >
-            <span v-if="saving" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
-            <AppIcon v-else name="check" class="h-4 w-4" />
-            {{ saving ? '保存标注 (Ctrl+S)' : '保存标注 (Ctrl+S)' }}
-          </button>
+            <AppIcon name="check" class="h-4 w-4" />
+            保存标注 (Ctrl+S)
+          </AsyncButton>
           
           <div class="flex gap-2">
-            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1">
+            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
               <AppIcon name="previous" class="h-4 w-4" />
               <span>上一张</span>
             </button>
-            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1">
+            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
               <span>下一张</span>
               <AppIcon name="next" class="h-4 w-4" />
             </button>
@@ -190,8 +191,10 @@ import { ref, computed, onMounted, onUnmounted, watch, shallowRef } from 'vue';
 import api from '../api';
 import { useMainStore } from '../stores/main';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { getPathDisplayName } from '../utils';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
 const props = defineProps({
@@ -205,13 +208,16 @@ const emit = defineEmits(['close', 'prev', 'next', 'update']);
 
 const store = useMainStore();
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const containerRef = ref(null);
 const imgRef = ref(null);
 const boxes = ref([]);
 const loading = ref(true);
-const saving = ref(false);
 const currentClass = ref(0);
 const hasChanges = ref(false);
+const SAVE_ACTION_KEY = 'image-annotator:save';
+const isActionPending = (key) => asyncAction.isPending(key);
+let activeLoadToken = 0;
 
 // 用 shallowRef 存"拖动中的临时数据"——避免深度响应式追踪
 // 拖动中频繁更新 4 个数字会触发 SVG 整树重新计算，
@@ -477,6 +483,7 @@ const finalizeDrag = () => {
 };
 
 const fetchAnnotations = async () => {
+  const token = ++activeLoadToken;
   loading.value = true;
   boxes.value = [];
   hasChanges.value = false;
@@ -490,11 +497,12 @@ const fetchAnnotations = async () => {
       split: props.split,
       image_path: props.image.path
     });
+    if (token !== activeLoadToken) return;
     const w = Number(res.width || 0);
-      const h = Number(res.height || 0);
-      if (w > 0 && h > 0) {
-        imgWidth.value = w;
-        imgHeight.value = h;
+    const h = Number(res.height || 0);
+    if (w > 0 && h > 0) {
+      imgWidth.value = w;
+      imgHeight.value = h;
       const toNorm = (b) => {
         const x1 = Number(b.x1);
         const y1 = Number(b.y1);
@@ -505,8 +513,8 @@ const fetchAnnotations = async () => {
         }
         return { class: Number(b.class) || 0, x1, y1, x2, y2 };
       };
-      const manual = (res.boxes || []).map((b) => ({ ...toNorm(b), is_auto: false }));
-      const auto = (res.auto_boxes || []).map((b) => ({ ...toNorm(b), is_auto: true }));
+      const manual = (res.manual_annotation?.boxes || []).map((b) => ({ ...toNorm(b), is_auto: false }));
+      const auto = (res.auto_annotation?.boxes || []).map((b) => ({ ...toNorm(b), is_auto: true }));
       boxes.value = [...manual, ...auto].filter((b) =>
         Number.isFinite(b.x1) && Number.isFinite(b.y1) && Number.isFinite(b.x2) && Number.isFinite(b.y2)
       );
@@ -514,6 +522,7 @@ const fetchAnnotations = async () => {
   } catch (err) {
     console.error(err);
   } finally {
+    if (token !== activeLoadToken) return;
     loading.value = false;
   }
 };
@@ -521,27 +530,29 @@ const fetchAnnotations = async () => {
 const save = async () => {
   const w = imgWidth.value || (imgRef.value ? imgRef.value.naturalWidth : 0);
   const h = imgHeight.value || (imgRef.value ? imgRef.value.naturalHeight : 0);
-  saving.value = true;
-  await apiCall(api.saveAnnotation({
-    project_path: store.currentProject.path,
-    dataset_name: props.datasetName,
-    split: props.split,
-    image_path: props.image.path,
-    labels: boxes.value.map((b) => ({
-      class: b.class,
-      x1: b.x1 * w,
-      y1: b.y1 * h,
-      x2: b.x2 * w,
-      y2: b.y2 * h,
-    })),
-  }), {
-    errorMsg: '保存失败',
-    onSuccess: () => {
-      hasChanges.value = false;
-      fetchAnnotations();
-      emit('update', props.image);
-    },
-    finally: () => { saving.value = false; },
+  await asyncAction.run(SAVE_ACTION_KEY, async () => {
+    await apiCall(api.saveAnnotation({
+      project_path: store.currentProject.path,
+      dataset_name: props.datasetName,
+      split: props.split,
+      image_path: props.image.path,
+      annotation: {
+        boxes: boxes.value.map((b) => ({
+          class: b.class,
+          x1: b.x1 * w,
+          y1: b.y1 * h,
+          x2: b.x2 * w,
+          y2: b.y2 * h,
+        })),
+      },
+    }), {
+      errorMsg: '保存失败',
+      onSuccess: () => {
+        hasChanges.value = false;
+        fetchAnnotations();
+        emit('update', props.image);
+      },
+    });
   });
 };
 

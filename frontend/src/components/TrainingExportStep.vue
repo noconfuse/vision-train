@@ -41,7 +41,7 @@
               <div>
                 <div class="vt-check-card__title">半精度 FP16</div>
                 <div class="vt-check-card__desc">
-                  {{ !exportOptionSupport.half ? '当前格式不支持。' : (halfDisabledByMutualExclusion ? 'INT8 已开启，FP16 不能同时开启。' : '减小模型体积，适合常规部署。') }}
+                  {{ !exportOptionSupport.half ? exportProfile.half_disabled_text : (halfDisabledByMutualExclusion ? exportProfile.half_conflict_text : exportProfile.half_enabled_text) }}
                 </div>
               </div>
             </label>
@@ -58,7 +58,7 @@
               <div>
                 <div class="vt-check-card__title">INT8 量化</div>
                 <div class="vt-check-card__desc">
-                  {{ !exportOptionSupport.int8 ? '当前格式不支持。' : (int8DisabledByMutualExclusion ? 'FP16 已开启，INT8 不能同时开启。' : '更小更快，但精度可能下降。') }}
+                  {{ !exportOptionSupport.int8 ? exportProfile.int8_disabled_text : (int8DisabledByMutualExclusion ? exportProfile.int8_conflict_text : exportProfile.int8_enabled_text) }}
                 </div>
               </div>
             </label>
@@ -170,19 +170,16 @@
                 </a>
                 <UiTooltip side="top">
                   <template #trigger>
-                    <button
+                    <AsyncButton
                       class="vt-icon-btn vt-icon-btn--sm vt-icon-btn--danger"
-                      :disabled="deletingExportTaskId === exp.export_task_id || isDeleteDisabled(exp)"
+                      :disabled="isDeleteDisabled(exp)"
+                      :pending="isActionPending(deleteExportActionKey(exp))"
                       @click="deleteExportRecord(exp)"
                     >
-                      <span
-                        v-if="deletingExportTaskId === exp.export_task_id"
-                        class="inline-block h-3 w-3 rounded-full border-2 border-current/25 border-t-current animate-spin"
-                      ></span>
-                      <AppIcon v-else name="delete" class="h-3.5 w-3.5" />
-                    </button>
+                      <AppIcon name="delete" class="h-3.5 w-3.5" />
+                    </AsyncButton>
                   </template>
-                  {{ deletingExportTaskId === exp.export_task_id ? '删除中...' : '删除记录' }}
+                  {{ isActionPending(deleteExportActionKey(exp)) ? '删除中...' : '删除记录' }}
                 </UiTooltip>
               </div>
             </article>
@@ -192,14 +189,16 @@
     </div>
 
     <div class="mt-4 pt-4 border-t border-gray-200 flex flex-wrap items-center justify-end gap-2 shrink-0">
-      <button @click="startExport" class="vt-btn-solid-primary vt-btn-size-lg" :disabled="exportActionDisabled">
+      <AsyncButton
+        @click="startExport"
+        class="vt-btn-solid-primary vt-btn-size-lg"
+        :disabled="exportActionDisabled"
+        :pending="isActionPending(EXPORT_ACTION_KEY) || isExportRunning"
+        :loading-text="exportActionLabel"
+      >
         <AppIcon name="export" class="h-4 w-4" />
-        <span
-          v-if="starting || isExportRunning"
-          class="inline-block h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin"
-        ></span>
-        {{ exportActionLabel }}
-      </button>
+        {{ exportIdleActionLabel }}
+      </AsyncButton>
     </div>
   </div>
 </template>
@@ -208,12 +207,20 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import api from '../api';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useConfirm } from '../composables/useConfirm';
 import { useToast } from '../composables/useToast';
+import { assertCapabilityGuard } from '../capabilityGuards';
+import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { useTrainingStore } from '../stores/training';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
+import { resolveTrainingExportProfile } from '../trainingExportProfile';
+import {
+  resolveExportDeleteGuard,
+  resolveExportStartGuard,
+} from '../trainingActionGuards';
 import {
   formatBytes,
   formatDateTime,
@@ -238,6 +245,7 @@ const props = defineProps({
 });
 
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 const { confirm: showConfirm } = useConfirm();
 const trainingStore = useTrainingStore();
 const workflowStore = useTrainingWorkflowStore();
@@ -245,9 +253,10 @@ const toast = useToast();
 
 const currentExports = ref([]);
 const currentExportTask = ref(null);
-const starting = ref(false);
-const deletingExportTaskId = ref('');
 let pollTimer = null;
+const EXPORT_ACTION_KEY = 'training-export:start';
+const deleteExportActionKey = (exp) => `training-export:delete:${String(exp?.export_task_id || '')}`;
+const isActionPending = (key) => asyncAction.isPending(key);
 
 const exportConfig = reactive({
   format: 'onnx',
@@ -255,33 +264,40 @@ const exportConfig = reactive({
   half: false,
   int8: false,
 });
-const EXPORT_FORMAT_OPTION_SUPPORT = Object.freeze({
-  onnx: { half: true, int8: false },
-  openvino: { half: true, int8: true },
-  engine: { half: true, int8: true },
-});
 const runtimeProfile = computed(() => trainingStore.runtimeProfile || null);
 const runtimeExportFormats = computed(() => runtimeProfile.value?.export?.formats || {});
+const exportProfile = computed(() => resolveTrainingExportProfile(props.trainingTask));
+const exportFormatOptions = computed(() => {
+  return (exportProfile.value.formats || []).map((item) => {
+    const hardwareKey = item.hardware_key;
+    const hardwareAvailable = hardwareKey ? Boolean(runtimeExportFormats.value?.[hardwareKey]?.available) : true;
+    const hardwareReason = hardwareKey ? String(runtimeExportFormats.value?.[hardwareKey]?.reason || '').trim() : '';
+    return {
+      value: item.value,
+      label: hardwareAvailable ? item.label : `${item.label}（需要NVIDIA支持）`,
+      disabled: !hardwareAvailable,
+      supports_half: !!item.supports_half,
+      supports_int8: !!item.supports_int8,
+      hardware_reason: hardwareReason,
+      hardware_key: hardwareKey,
+    };
+  });
+});
+const currentExportFormatOption = computed(() => {
+  return exportFormatOptions.value.find((item) => item.value === exportConfig.format) || null;
+});
 const hardwareSupportsEngine = computed(() => Boolean(runtimeExportFormats.value?.engine?.available));
 const engineUnavailableReason = computed(() => String(runtimeExportFormats.value?.engine?.reason || '').trim());
-const exportFormatOptions = computed(() => {
-  return [
-    { value: 'onnx', label: 'ONNX', disabled: false },
-    { value: 'openvino', label: 'OpenVINO', disabled: false },
-    {
-      value: 'engine',
-      label: hardwareSupportsEngine.value ? 'TensorRT' : 'TensorRT（需要NVIDIA支持）',
-      disabled: !hardwareSupportsEngine.value,
-    },
-  ];
-});
-const exportOptionSupport = computed(() => EXPORT_FORMAT_OPTION_SUPPORT[exportConfig.format] || { half: true, int8: false });
+const exportOptionSupport = computed(() => ({
+  half: !!currentExportFormatOption.value?.supports_half,
+  int8: !!currentExportFormatOption.value?.supports_int8,
+}));
 const halfDisabledByMutualExclusion = computed(() => Boolean(exportConfig.int8));
 const int8DisabledByMutualExclusion = computed(() => Boolean(exportConfig.half));
 const engineExportHint = computed(() => (
   hardwareSupportsEngine.value
-    ? 'TensorRT 导出会先生成 ONNX 中间模型，并依赖 TensorRT 运行环境。'
-    : `当前主机环境不支持 TensorRT 导出${engineUnavailableReason.value ? `，${engineUnavailableReason.value}` : ''}。`
+    ? exportProfile.value.engine_hint_supported
+    : `${exportProfile.value.engine_hint_unsupported}${engineUnavailableReason.value ? `，${engineUnavailableReason.value}` : ''}。`
 ));
 const exportHistory = computed(() => {
   const exports = Array.isArray(currentExports.value) ? [...currentExports.value] : [];
@@ -329,10 +345,12 @@ const displayExportRecords = computed(() => {
   ];
 });
 const isExportRunning = computed(() => isTaskActive(currentExportTask.value));
-const exportActionDisabled = computed(() => starting.value || isExportRunning.value || !props.trainingTask);
+const exportIdleActionLabel = computed(() => (
+  exportHistory.value.length ? '重新导出' : '开始导出'
+));
 const exportActionLabel = computed(() => {
-  if (starting.value || isExportRunning.value) return '导出中...';
-  return exportHistory.value.length ? '重新导出' : '开始导出';
+  if (isActionPending(EXPORT_ACTION_KEY) || isExportRunning.value) return '导出中...';
+  return exportIdleActionLabel.value;
 });
 
 const stopPolling = () => {
@@ -408,8 +426,11 @@ const loadExportTask = async ({ forceRefreshWorkflow = false } = {}) => {
 };
 
 const getExportValidationError = () => {
-  if (exportConfig.format === 'engine' && !hardwareSupportsEngine.value) {
-    return `当前主机环境不支持 TensorRT 导出${engineUnavailableReason.value ? `，${engineUnavailableReason.value}` : ''}。`;
+  if (!currentExportFormatOption.value) {
+    return '当前任务类型暂未接入该导出格式。';
+  }
+  if (currentExportFormatOption.value.disabled) {
+    return `${exportProfile.value.engine_hint_unsupported}${currentExportFormatOption.value.hardware_reason ? `，${currentExportFormatOption.value.hardware_reason}` : ''}。`;
   }
   if (exportConfig.half && !exportOptionSupport.value.half) {
     return '当前导出格式不支持 FP16。';
@@ -419,6 +440,12 @@ const getExportValidationError = () => {
   }
   return '';
 };
+const exportStartGuard = computed(() => resolveExportStartGuard({
+  trainingTaskId: props.trainingTask?.id,
+  isRunning: isExportRunning.value,
+  validationError: getExportValidationError(),
+}));
+const exportActionDisabled = computed(() => !exportStartGuard.value.enabled);
 
 const pollExportTask = async (taskId) => {
   if (!taskId) return;
@@ -441,14 +468,8 @@ const pollExportTask = async (taskId) => {
 };
 
 const startExport = async () => {
-  if (!props.trainingTask?.id || starting.value) return;
-  const validationError = getExportValidationError();
-  if (validationError) {
-    toast.error(validationError);
-    return;
-  }
-  starting.value = true;
-  try {
+  if (!assertCapabilityGuard(exportStartGuard.value, toast.error)) return;
+  await asyncAction.run(EXPORT_ACTION_KEY, async () => {
     const data = await apiCall(api.trainingExport({
       project_path: props.projectPath,
       task_id: props.trainingTask.id,
@@ -466,18 +487,13 @@ const startExport = async () => {
       await loadExportTask();
       await loadExports();
     }
-  } finally {
-    starting.value = false;
-  }
+  });
 };
 
 const deleteExportRecord = async (exp) => {
   const exportTaskId = String(exp?.export_task_id || '');
-  if (!exportTaskId || deletingExportTaskId.value) return;
-  if (isDeleteDisabled(exp)) {
-    toast.error('导出进行中，无法删除');
-    return;
-  }
+  if (!exportTaskId) return;
+  if (!assertCapabilityGuard(resolveExportDeleteGuard({ isRunning: isDeleteDisabled(exp) }), toast.error)) return;
   const ok = await showConfirm({
     title: '删除导出记录？',
     message: '将永久删除该导出记录及对应导出产物。',
@@ -487,8 +503,7 @@ const deleteExportRecord = async (exp) => {
     danger: true,
   });
   if (!ok) return;
-  deletingExportTaskId.value = exportTaskId;
-  try {
+  await asyncAction.run(deleteExportActionKey(exp), async () => {
     await apiCall(api.deleteTrainingModelExport({
       project_path: props.projectPath,
       export_task_id: exportTaskId,
@@ -501,9 +516,7 @@ const deleteExportRecord = async (exp) => {
       currentExportTask.value = null;
     }
     await loadExportTask({ forceRefreshWorkflow: true });
-  } finally {
-    deletingExportTaskId.value = '';
-  }
+  });
 };
 
 const exportFormatLabel = (exp) => {
@@ -556,10 +569,17 @@ watch(() => exportConfig.format, () => {
   if (!exportOptionSupport.value.int8) exportConfig.int8 = false;
 }, { immediate: true });
 
+watch(exportProfile, (profile) => {
+  const selected = exportFormatOptions.value.find((item) => item.value === exportConfig.format);
+  if (!selected) {
+    exportConfig.format = profile?.default_format || 'onnx';
+  }
+}, { immediate: true });
+
 watch(exportFormatOptions, (options) => {
   const selected = options.find((item) => item.value === exportConfig.format);
   if (selected?.disabled) {
-    exportConfig.format = 'onnx';
+    exportConfig.format = exportProfile.value.default_format || 'onnx';
   }
 }, { immediate: true });
 

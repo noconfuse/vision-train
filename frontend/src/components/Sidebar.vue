@@ -71,10 +71,15 @@
                 <AppIcon name="rename" class="h-3.5 w-3.5" />
                 <span>重命名/编辑</span>
               </button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 inline-flex items-center gap-2" @click.stop="askDelete(p)">
+              <AsyncButton
+                class="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 inline-flex items-center gap-2"
+                :pending="isActionPending(deleteProjectActionKey(p))"
+                loading-text="删除中..."
+                @click.stop="askDelete(p)"
+              >
                 <AppIcon name="delete" class="h-3.5 w-3.5" />
                 <span>删除</span>
-              </button>
+              </AsyncButton>
             </div>
           </div>
         </div>
@@ -96,14 +101,16 @@
           <AppIcon name="tasks" class="h-4 w-4" />
           <span>任务中心</span>
         </button>
-        <button
+        <AsyncButton
           type="button"
           class="vt-btn-ghost vt-btn-size-md mt-1 flex w-full justify-start px-2 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+          :pending="isActionPending(LOGOUT_ACTION_KEY)"
+          loading-text="退出中..."
           @click="askLogout"
         >
           <AppIcon name="logout" class="h-4 w-4" />
           <span>退出登录</span>
-        </button>
+        </AsyncButton>
       </div>
 
       <button
@@ -139,28 +146,6 @@
       @submit="handleUpdate"
     />
 
-    <!-- 删除确认 -->
-    <ConfirmDialog
-      v-if="confirmDeleteProject"
-      :title="`删除项目「${confirmDeleteProject.name}」？`"
-      :description="`将永久删除目录 projects/${confirmDeleteProject.name}/ 及其全部数据（数据集、训练产物、模型）。该操作不可恢复。`"
-      :loading="deleting"
-      confirmText="确认删除"
-      :danger="true"
-      @confirm="handleDelete"
-      @cancel="confirmDeleteProject = null"
-    />
-
-    <ConfirmDialog
-      v-if="confirmLogout"
-      title="退出登录？"
-      description="退出后需要重新登录才能继续访问项目和任务。"
-      :loading="loggingOut"
-      confirmText="退出登录"
-      :danger="true"
-      @confirm="handleLogout"
-      @cancel="confirmLogout = false"
-    />
   </div>
 </template>
 
@@ -169,20 +154,22 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMainStore } from '../stores/main';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { getStoredUser, clearAuth } from '../api';
 import { authApi } from '../api/auth';
 import ProjectEditModal from './ProjectEditModal.vue';
-import ConfirmDialog from './ConfirmDialog.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 
 const store = useMainStore();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
-const loggingOut = ref(false);
+const { confirm: showConfirm } = useConfirm();
+const asyncAction = useAsyncAction();
 const showUserPanel = ref(false);
-const confirmLogout = ref(false);
 const currentUser = computed(() => getStoredUser());
 const currentUsername = computed(() => {
   const user = currentUser.value;
@@ -192,11 +179,12 @@ const currentUsername = computed(() => {
 // 弹窗状态
 const modalMode = ref(null); // 'create' | 'edit' | null
 const editingProject = ref(null);
-const confirmDeleteProject = ref(null);
-const deleting = ref(false);
 
 // 操作菜单状态
 const openMenuId = ref(null);
+const LOGOUT_ACTION_KEY = 'sidebar:logout';
+const deleteProjectActionKey = (project) => `sidebar:delete-project:${project?.name || ''}`;
+const isActionPending = (key) => asyncAction.isPending(key);
 const toggleMenu = (id, ev) => {
   ev.stopPropagation();
   openMenuId.value = openMenuId.value === id ? null : id;
@@ -234,24 +222,30 @@ const goToTasksCenter = () => {
   });
 };
 
-const askLogout = () => {
+const askLogout = async () => {
   showUserPanel.value = false;
-  confirmLogout.value = true;
+  if (isActionPending(LOGOUT_ACTION_KEY)) return;
+  const ok = await showConfirm({
+    title: '退出登录？',
+    message: '退出后需要重新登录才能继续访问项目和任务。',
+    confirmText: '退出登录',
+    danger: true,
+  });
+  if (!ok) return;
+  await handleLogout();
 };
 
 const handleLogout = async () => {
-  if (loggingOut.value) return;
-  confirmLogout.value = false;
-  loggingOut.value = true;
-  try {
-    await authApi.logout();
-  } catch (_) {
-    // 本地退出优先，服务端会话失败不阻塞离开
-  } finally {
-    clearAuth();
-    loggingOut.value = false;
-    router.replace({ name: 'login' });
-  }
+  await asyncAction.run(LOGOUT_ACTION_KEY, async () => {
+    try {
+      await authApi.logout();
+    } catch (_) {
+      // 本地退出优先，服务端会话失败不阻塞离开
+    } finally {
+      clearAuth();
+      router.replace({ name: 'login' });
+    }
+  });
 };
 
 // 新建
@@ -283,23 +277,28 @@ const handleUpdate = async ({ name, new_name, description, onDone }) => {
 };
 
 // 删除
-const askDelete = (p) => {
+const askDelete = async (p) => {
   openMenuId.value = null;
-  confirmDeleteProject.value = p;
+  if (!p || isActionPending(deleteProjectActionKey(p))) return;
+  const ok = await showConfirm({
+    title: `删除项目「${p.name}」？`,
+    message: `将永久删除目录 projects/${p.name}/ 及其全部数据（数据集、训练产物、模型）。该操作不可恢复。`,
+    confirmText: '确认删除',
+    danger: true,
+  });
+  if (!ok) return;
+  await handleDelete(p);
 };
-const handleDelete = async () => {
-  const p = confirmDeleteProject.value;
-  if (!p || deleting.value) return;
-  deleting.value = true;
-  try {
-    await store.deleteProject(p.name);
-    toast.success(`项目「${p.name}」已删除`);
-    confirmDeleteProject.value = null;
-  } catch (e) {
-    toast.error(`删除失败: ${e.message}`);
-  } finally {
-    deleting.value = false;
-  }
+const handleDelete = async (p) => {
+  if (!p) return;
+  await asyncAction.run(deleteProjectActionKey(p), async () => {
+    try {
+      await store.deleteProject(p.name);
+      toast.success(`项目「${p.name}」已删除`);
+    } catch (e) {
+      toast.error(`删除失败: ${e.message}`);
+    }
+  });
 };
 
 const closeModal = () => {

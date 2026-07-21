@@ -13,7 +13,7 @@ from contexts.dataset.infrastructure.dataset_layout import (
 )
 from contexts.dataset.infrastructure.dataset_schema import find_dataset_config, load_dataset_yaml, resolve_dataset_names_dict, save_dataset_config
 from shared.utils.fs_utils import move_dir_contents, remove_dir_if_empty, remove_file_silent
-from shared.utils.media_constants import DATASET_SPLITS
+from constants.media import DATASET_SPLITS
 from shared.utils.path_utils import is_within_path, normalize_path_ref
 from shared.utils.yaml_utils import load_yaml_file
 

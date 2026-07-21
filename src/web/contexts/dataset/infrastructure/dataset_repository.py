@@ -2,12 +2,8 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_layout import (
-    get_dataset_images_dir,
-    get_dataset_labels_dir,
-    get_dataset_root_images_dir,
-    get_dataset_root_labels_dir,
-)
+from contexts.dataset.infrastructure.dataset_scan_strategy import resolve_dataset_scan_strategy
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
@@ -15,11 +11,11 @@ from contexts.dataset.infrastructure.dataset_schema import (
     resolve_dataset_names_dict,
     resolve_dataset_tags,
 )
+from contexts.training.domain.capability_snapshot import build_training_capabilities_snapshot
 from contexts.project.infrastructure.project_paths import (
     get_project_dataset_dir,
     get_project_training_dir,
 )
-from shared.utils.media_constants import DATASET_SPLITS, IMAGE_FILE_EXTENSIONS
 from shared.utils.path_utils import is_within_path, project_name_from_path, resolve_project_path, resolve_storage_path, storage_path_ref
 
 
@@ -56,9 +52,13 @@ def resolve_project_dataset_root(project_path, dataset_name=None, dataset_path=N
 
 def analyze_dataset(dataset_path):
     """统计数据集图片、标签和类别分布。"""
+    vision_task_type = load_dataset_vision_task_type(dataset_path)
+    capabilities = build_training_capabilities_snapshot(vision_task_type)
     info = {
         "image_count": 0,
         "label_count": 0,
+        "annotated_count": 0,
+        "unannotated_count": 0,
         "total_objects": 0,
         "classes": [],
         "class_stats": [],
@@ -68,63 +68,26 @@ def analyze_dataset(dataset_path):
         "has_test": False,
         "annotation_rate": 0.0,
         "tags": [],
+        "vision_task_type": vision_task_type,
+        "capabilities": capabilities,
     }
     class_counts = {}
     data_config = load_dataset_yaml(dataset_path, default={})
     class_names = resolve_dataset_names_dict(data_config.get("names"))
+    class_name_to_id = {str(name): int(class_id) for class_id, name in class_names.items()}
     info["tags"] = resolve_dataset_tags(data_config)
     info["names"] = load_dataset_names(dataset_path)
-
-    def scan_split(img_dir, lbl_dir):
-        """扫描单个 split 的图片与标签统计。"""
-        if not os.path.exists(img_dir):
-            return False
-        images = []
-        for root, dirs, files in os.walk(img_dir):
-            dirs.sort()
-            files.sort()
-            for name in files:
-                if not name.lower().endswith(IMAGE_FILE_EXTENSIONS):
-                    continue
-                images.append(os.path.join(root, name))
-        if not images:
-            return False
-        info["image_count"] += len(images)
-        if not os.path.exists(lbl_dir):
-            return True
-        for image_path in images:
-            rel_path = os.path.relpath(image_path, img_dir)
-            label_rel_path = os.path.splitext(rel_path)[0] + ".txt"
-            label_path = os.path.join(lbl_dir, label_rel_path)
-            if not os.path.exists(label_path):
-                continue
-            info["label_count"] += 1
-            try:
-                with open(label_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if not parts:
-                            continue
-                        cls_id = int(float(parts[0]))
-                        class_counts[cls_id] = class_counts.get(cls_id, 0) + 1
-                        info["total_objects"] += 1
-            except Exception:
-                pass
-        return True
-
-    has_split = False
-    for split in DATASET_SPLITS:
-        img_dir = get_dataset_images_dir(dataset_path, split)
-        lbl_dir = get_dataset_labels_dir(dataset_path, split)
-        if scan_split(img_dir, lbl_dir):
-            info[f"has_{split}"] = True
-            has_split = True
-
-    if not has_split:
-        scan_split(get_dataset_root_images_dir(dataset_path), get_dataset_root_labels_dir(dataset_path))
+    resolve_dataset_scan_strategy(vision_task_type).scan_dataset(
+        dataset_path,
+        info,
+        class_name_to_id,
+        class_counts,
+    )
 
     if info["image_count"] > 0:
         info["annotation_rate"] = info["label_count"] / info["image_count"]
+    info["annotated_count"] = int(info["label_count"] or 0)
+    info["unannotated_count"] = max(0, int(info["image_count"] or 0) - int(info["annotated_count"] or 0))
 
     for cls_id in sorted(class_counts.keys()):
         count = class_counts[cls_id]
@@ -146,11 +109,15 @@ def build_dataset_summary(dataset_root, analysis, *, name=None):
     return {
         "name": name or project_name_from_path(dataset_root),
         "type": "training",
+        "vision_task_type": analysis.get("vision_task_type"),
         "path": storage_path_ref(dataset_root),
         "image_count": analysis["image_count"],
         "label_count": analysis["label_count"],
+        "annotated_count": analysis["annotated_count"],
+        "unannotated_count": analysis["unannotated_count"],
         "annotation_rate": analysis["annotation_rate"],
         "classes": analysis["classes"],
+        "capabilities": analysis["capabilities"],
         "has_train": analysis["has_train"],
         "has_val": analysis["has_val"],
         "has_test": analysis["has_test"],

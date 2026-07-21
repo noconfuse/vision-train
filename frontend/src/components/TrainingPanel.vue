@@ -29,10 +29,13 @@
               v-for="opt in allOptions"
               :key="`opt-${opt.name}`"
               class="vt-choice-card relative p-2.5"
-              :class="opt.is_downloaded
-                ? (selectedModel === opt.name ? 'vt-choice-card--selected' : 'vt-choice-card--interactive')
-                : (selectedModel === opt.name ? 'vt-choice-card--selected border-dashed' : 'vt-choice-card--interactive border-dashed border-gray-300')"
-              @click="selectedModel = opt.name"
+              :class="[
+                opt.is_downloaded
+                  ? (selectedModel === opt.name ? 'vt-choice-card--selected' : 'vt-choice-card--interactive')
+                  : (selectedModel === opt.name ? 'vt-choice-card--selected border-dashed' : 'vt-choice-card--interactive border-dashed border-gray-300'),
+                isModelSelectionLocked ? 'pointer-events-none opacity-60' : '',
+              ]"
+              @click="selectModel(opt.name)"
             >
               <span
                 v-if="opt.is_downloaded"
@@ -40,19 +43,32 @@
               >
                 <span class="vt-status-dot vt-status-dot--info h-1.5 w-1.5"></span>{{ opt.family }}
               </span>
-              <UiTooltip
+              <button
                 v-else
-                side="top"
-                align="end"
-                content-class="max-w-[20rem] break-words text-left"
+                type="button"
+                class="absolute top-1.5 right-1.5 inline-flex h-9 w-9 items-center justify-center transition-colors"
+                :class="[
+                  isPretrainedDownloading(opt)
+                    ? 'cursor-wait'
+                    : (isPretrainedFailed(opt)
+                      ? 'text-rose-600 hover:text-rose-700'
+                      : 'text-slate-500 hover:text-slate-700'),
+                ]"
+                :disabled="!canStartPretrainedDownload(opt)"
+                @click.stop="startPretrainedDownload(opt)"
               >
-                <template #trigger>
-                  <span class="absolute top-1.5 right-1.5 inline-flex items-center gap-1 border border-gray-300 bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
-                    <span>未下载</span>
+                <span
+                  v-if="isPretrainedDownloading(opt)"
+                  class="relative inline-flex h-8 w-8 items-center justify-center rounded-full"
+                  :style="getPretrainedProgressRingStyle(opt)"
+                >
+                  <span class="absolute inset-[3px] rounded-full bg-white"></span>
+                  <span class="relative z-10 text-[9px] font-semibold leading-none text-sky-700">
+                    {{ getPretrainedProgressLabel(opt) }}
                   </span>
-                </template>
-                首次训练时会自动从官方下载
-              </UiTooltip>
+                </span>
+                <AppIcon v-else name="download" class="h-4 w-4" />
+              </button>
 
               <UiTooltip
                 side="bottom"
@@ -60,7 +76,7 @@
                 content-class="max-w-[24rem] break-all text-left"
               >
                 <template #trigger>
-                  <div class="font-semibold text-sm truncate pr-16">{{ opt.name }}</div>
+                  <div class="font-semibold text-sm truncate pr-12">{{ opt.name }}</div>
                 </template>
                 {{ opt.name }}
               </UiTooltip>
@@ -71,14 +87,14 @@
               v-for="model in historyModels"
               :key="`h-${model.path}`"
               class="vt-choice-card vt-choice-card--interactive relative p-2.5"
-              :class="selectedModel === model.name ? 'vt-choice-card--selected' : ''"
-              @click="selectedModel = model.name"
+              :class="[selectedModel === model.name ? 'vt-choice-card--selected' : '', isModelSelectionLocked ? 'pointer-events-none opacity-60' : '']"
+              @click="selectModel(model.name)"
             >
               <span class="vt-tag vt-tag--sm absolute top-1.5 right-1.5 gap-1">
                 <span class="vt-status-dot vt-status-dot--warn h-1.5 w-1.5"></span>历史
               </span>
-              <div v-if="model.metrics && model.metrics.map50" class="text-[10px] font-mono text-emerald-700 mb-1">
-                mAP50: {{ (model.metrics.map50 * 100).toFixed(1) }}%
+              <div v-if="getHistoryMetricText(model)" class="text-[10px] font-mono text-emerald-700 mb-1">
+                {{ getHistoryMetricText(model) }}
               </div>
               <UiTooltip
                 side="bottom"
@@ -122,24 +138,11 @@
             </div>
           </div>
 
-          <div class="vt-surface-info mb-3 p-3 transition-colors">
-            <label class="flex items-center space-x-3 cursor-pointer">
-              <input type="checkbox" v-model="config.imbalance_optimization" @change="onImbalanceChange" class="vt-checkbox h-5 w-5">
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-semibold text-sm text-slate-800">针对不平衡数据集优化 (Class Imbalance Optimization)</span>
-                  <span class="vt-badge-recommend">Recommended</span>
-                </div>
-                <p class="text-xs text-gray-600 mt-0.5">自动启用 Cosine LR，并调整 Mosaic, Mixup, Flip 等增强参数，提升小样本类别检测效果。</p>
-              </div>
-            </label>
-          </div>
-
-          <div class="border border-gray-200 overflow-hidden">
+          <div v-if="advancedFields.length" class="border border-gray-200 overflow-hidden">
             <button @click="showAdvanced = !showAdvanced" class="w-full flex justify-between items-center p-2.5 hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
               <span class="flex items-center gap-2">
                 <AppIcon name="settings" class="h-4 w-4 text-gray-500" />
-                高级增强参数 (Advanced Augmentation)
+                高级增强参数
               </span>
               <AppIcon name="chevronDown" class="h-4 w-4 text-gray-400 transition-transform duration-200" :class="showAdvanced ? 'rotate-180' : ''" />
             </button>
@@ -171,8 +174,8 @@
 
       <aside class="space-y-4 xl:sticky xl:top-3">
         <div class="border border-gray-200 p-4 bg-slate-50/60">
-          <div class="vt-step-section-title">环境与校准</div>
-          <div class="text-xs text-gray-500 mb-4">训练环境会自动更新。批次校准只是辅助工具，不属于工作流主步骤。</div>
+          <div class="vt-step-section-title">{{ trainingProfile.supports_batch_calibration ? '环境与校准' : '训练环境' }}</div>
+          <div class="text-xs text-gray-500 mb-4">{{ trainingProfile.environment_hint }}</div>
 
           <div class="mb-4">
             <div class="text-xs font-semibold text-slate-700 mb-3">当前训练环境</div>
@@ -217,19 +220,21 @@
             <div v-else class="text-sm text-gray-400">正在加载训练运行环境...</div>
           </div>
 
-          <div class="border-t border-gray-200 pt-4">
+          <div v-if="trainingProfile.supports_batch_calibration" class="border-t border-gray-200 pt-4">
             <div class="flex items-center justify-between gap-3 mb-3">
               <div>
                 <div class="text-xs font-semibold text-slate-700">批次校准</div>
                 <div class="text-[11px] text-gray-500 mt-1">用当前模型、图像尺寸和设备做一次短时试跑，确认可启动批次范围。</div>
               </div>
-              <button
+              <AsyncButton
                 class="vt-btn-secondary text-xs"
-                :disabled="!canCalibrate"
+                :disabled="!canCalibrate || selectedPresetNeedsPreparation || isTaskActive(batchCalibration)"
+                :pending="isActionPending(CALIBRATION_ACTION_KEY) || isTaskActive(batchCalibration)"
+                :loading-text="calibrationButtonLabel"
                 @click="startBatchCalibration(shouldForceCalibration)"
               >
-                {{ calibrationButtonLabel }}
-              </button>
+                {{ calibrationIdleButtonLabel }}
+              </AsyncButton>
             </div>
             <div class="space-y-2 text-sm">
               <div class="grid grid-cols-2 gap-3">
@@ -294,7 +299,7 @@
                 </div>
               </div>
               <div v-if="!batchCalibration" class="text-sm text-gray-500">
-                选择模型后可开始校准。
+                {{ trainingProfile.empty_calibration_hint }}
               </div>
               <div v-else-if="batchCalibrationResult?.max_batch" class="text-xs text-slate-600">
                 该结果表示当前环境下的实测可启动上限。
@@ -330,15 +335,16 @@
         <AppIcon name="detail" class="h-4 w-4" />
         去任务详情
       </button>
-      <button
+      <AsyncButton
         @click="startTraining"
         class="vt-btn-solid-primary vt-btn-size-lg"
-        :disabled="!isValid || trainingSubmitting"
+        :disabled="!isValid || selectedPresetNeedsPreparation"
+        :pending="isActionPending(TRAINING_ACTION_KEY)"
+        :loading-text="trainingButtonLabel"
       >
-        <span v-if="trainingSubmitting" class="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1 align-[-2px]"></span>
-        <AppIcon v-else name="train" class="h-4 w-4" />
-        {{ trainingSubmitting ? '启动中...' : '开始训练' }}
-      </button>
+        <AppIcon name="train" class="h-4 w-4" />
+        {{ trainingIdleButtonLabel }}
+      </AsyncButton>
     </div>
   </div>
 </template>
@@ -349,10 +355,14 @@ import { useMainStore } from '../stores/main';
 import { useTrainingStore } from '../stores/training';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
 import { useApiCall } from '../composables/useApiCall';
+import { useAsyncAction } from '../composables/useAsyncAction';
+import { useDatasetCapabilities } from '../composables/useDatasetCapabilities';
 import AppIcon from './ui/AppIcon.vue';
+import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted } from '../taskStatus';
 import { formatBytes } from '../utils';
+import { resolveBatchCalibrationGuard, resolveTrainingModelGuard, resolveTrainingStartGuard } from '../trainingActionGuards';
 
 const props = defineProps({
   workflowId: { type: String, default: '' },
@@ -364,6 +374,7 @@ const store = useMainStore();
 const trainingStore = useTrainingStore();
 const workflowStore = useTrainingWorkflowStore();
 const apiCall = useApiCall();
+const asyncAction = useAsyncAction();
 
 const currentTask = computed(() => trainingStore.currentTask);
 const isRunning = computed(() => isTaskActive(currentTask.value));
@@ -372,17 +383,34 @@ const batchCalibration = computed(() => trainingStore.batchCalibration);
 const batchCalibrationResult = computed(() => batchCalibration.value?.artifacts?.calibration_result || null);
 const calibrationPayload = computed(() => batchCalibration.value?.payload || {});
 const selectedModelEntry = computed(() => allModels.value.find((item) => item.name === selectedModel.value) || null);
+const selectedPresetOption = computed(() => presetOptions.value.find((item) => item.name === selectedModel.value) || null);
+const {
+  datasetCapabilities,
+  trainingMode,
+} = useDatasetCapabilities(computed(() => store.selectedDataset || null));
+const trainingProfile = computed(() => datasetCapabilities.value.training_profile);
+const trainingGuard = computed(() => resolveTrainingStartGuard({
+  dataset: store.selectedDataset,
+  model: selectedModelEntry.value || selectedPresetOption.value,
+  requiresDownload: selectedPresetNeedsPreparation.value,
+}));
 
 const selectedModel = ref('');
 const showAdvanced = ref(false);
-const trainingSubmitting = ref(false);
 let calibrationTimer = null;
+const CALIBRATION_ACTION_KEY = 'training-panel:start-batch-calibration';
+const TRAINING_ACTION_KEY = 'training-panel:start-training';
+const isActionPending = (key) => asyncAction.isPending(key);
+const isModelSelectionLocked = computed(() => (
+  isActionPending(TRAINING_ACTION_KEY) || isActionPending(CALIBRATION_ACTION_KEY)
+));
 
 const presetOptions = computed(() => store.pretrainedOptions || []);
 const downloadedOptions = computed(() => presetOptions.value.filter((o) => o.is_downloaded));
 const allOptions = computed(() => presetOptions.value);
 const historyModels = computed(() => (
   store.pretrainedModels
+    .filter((m) => isModelOperationSupportedForTraining(m))
     .filter((m) => m.type === 'trained')
     .sort((a, b) => {
       if (a.created_at && b.created_at) {
@@ -392,26 +420,19 @@ const historyModels = computed(() => (
     })
 ));
 const allModels = computed(() => [
-  ...downloadedOptions.value.map((o) => ({ name: o.name, type: 'pretrained', path: o.local_path, size: o.size_bytes })),
+  ...downloadedOptions.value
+    .filter((o) => isModelOperationSupportedForTraining(o))
+    .map((o) => ({ name: o.name, type: 'pretrained', path: o.local_path, size: o.size_bytes, capabilities: o.capabilities })),
   ...historyModels.value,
 ]);
 
-const TRAINING_DEFAULTS = {
+const BASE_TRAINING_DEFAULTS = {
   epochs: 100,
   batch: 16,
   imgsz: 640,
   freeze: 0,
   lr0: 0.01,
-};
-
-const config = reactive({
-  epochs: TRAINING_DEFAULTS.epochs,
-  batch: TRAINING_DEFAULTS.batch,
-  imgsz: TRAINING_DEFAULTS.imgsz,
-  freeze: TRAINING_DEFAULTS.freeze,
-  lr0: TRAINING_DEFAULTS.lr0,
   rect: false,
-  imbalance_optimization: false,
   mosaic: '',
   mixup: '',
   copy_paste: '',
@@ -427,54 +448,76 @@ const config = reactive({
   hsv_v: '',
   close_mosaic: '',
   cos_lr: false,
+};
+
+const trainingConfigDefaults = computed(() => ({
+  ...BASE_TRAINING_DEFAULTS,
+  ...(trainingProfile.value.default_config || {}),
+}));
+
+const config = reactive({
+  ...BASE_TRAINING_DEFAULTS,
 });
 
-const basicFields = [
-  { key: 'epochs', label: '轮数(Epochs)', placeholder: String(TRAINING_DEFAULTS.epochs) },
-  { key: 'batch', label: '批次(Batch)', placeholder: String(TRAINING_DEFAULTS.batch) },
-  { key: 'imgsz', label: '图像尺寸', placeholder: String(TRAINING_DEFAULTS.imgsz) },
-  { key: 'freeze', label: '冻结层数', placeholder: String(TRAINING_DEFAULTS.freeze) },
-  { key: 'lr0', label: '初始学习率', placeholder: String(TRAINING_DEFAULTS.lr0) },
-  { key: 'rect', label: '矩形训练', type: 'checkbox' },
-];
+const basicFields = computed(() => trainingProfile.value.basic_fields || []);
+const advancedFields = computed(() => trainingProfile.value.advanced_fields || []);
 
-const advancedFields = [
-  { key: 'mosaic', label: 'Mosaic (马赛克)', placeholder: '1.0' },
-  { key: 'mixup', label: 'Mixup (混合)', placeholder: '0.15' },
-  { key: 'copy_paste', label: 'CopyPaste', placeholder: '0.0' },
-  { key: 'degrees', label: '旋转角度 (°)', placeholder: '0.0' },
-  { key: 'translate', label: '平移 (Translate)', placeholder: '0.1' },
-  { key: 'scale', label: '缩放 (Scale)', placeholder: '0.5' },
-  { key: 'shear', label: '剪切 (Shear)', placeholder: '0.0' },
-  { key: 'flipud', label: '上下翻转', placeholder: '0.0' },
-  { key: 'fliplr', label: '左右翻转', placeholder: '0.5' },
-  { key: 'hsv_h', label: 'HSV-Hue', placeholder: '0.015' },
-  { key: 'hsv_s', label: 'HSV-Saturation', placeholder: '0.7' },
-  { key: 'hsv_v', label: 'HSV-Value', placeholder: '0.4' },
-  { key: 'close_mosaic', label: '关闭 Mosaic (最后N轮)', placeholder: '10' },
-  { key: 'cos_lr', label: 'Cosine LR', type: 'checkbox' },
-];
-
-const isValid = computed(() => Boolean(store.selectedDataset && selectedModel.value));
-const parsedImgsz = computed(() => parseInt(config.imgsz, 10) || TRAINING_DEFAULTS.imgsz);
+const isValid = computed(() => trainingGuard.value.enabled);
+const parsedImgsz = computed(() => parseInt(config.imgsz, 10) || trainingConfigDefaults.value.imgsz);
 const displayedCalibrationModel = computed(() => calibrationPayload.value.model_name || selectedModel.value || '-');
 const displayedCalibrationImgsz = computed(() => calibrationPayload.value.imgsz || parsedImgsz.value || '-');
 const batchCalibrationMatchesSelection = computed(() => (
   Boolean(selectedModel.value) &&
   calibrationPayload.value.model_name === selectedModel.value &&
-  Number(calibrationPayload.value.imgsz || TRAINING_DEFAULTS.imgsz) === Number(parsedImgsz.value || TRAINING_DEFAULTS.imgsz)
+  Number(calibrationPayload.value.imgsz || trainingConfigDefaults.value.imgsz) === Number(parsedImgsz.value || trainingConfigDefaults.value.imgsz)
 ));
-const canCalibrate = computed(() => Boolean(
-  store.currentProject?.path &&
-  store.selectedDataset?.name &&
-  selectedModel.value
+const calibrationGuard = computed(() => resolveBatchCalibrationGuard({
+  dataset: store.selectedDataset,
+  model: selectedModelEntry.value || selectedPresetOption.value,
+  supportsBatchCalibration: trainingProfile.value.supports_batch_calibration,
+  requiresDownload: selectedPresetNeedsPreparation.value,
+  isRunning: isTaskActive(batchCalibration.value),
+  hasContext: Boolean(
+    store.currentProject?.path
+    && store.selectedDataset?.name
+    && selectedModel.value
+  ),
+}));
+const canCalibrate = computed(() => calibrationGuard.value.enabled);
+const selectedPresetNeedsPreparation = computed(() => Boolean(
+  selectedPresetOption.value && !selectedPresetOption.value.is_downloaded
 ));
 const shouldForceCalibration = computed(() => isTaskCompleted(batchCalibration.value));
-const calibrationButtonLabel = computed(() => {
-  if (!canCalibrate.value) return '开始校准';
-  if (isTaskActive(batchCalibration.value)) return '校准中...';
+const calibrationIdleButtonLabel = computed(() => {
+  if (selectedPresetNeedsPreparation.value) return '请先下载';
   return shouldForceCalibration.value ? '重新校准' : '开始校准';
 });
+const calibrationButtonLabel = computed(() => {
+  if (isActionPending(CALIBRATION_ACTION_KEY)) {
+    return '校准中...';
+  }
+  if (isTaskActive(batchCalibration.value)) return '校准中...';
+  return calibrationIdleButtonLabel.value;
+});
+const trainingIdleButtonLabel = computed(() => (
+  selectedPresetNeedsPreparation.value ? '请先下载' : '开始训练'
+));
+const trainingButtonLabel = computed(() => (
+  '启动中...'
+));
+
+const selectModel = (name) => {
+  if (isModelSelectionLocked.value) return;
+  selectedModel.value = name;
+};
+
+const isPretrainedDownloading = (opt) => Boolean(opt && !opt.is_downloaded && opt.download_state === 'downloading');
+const isPretrainedFailed = (opt) => Boolean(opt && !opt.is_downloaded && opt.download_state === 'failed');
+const canStartPretrainedDownload = (opt) => Boolean(
+  opt
+  && !opt.is_downloaded
+  && !isPretrainedDownloading(opt)
+);
 
 const getPretrainedMeta = (opt) => {
   const parts = [];
@@ -488,40 +531,91 @@ const getPretrainedMeta = (opt) => {
   return parts.join(' · ');
 };
 
-const onImbalanceChange = () => {
-  if (config.imbalance_optimization) {
-    config.cos_lr = true;
-    if (!config.mosaic) config.mosaic = 1.0;
-    if (!config.mixup) config.mixup = 0.15;
-    if (!config.fliplr) config.fliplr = 0.5;
-    if (!config.degrees) config.degrees = 10.0;
-  }
+const getPretrainedProgressValue = (opt) => {
+  const progress = Number(opt?.download_progress || 0);
+  if (!Number.isFinite(progress)) return 0;
+  return Math.max(0, Math.min(100, Math.round(progress)));
 };
 
-const buildTrainingConfig = () => ({
-  epochs: parseInt(config.epochs, 10) || null,
-  batch: parseInt(config.batch, 10) || null,
-  imgsz: parseInt(config.imgsz, 10) || null,
-  freeze: config.freeze,
-  lr0: parseFloat(config.lr0) || null,
-  rect: config.rect || false,
-  imbalance_optimization: config.imbalance_optimization || false,
-  mosaic: parseFloat(config.mosaic) || null,
-  mixup: parseFloat(config.mixup) || null,
-  copy_paste: parseFloat(config.copy_paste) || null,
-  degrees: parseFloat(config.degrees) || null,
-  translate: parseFloat(config.translate) || null,
-  scale: parseFloat(config.scale) || null,
-  shear: parseFloat(config.shear) || null,
-  perspective: parseFloat(config.perspective) || null,
-  flipud: parseFloat(config.flipud) || null,
-  fliplr: parseFloat(config.fliplr) || null,
-  hsv_h: parseFloat(config.hsv_h) || null,
-  hsv_s: parseFloat(config.hsv_s) || null,
-  hsv_v: parseFloat(config.hsv_v) || null,
-  close_mosaic: parseInt(config.close_mosaic, 10) || null,
-  cos_lr: config.cos_lr || false,
-});
+const getPretrainedProgressLabel = (opt) => `${getPretrainedProgressValue(opt)}%`;
+
+const getPretrainedProgressRingStyle = (opt) => {
+  const progress = getPretrainedProgressValue(opt);
+  return {
+    background: `conic-gradient(rgb(14 165 233) ${progress}%, rgb(186 230 253) ${progress}% 100%)`,
+  };
+};
+
+const getHistoryMetricText = (model) => {
+  if (!model?.metrics) return '';
+  const metric = trainingProfile.value.history_metric || {};
+  const value = model.metrics?.[metric.key];
+  if (typeof value === 'number' && metric.label) {
+    if (metric.format === 'percent') {
+      return `${metric.label}: ${(value * 100).toFixed(1)}%`;
+    }
+    return `${metric.label}: ${value}`;
+  }
+  return '';
+};
+
+const FIELD_BUILDERS = {
+  epochs: (value) => parseInt(value, 10) || null,
+  batch: (value) => parseInt(value, 10) || null,
+  imgsz: (value) => parseInt(value, 10) || null,
+  freeze: (value) => value,
+  lr0: (value) => parseFloat(value) || null,
+  rect: (value) => !!value,
+  mosaic: (value) => parseFloat(value) || null,
+  mixup: (value) => parseFloat(value) || null,
+  copy_paste: (value) => parseFloat(value) || null,
+  degrees: (value) => parseFloat(value) || null,
+  translate: (value) => parseFloat(value) || null,
+  scale: (value) => parseFloat(value) || null,
+  shear: (value) => parseFloat(value) || null,
+  perspective: (value) => parseFloat(value) || null,
+  flipud: (value) => parseFloat(value) || null,
+  fliplr: (value) => parseFloat(value) || null,
+  hsv_h: (value) => parseFloat(value) || null,
+  hsv_s: (value) => parseFloat(value) || null,
+  hsv_v: (value) => parseFloat(value) || null,
+  close_mosaic: (value) => parseInt(value, 10) || null,
+  cos_lr: (value) => !!value,
+};
+
+const buildTrainingConfig = () => {
+  const keys = [
+    ...basicFields.value.map((field) => field.key),
+    ...advancedFields.value.map((field) => field.key),
+  ];
+  const uniqueKeys = [...new Set(keys)];
+  const next = {};
+  uniqueKeys.forEach((key) => {
+    const builder = FIELD_BUILDERS[key];
+    if (!builder) return;
+    next[key] = builder(config[key]);
+  });
+  return next;
+};
+
+const startPretrainedDownload = async (opt) => {
+  if (!canStartPretrainedDownload(opt)) return;
+  if (opt?.name) {
+    selectedModel.value = opt.name;
+  }
+  await apiCall(
+    store.preparePretrainedModel(opt.name, store.selectedDataset?.vision_task_type),
+    { errorMsg: '模型下载失败' },
+  );
+};
+
+const syncConfigWithProfile = () => {
+  Object.assign(config, {
+    ...BASE_TRAINING_DEFAULTS,
+    ...trainingConfigDefaults.value,
+  });
+  showAdvanced.value = false;
+};
 
 const clearCalibrationTimer = () => {
   if (calibrationTimer) {
@@ -552,36 +646,42 @@ const refreshBatchCalibration = async () => {
 };
 
 const startBatchCalibration = async (force = false) => {
-  if (!canCalibrate.value || isTaskActive(batchCalibration.value)) return;
-  const selectedHistoryModelPath = selectedModelEntry.value?.type === 'trained' ? selectedModelEntry.value?.path : undefined;
-  const data = await apiCall(trainingStore.startTrainingBatchCalibration({
-    project_path: store.currentProject.path,
-    dataset_name: store.selectedDataset.name,
-    dataset_path: store.selectedDataset.path,
-    model_name: selectedModel.value,
-    model_path: selectedHistoryModelPath,
-    imgsz: parsedImgsz.value,
-    force,
-    workflow_id: props.workflowId || undefined,
-  }), {
-    errorMsg: '启动批次校准失败',
+  if (!canCalibrate.value || selectedPresetNeedsPreparation.value || isTaskActive(batchCalibration.value)) return;
+  await asyncAction.run(CALIBRATION_ACTION_KEY, async () => {
+    const modelName = selectedModel.value;
+    const selectedHistoryModelPath = selectedModelEntry.value?.type === 'trained' ? selectedModelEntry.value?.path : undefined;
+    const data = await apiCall(trainingStore.startTrainingBatchCalibration({
+      project_path: store.currentProject.path,
+      dataset_name: store.selectedDataset.name,
+      dataset_path: store.selectedDataset.path,
+      vision_task_type: store.selectedDataset.vision_task_type,
+      model_name: modelName,
+      model_path: selectedHistoryModelPath,
+      imgsz: parsedImgsz.value,
+      force,
+      workflow_id: props.workflowId || undefined,
+    }), {
+      errorMsg: '启动批次校准失败',
+    });
+    if (data?.workflow_id) emit('workflow-bound', data.workflow_id);
+    if (data?.task_id) {
+      await refreshBatchCalibration();
+    }
   });
-  if (data?.workflow_id) emit('workflow-bound', data.workflow_id);
-  if (data?.task_id) {
-    await refreshBatchCalibration();
-  }
 };
 
 const startTraining = async () => {
-  if (!isValid.value || trainingSubmitting.value) return;
-  trainingSubmitting.value = true;
-  let workflowId = props.workflowId || '';
-  try {
+  if (!isValid.value || selectedPresetNeedsPreparation.value) return;
+  await asyncAction.run(TRAINING_ACTION_KEY, async () => {
+    const modelName = selectedModel.value;
+    const selectedHistoryModelPath = selectedModelEntry.value?.type === 'trained' ? selectedModelEntry.value?.path : undefined;
+    let workflowId = props.workflowId || '';
     if (!workflowId) {
       const workflow = await apiCall(workflowStore.createWorkflow({
         project_path: store.currentProject.path,
         dataset_name: store.selectedDataset.name,
         dataset_path: store.selectedDataset.path,
+        vision_task_type: store.selectedDataset.vision_task_type,
       }), {
         errorMsg: '创建工作流失败',
       });
@@ -594,8 +694,9 @@ const startTraining = async () => {
       project_path: store.currentProject.path,
       dataset_name: store.selectedDataset.name,
       dataset_path: store.selectedDataset.path,
-      model_name: selectedModel.value,
-      model_path: selectedModelEntry.value?.type === 'trained' ? selectedModelEntry.value?.path : undefined,
+      vision_task_type: store.selectedDataset.vision_task_type,
+      model_name: modelName,
+      model_path: selectedHistoryModelPath,
       training_config: buildTrainingConfig(),
       workflow_id: workflowId,
     };
@@ -607,30 +708,34 @@ const startTraining = async () => {
         if (data?.task_id) emit('training-started', data);
       },
     });
-  } finally {
-    trainingSubmitting.value = false;
-  }
+  });
+};
+
+const isModelOperationSupportedForTraining = (model) => {
+  return resolveTrainingModelGuard(store.selectedDataset, model).enabled;
 };
 
 onMounted(() => {
-  if (!store.pretrainedModels.length) {
-    store.fetchModels().catch(() => {});
-  }
-  if (!store.pretrainedOptions.length) {
-    store.fetchPretrainedOptions().catch(() => {});
-  }
+  store.fetchModels(store.selectedDataset?.vision_task_type).catch(() => {});
+  store.fetchPretrainedOptions(store.selectedDataset?.vision_task_type).catch(() => {});
   if (!trainingStore.runtimeProfile) {
     trainingStore.fetchTrainingRuntimeProfile().catch(() => {});
   }
   refreshBatchCalibration().catch(() => {});
 });
 
-watch(() => store.selectedDataset?.path, () => {
-  if (selectedModel.value && !allModels.value.find((m) => m.name === selectedModel.value)) {
+watch([() => store.selectedDataset?.path, () => store.selectedDataset?.vision_task_type], () => {
+  if (selectedModel.value && !allModels.value.find((m) => m.name === selectedModel.value) && !selectedPresetOption.value) {
     selectedModel.value = '';
   }
+  store.fetchModels(store.selectedDataset?.vision_task_type).catch(() => {});
+  store.fetchPretrainedOptions(store.selectedDataset?.vision_task_type).catch(() => {});
   refreshBatchCalibration().catch(() => {});
 });
+
+watch(trainingMode, () => {
+  syncConfigWithProfile();
+}, { immediate: true });
 
 watch([() => store.selectedDataset?.path, allModels], () => {
   if (!selectedModel.value && allModels.value.length > 0) {

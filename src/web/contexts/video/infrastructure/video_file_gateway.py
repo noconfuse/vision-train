@@ -6,7 +6,7 @@ from contexts.project.infrastructure.project_paths import (
     get_project_videos_dir,
 )
 from shared.utils.fs_utils import remove_file_silent
-from shared.utils.media_constants import VIDEO_FILE_EXTENSION_SET
+from constants.media import VIDEO_FILE_EXTENSION_SET
 from shared.utils.path_utils import project_name_from_path, storage_path_ref, validate_filename, validate_leaf_name
 from shared.utils.value_utils import require_present
 

@@ -15,7 +15,9 @@ from contexts.dataset.application.use_cases import (
     delete_dataset_label_use_case,
     download_dataset_info,
     get_dataset_info,
+    has_dataset_import_job,
     list_dataset_images,
+    list_project_datasets,
     merge_dataset_pair,
     reorder_dataset_labels_use_case,
     split_dataset_use_case,
@@ -24,11 +26,11 @@ from contexts.dataset.application.use_cases import (
     validate_dataset,
 )
 from contexts.dataset.infrastructure.dataset_import import run_import_job
-from contexts.dataset.infrastructure.dataset_import_runtime import has_import_job as has_dataset_import_job
-from contexts.dataset.infrastructure.dataset_import_runtime import stream_import_events as stream_dataset_import_events
-from contexts.dataset.infrastructure.dataset_repository import scan_project_datasets
+from contexts.dataset.infrastructure.dataset_import_runtime import stream_import_events
 from shared.infra.zip_download import send_temp_zip
 from shared.utils.path_utils import resolve_and_validate_project, resolve_project_path, resolve_storage_path
+from shared.utils.value_utils import require_allowed_text
+from protocols.vision_task_type import VISION_TASK_TYPE_SET
 from shared.utils.zip_utils import build_directory_zip
 
 bp = Blueprint("dataset", __name__)
@@ -37,7 +39,7 @@ bp = Blueprint("dataset", __name__)
 bp.add_url_rule(
     "/api/datasets",
     view_func=query_params_endpoint(
-        scan_project_datasets,
+        list_project_datasets,
         project_path=param("project_path", required=True, transform=resolve_project_path),
     ),
     methods=["GET"],
@@ -247,6 +249,16 @@ bp.add_url_rule(
             transform=lambda value: resolve_and_validate_project(value)[0],
         ),
         target_name=param("target_name", location="form"),
+        vision_task_type=param(
+            "vision_task_type",
+            location="form",
+            required=True,
+            transform=lambda value: require_allowed_text(
+                value,
+                allowed_values=VISION_TASK_TYPE_SET,
+                field_name="vision_task_type",
+            ),
+        ),
         uploaded_file=param("file", location="files", required=True, required_message="未上传文件"),
     ),
     methods=["POST"],
@@ -267,4 +279,4 @@ def api_import_dataset_process():
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
-    return Response(stream_with_context(stream_dataset_import_events(job_id, run_import_job)), headers=headers)
+    return Response(stream_with_context(stream_import_events(job_id, run_import_job)), headers=headers)

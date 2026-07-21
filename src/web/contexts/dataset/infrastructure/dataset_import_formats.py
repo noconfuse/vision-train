@@ -1,47 +1,38 @@
-"""识别外部数据集格式并转换为项目标准 YOLO 布局。"""
+"""负责把已识别格式的数据集转换为项目内部标准布局。"""
 
 import glob
 import os
 import shutil
 import xml.etree.ElementTree as ET
 
+from contexts.dataset.infrastructure.dataset_format_detector import (
+    resolve_imagefolder_class_names,
+    resolve_imagefolder_split_roots,
+)
 from contexts.dataset.infrastructure.dataset_layout import (
     DATASET_SPLIT_TEST,
+    get_dataset_split_dir,
     get_dataset_images_dir,
     get_dataset_labels_dir,
     strip_dataset_images_ref,
 )
-from contexts.dataset.infrastructure.dataset_schema import (
-    find_dataset_config,
-    save_standard_dataset_yaml,
-)
-from shared.utils.media_constants import DATASET_SPLITS, IMAGE_FILE_EXTENSIONS, ROBOFLOW_CONFIG_FILENAMES
+from contexts.dataset.infrastructure.dataset_schema import save_standard_dataset_yaml
+from constants.media import DATASET_SPLITS, IMAGE_FILE_EXTENSIONS, ROBOFLOW_CONFIG_FILENAMES
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 from shared.utils.json_utils import load_json_file
 from shared.utils.value_utils import first_non_empty_text
 from shared.utils.yaml_utils import load_yaml_file
-
-
-def _has_glob(root, pattern):
-    """判断目录下是否存在匹配 glob 的文件。"""
-    return len(glob.glob(os.path.join(root, pattern))) > 0
-
-
-def _list_meaningful_entries(root):
-    """列出目录下可参与导入协议判断的可见条目。"""
-    if not os.path.isdir(root):
-        return []
-    return [
-        entry
-        for entry in sorted(os.listdir(root))
-        if not entry.startswith("__MACOSX") and not entry.startswith(".")
-    ]
 
 
 def resolve_import_archive_root(extracted_dir):
     """按显式“单层包装目录”规则解析压缩包数据集根目录。"""
     current_dir = extracted_dir
     while True:
-        entries = _list_meaningful_entries(current_dir)
+        entries = [
+            entry
+            for entry in sorted(os.listdir(current_dir))
+            if not entry.startswith("__MACOSX") and not entry.startswith(".")
+        ] if os.path.isdir(current_dir) else []
         if len(entries) != 1:
             return current_dir
         only_entry_path = os.path.join(current_dir, entries[0])
@@ -49,29 +40,73 @@ def resolve_import_archive_root(extracted_dir):
             return current_dir
         current_dir = only_entry_path
 
-
-def detect_dataset_format(root):
-    """按导入根目录下的显式标准结构识别数据集格式。"""
-    if not os.path.isdir(root):
-        return "unknown"
-    if find_dataset_config(root) is not None:
-        return "yolo"
-    for rf_name in ROBOFLOW_CONFIG_FILENAMES:
-        if os.path.isfile(os.path.join(root, rf_name)):
-            return "roboflow"
-    if os.path.isdir(os.path.join(root, "annotations")) and _has_glob(root, "annotations/instances_*.json"):
-        return "coco"
-    if os.path.isdir(os.path.join(root, "Annotations")) and os.path.isdir(os.path.join(root, "JPEGImages")) and _has_glob(root, "Annotations/*.xml"):
-        return "voc"
-    return "unknown"
+def _copy_classification_sample(src_img, dst_img):
+    """复制分类图片到目标类别目录。"""
+    os.makedirs(os.path.dirname(dst_img), exist_ok=True)
+    if not os.path.exists(dst_img):
+        shutil.copyfile(src_img, dst_img)
 
 
+def convert_classification_imagefolder_to_yolo(source_root, yolo_root, progress_cb=None):
+    """把目录型分类数据集转换为项目标准分类布局。"""
+    split_roots = resolve_imagefolder_split_roots(source_root) or {"train": source_root}
+    if split_roots == {"train": source_root} and not resolve_imagefolder_class_names(source_root):
+        raise ValueError("分类数据集未识别到有效的类别目录")
+
+    class_names = set()
+    split_samples = {}
+    for split, split_root in split_roots.items():
+        samples = []
+        for class_name in [entry for entry in sorted(os.listdir(split_root)) if os.path.isdir(os.path.join(split_root, entry))]:
+            class_root = os.path.join(split_root, class_name)
+            if not any(
+                filename.lower().endswith(IMAGE_FILE_EXTENSIONS)
+                for _current_root, _, files in os.walk(class_root)
+                for filename in files
+            ):
+                continue
+            class_names.add(class_name)
+            for current_root, _, files in os.walk(class_root):
+                for filename in sorted(files):
+                    if not filename.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                        continue
+                    src_img = os.path.join(current_root, filename)
+                    rel_path = os.path.relpath(src_img, class_root)
+                    samples.append((class_name, src_img, rel_path))
+        if samples:
+            split_samples[split] = samples
+    if not split_samples or not class_names:
+        raise ValueError("分类数据集无可导入图片")
+
+    names = {idx: name for idx, name in enumerate(sorted(class_names))}
+    for split in split_samples:
+        os.makedirs(get_dataset_split_dir(yolo_root, split), exist_ok=True)
+
+    n_splits = max(1, len(split_samples))
+    for s_idx, (split, samples) in enumerate(split_samples.items()):
+        split_dir = get_dataset_split_dir(yolo_root, split)
+        n_imgs = max(1, len(samples))
+        for i_idx, (class_name, src_img, rel_path) in enumerate(samples):
+            dst_img = os.path.join(split_dir, class_name, rel_path)
+            _copy_classification_sample(src_img, dst_img)
+            if progress_cb and (i_idx % 50 == 0 or i_idx == n_imgs - 1):
+                progress_cb(s_idx, n_splits, i_idx + 1, n_imgs)
+
+    include_val = "val" in split_samples
+    save_standard_dataset_yaml(
+        yolo_root,
+        names,
+        vision_task_type=VISION_TASK_TYPE_CLASSIFY,
+        include_val=include_val,
+        include_test=DATASET_SPLIT_TEST in split_samples,
+        val_fallback_split="train" if not include_val else None,
+    )
 def convert_coco_to_yolo(coco_root, yolo_root, progress_cb=None):
     """把 COCO 标注和图片转换为标准 YOLO 数据集。"""
     ann_dir_candidates = [os.path.join(coco_root, "annotations"), coco_root]
     ann_dir = None
     for candidate in ann_dir_candidates:
-        if _has_glob(candidate, "instances_*.json"):
+        if os.path.isdir(candidate) and any(name.startswith("instances_") and name.endswith(".json") for name in os.listdir(candidate)):
             ann_dir = candidate
             break
     if ann_dir is None:

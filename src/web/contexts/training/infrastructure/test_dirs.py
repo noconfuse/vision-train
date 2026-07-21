@@ -3,7 +3,7 @@
 import os
 
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
-from shared.utils.media_constants import EVAL_SPLITS, IMAGE_FILE_EXTENSIONS
+from constants.media import EVAL_SPLITS, IMAGE_FILE_EXTENSIONS
 from shared.utils.value_utils import require_present
 
 

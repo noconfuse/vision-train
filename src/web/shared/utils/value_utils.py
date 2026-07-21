@@ -39,3 +39,11 @@ def first_non_empty_text(value):
                 return text
         return ""
     return str(value or "").strip()
+
+
+def require_allowed_text(value, *, allowed_values, field_name):
+    """把文本规范化后校验是否属于允许集合。"""
+    text = str(value or "").strip().lower()
+    if text not in set(allowed_values or ()):
+        raise ValueError(f"{field_name} 不合法")
+    return text

@@ -2,12 +2,7 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_import_yolo import ensure_dataset_yaml
 from contexts.task.domain.task_types import TASK_TYPE_BATCH_CALIBRATION
-from contexts.dataset.infrastructure.dataset_repository import find_dataset_config, resolve_project_dataset_root
-from contexts.dataset.infrastructure.dataset_schema import (
-    normalize_dataset_yaml_for_training,
-)
 from contexts.task.domain.task_artifact_keys import ARTIFACT_LOG_PATH
 from contexts.task.infrastructure.task_repository import (
     update_task as update_task_status,
@@ -15,13 +10,13 @@ from contexts.task.infrastructure.task_repository import (
 from contexts.task.infrastructure.task_runtime import list_project_tasks, load_task
 from contexts.task.infrastructure.worker_task_ops import mark_worker_started
 from contexts.training.domain.training_constants import WORKFLOW_TYPE_TRAINING
-from contexts.training.infrastructure.model_gateway import ensure_pretrained_model
 from contexts.training.infrastructure.runtime_profile import get_device
 from shared.infra.worker_process import spawn_worker_process
-from shared.utils.path_utils import project_name_from_path, resolve_storage_path
+from shared.utils.path_utils import project_name_from_path
 from shared.utils.time_utils import now_iso
 from shared.utils.value_utils import parse_bool
-from task_status import TASK_STATUS_FAILED, TASK_STATUS_RUNNING, is_active_task_status
+from protocols.vision_task_type import VISION_TASK_TYPE_SET
+from protocols.task_status import TASK_STATUS_FAILED, TASK_STATUS_RUNNING, is_active_task_status
 
 BATCH_CALIBRATION_TYPE = TASK_TYPE_BATCH_CALIBRATION
 TRAINING_WORKFLOW_TYPE = WORKFLOW_TYPE_TRAINING
@@ -52,26 +47,14 @@ def normalize_training_config(training_config):
     return cfg
 
 
-def resolve_and_validate_dataset(project_path, dataset_name, dataset_path):
-    """解析并校验训练所用数据集根目录。"""
-    candidate = resolve_project_dataset_root(project_path, dataset_name=dataset_name, dataset_path=dataset_path)
-    if candidate:
-        return candidate
-    project_name = project_name_from_path(project_path)
-    raise ValueError(f"训练数据集 {dataset_name} 不存在（项目：{project_name}，数据集：{dataset_name}）")
-def normalize_dataset_yaml_in_place(data_yaml, dataset_root):
-    """原地规范 dataset.yaml 的 path 和 split 路径写法。"""
-    if not data_yaml:
-        return data_yaml
-    normalized_path = resolve_storage_path(data_yaml)
-    normalize_dataset_yaml_for_training(normalized_path, dataset_root)
-    return normalized_path
-
-
-def build_training_args(training_config, data_yaml, save_dir):
+def build_training_args(training_config, training_context, save_dir):
     """将前端训练配置转换为 Ultralytics 训练参数。"""
+    vision_task_type = training_context.get("vision_task_type")
+    if vision_task_type not in VISION_TASK_TYPE_SET:
+        raise ValueError("vision_task_type 不合法")
+    profile = training_context.get("training_profile") or {}
     args = {
-        "data": data_yaml,
+        "data": training_context.get("data_ref"),
         "device": get_device(),
         "project": os.path.dirname(save_dir),
         "name": os.path.basename(save_dir),
@@ -90,81 +73,9 @@ def build_training_args(training_config, data_yaml, save_dir):
         except (ValueError, TypeError):
             pass
 
-    for key, type_func in (
-        ("epochs", int),
-        ("imgsz", int),
-        ("batch", int),
-        ("rect", parse_bool),
-        ("cos_lr", parse_bool),
-        ("mosaic", float),
-        ("mixup", float),
-        ("copy_paste", float),
-        ("degrees", float),
-        ("translate", float),
-        ("scale", float),
-        ("shear", float),
-        ("perspective", float),
-        ("flipud", float),
-        ("fliplr", float),
-        ("hsv_h", float),
-        ("hsv_s", float),
-        ("hsv_v", float),
-        ("close_mosaic", int),
-        ("lr0", float),
-        ("lrf", float),
-    ):
-        add_arg(key, type_func)
-
-    if training_config.get("imbalance_optimization"):
-        defaults = {
-            "cos_lr": True,
-            "mosaic": 1.0,
-            "mixup": 0.15,
-            "fliplr": 0.5,
-            "degrees": 10.0,
-            "hsv_s": 0.7,
-            "hsv_v": 0.4,
-        }
-        for key, value in defaults.items():
-            if key not in args:
-                args[key] = value
-
-    freeze_val = training_config.get("freeze")
-    if freeze_val not in (None, ""):
-        if isinstance(freeze_val, str) and freeze_val.lower() == "backbone":
-            args["freeze"] = 10
-        else:
-            try:
-                args["freeze"] = int(freeze_val)
-            except (ValueError, TypeError):
-                pass
+    for key, type_func in profile["arg_specs"]:
+        add_arg(key, parse_bool if type_func is bool else type_func)
     return args
-
-
-def prepare_training_sources(project_path, dataset_name, model_name, dataset_path, model_path=None):
-    """准备训练所需的数据集配置和训练入口模型路径。"""
-    final_dataset_path = resolve_and_validate_dataset(project_path, dataset_name, dataset_path)
-    if model_path:
-        model_path = resolve_storage_path(model_path)
-        if not model_path or not os.path.isfile(model_path):
-            raise ValueError(f"模型文件不存在: {model_path}")
-    else:
-        try:
-            model_path = ensure_pretrained_model(model_name)
-        except Exception as exc:
-            raise ValueError(f"模型准备失败: {exc}")
-    data_yaml = find_dataset_config(final_dataset_path)
-    if not data_yaml:
-        ensure_dataset_yaml(final_dataset_path)
-        data_yaml = find_dataset_config(final_dataset_path)
-    if not data_yaml:
-        raise ValueError("未找到 dataset.yaml")
-    data_yaml = resolve_storage_path(data_yaml) if data_yaml else data_yaml
-    try:
-        data_yaml = normalize_dataset_yaml_in_place(data_yaml=data_yaml, dataset_root=final_dataset_path)
-    except Exception:
-        pass
-    return {"dataset_path": final_dataset_path, "data_yaml": data_yaml, "model_path": model_path}
 
 
 def start_worker_task(task_id, running_message, failure_message, module_name, progress=0):

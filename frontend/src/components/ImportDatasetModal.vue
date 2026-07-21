@@ -12,13 +12,72 @@
       </div>
 
       <div class="vt-modal-body space-y-3">
-        <div class="text-xs text-gray-500">
-          将上传到项目 <span class="font-mono text-slate-700">projects/{{ project?.name }}/training/&lt;name&gt;/</span>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            任务类型 <span class="text-rose-500">*</span>
+          </label>
+          <select v-model="visionTaskType" :disabled="uploading" class="vt-select">
+            <option :value="VISION_TASK_TYPE.DETECT">检测</option>
+            <option :value="VISION_TASK_TYPE.CLASSIFY">分类</option>
+          </select>
+          <div class="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <div class="mb-1 font-medium text-slate-700">支持规范</div>
+            <div v-if="visionTaskType === VISION_TASK_TYPE.DETECT" class="flex flex-wrap gap-2">
+              <UiTooltip
+                v-for="spec in detectDatasetSpecs"
+                :key="spec.key"
+                side="bottom"
+                align="start"
+                :side-offset="10"
+                :delay-duration="120"
+                :disable-hoverable-content="false"
+                :content-class="'!w-[26rem] !max-w-[26rem] !border-slate-200 !bg-white !p-0 !text-slate-900 shadow-xl'"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    {{ spec.label }}
+                  </button>
+                </template>
+                <div class="p-3">
+                  <div class="mb-2 text-xs font-medium text-slate-600">目录示例</div>
+                  <pre class="overflow-x-auto rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-6 text-slate-800">{{ spec.example }}</pre>
+                </div>
+              </UiTooltip>
+            </div>
+            <div v-else class="flex flex-wrap gap-2">
+              <UiTooltip
+                v-for="spec in classifyDatasetSpecs"
+                :key="spec.key"
+                side="bottom"
+                align="start"
+                :side-offset="10"
+                :delay-duration="120"
+                :disable-hoverable-content="false"
+                :content-class="'!w-[26rem] !max-w-[26rem] !border-slate-200 !bg-white !p-0 !text-slate-900 shadow-xl'"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    <code>{{ spec.label }}</code>
+                  </button>
+                </template>
+                <div class="p-3">
+                  <div class="mb-2 text-xs font-medium text-slate-600">目录示例</div>
+                  <pre class="overflow-x-auto rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-6 text-slate-800">{{ spec.example }}</pre>
+                </div>
+              </UiTooltip>
+            </div>
+          </div>
         </div>
 
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
-            数据集 zip 包 <span class="text-rose-500">*</span>
+            数据集压缩包 <span class="text-rose-500">*</span>
           </label>
           <div
             class="vt-dropzone"
@@ -35,8 +94,8 @@
               <div class="mb-2 flex justify-center">
                 <AppIcon name="download" class="h-7 w-7 text-slate-500" />
               </div>
-              <div>点击选择文件 / 拖入 zip 包</div>
-              <div class="text-xs text-gray-400 mt-1">最大 2 GB</div>
+              <div>点击选择文件 / 拖入压缩包</div>
+              <div class="text-xs text-gray-400 mt-1">支持 .zip / .tar / .tar.gz / .tgz，最大 2 GB</div>
             </div>
             <div v-else class="text-left text-sm">
               <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
@@ -50,7 +109,7 @@
               </UiTooltip>
               <div class="text-xs text-gray-500">{{ formatSize(file.size) }}</div>
             </div>
-            <input ref="fileInput" type="file" accept=".zip" class="hidden"
+            <input ref="fileInput" type="file" accept=".zip,.tar,.tar.gz,.tgz" class="hidden"
                    @change="onPick" />
           </div>
         </div>
@@ -63,12 +122,9 @@
             v-model="targetName"
             type="text"
             :disabled="uploading"
-            placeholder="留空则使用 zip 内的数据集名"
+            placeholder="留空则使用压缩包内的数据集名"
             class="vt-input"
           />
-          <div class="mt-1 text-xs text-gray-400">
-            若 zip 内数据集名与你已有数据集冲突，可在此改名。
-          </div>
         </div>
 
         <div v-if="uploading || success || error" class="space-y-2">
@@ -104,19 +160,6 @@
           {{ error }}
         </div>
 
-        <div class="vt-section-muted text-xs text-gray-600 leading-relaxed">
-          <div class="mb-1 inline-flex items-center gap-2 font-medium">
-            <AppIcon name="detail" class="h-3.5 w-3.5 text-slate-500" />
-            <span>支持的数据集格式（任一即可，自动识别）</span>
-          </div>
-          <ul class="list-disc pl-5 space-y-0.5">
-            <li><b>YOLO</b> · 含 <code>dataset.yaml</code> + <code>train/{images,labels}</code></li>
-            <li><b>COCO</b> · 含 <code>annotations/instances_*.json</code> + 图片目录</li>
-            <li><b>Pascal VOC</b> · 含 <code>Annotations/*.xml</code> + <code>ImageSets/Main/</code></li>
-          </ul>
-          <div class="mt-1.5 text-gray-500">COCO / VOC 上传后将自动转换为 YOLO 规范后落盘。</div>
-        </div>
-
         <div class="flex justify-end gap-2 pt-1">
           <button type="button"
                   class="vt-btn-secondary vt-btn-size-md"
@@ -141,6 +184,7 @@
 <script setup>
 import { ref } from 'vue';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
+import { VISION_TASK_TYPE } from '../visionTaskType';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
@@ -153,6 +197,7 @@ const asyncEmit = useAsyncEmit(emit);
 const fileInput = ref(null);
 const file = ref(null);
 const targetName = ref('');
+const visionTaskType = ref(VISION_TASK_TYPE.DETECT);
 const progress = ref(0);
 const phaseMessage = ref('');
 const currentPhase = ref('idle'); // 'idle' | 'uploading' | 'parsing' | 'converting' | 'saving' | 'done'
@@ -160,6 +205,93 @@ const uploading = ref(false);
 const success = ref(false);
 const error = ref('');
 const dragging = ref(false);
+
+const detectDatasetSpecs = [
+  {
+    key: 'yolo',
+    label: 'YOLO',
+    example: `dataset/
+  images/
+    train/
+    val/
+  labels/
+    train/
+    val/
+  dataset.yaml`,
+  },
+  {
+    key: 'coco',
+    label: 'COCO',
+    example: `dataset/
+  train2017/
+  val2017/
+  annotations/
+    instances_train2017.json
+    instances_val2017.json`,
+  },
+  {
+    key: 'voc',
+    label: 'Pascal VOC',
+    example: `dataset/
+  JPEGImages/
+  Annotations/
+  ImageSets/
+    Main/`,
+  },
+  {
+    key: 'roboflow',
+    label: 'Roboflow',
+    example: `dataset/
+  train/
+    images/
+    labels/
+  valid/
+    images/
+    labels/
+  data.yaml`,
+  },
+];
+
+const classifyDatasetSpecs = [
+  {
+    key: 'imagefolder',
+    label: 'class/*',
+    example: `dataset/
+  cat/
+    0001.jpg
+    0002.jpg
+  dog/
+    0001.jpg
+    0002.jpg`,
+  },
+  {
+    key: 'split-imagefolder',
+    label: 'train|val|test/class/*',
+    example: `dataset/
+  train/
+    cat/
+      0001.jpg
+    dog/
+      0001.jpg
+  val/
+    cat/
+      0002.jpg
+    dog/
+      0002.jpg
+  test/
+    cat/
+      0003.jpg
+    dog/
+      0003.jpg`,
+  },
+];
+
+const ACCEPTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
+
+const isAcceptedArchive = (name) => {
+  const lowered = String(name || '').toLowerCase();
+  return ACCEPTED_ARCHIVE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
+};
 
 // 阶段顺序：判断阶段先后
 const phaseOrder = ['uploading', 'parsing', 'converting', 'saving'];
@@ -188,8 +320,8 @@ const formatSize = (b) => {
 const onPick = (e) => {
   const f = e.target.files?.[0];
   if (f) {
-    if (!f.name.toLowerCase().endsWith('.zip')) {
-      error.value = '仅支持 .zip 文件';
+    if (!isAcceptedArchive(f.name)) {
+      error.value = '仅支持 .zip / .tar / .tar.gz / .tgz 文件';
       return;
     }
     file.value = f;
@@ -200,8 +332,8 @@ const onDrop = (e) => {
   dragging.value = false;
   const f = e.dataTransfer?.files?.[0];
   if (f) {
-    if (!f.name.toLowerCase().endsWith('.zip')) {
-      error.value = '仅支持 .zip 文件';
+    if (!isAcceptedArchive(f.name)) {
+      error.value = '仅支持 .zip / .tar / .tar.gz / .tgz 文件';
       return;
     }
     file.value = f;
@@ -228,6 +360,7 @@ const onSubmit = async () => {
       file: file.value,
       projectPath: props.project.path || props.project.name,
       targetName: targetName.value.trim() || undefined,
+      visionTaskType: visionTaskType.value,
       onProgress: (ev) => {
         if (typeof ev === 'number') {
           progress.value = ev;

@@ -7,13 +7,22 @@ from contexts.task.infrastructure.task_repository import new_workflow_id
 from contexts.task.infrastructure.task_runtime import list_project_tasks
 from contexts.training.domain.training_constants import WORKFLOW_TYPE_TRAINING
 from contexts.task.infrastructure.worker_task_ops import list_task_storage_paths
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
 from shared.utils.fs_utils import remove_tree
 from shared.utils.path_utils import project_name_from_path
 from shared.utils.time_utils import now_iso
 from shared.utils.value_utils import require_present
-from task_status import is_active_task_status
+from protocols.vision_task_type import VISION_TASK_TYPE_SET
+from protocols.task_status import is_active_task_status
 from contexts.training.infrastructure.workflow_state import build_training_workflow
 from contexts.training.presenters import present_training_workflow, present_training_workflow_record
+
+
+def require_workflow_vision_task_type(value):
+    """校验训练工作流记录中的任务类型。"""
+    if value not in VISION_TASK_TYPE_SET:
+        raise ValueError("训练工作流缺少合法的 vision_task_type")
+    return value
 
 def get_training_workflow_record(workflow_id, include_archived=False):
     """读取单个训练工作流记录。"""
@@ -28,13 +37,16 @@ def get_training_workflow_record(workflow_id, include_archived=False):
         return workflow.to_dict()
 
 
-def create_training_workflow_record(project_path, dataset_name, dataset_path=None, workflow_id=None):
+def create_training_workflow_record(project_path, dataset_name, dataset_path=None, workflow_id=None, vision_task_type=None):
     """创建一条训练工作流记录。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
     workflow_id = workflow_id or new_workflow_id()
     existing = get_training_workflow_record(workflow_id, include_archived=True)
     if existing:
         return present_training_workflow_record(existing)
+    resolved_vision_task_type = require_workflow_vision_task_type(
+        vision_task_type if vision_task_type is not None else load_dataset_vision_task_type(dataset_path) if dataset_path else None
+    )
     now = now_iso()
     workflow = WorkflowRecord(
         id=workflow_id,
@@ -43,6 +55,7 @@ def create_training_workflow_record(project_path, dataset_name, dataset_path=Non
         project_name=project_name_from_path(project_path),
         dataset_name=dataset_name,
         dataset_path=dataset_path,
+        vision_task_type=resolved_vision_task_type,
         created_at=now,
         updated_at=now,
     )
@@ -52,12 +65,31 @@ def create_training_workflow_record(project_path, dataset_name, dataset_path=Non
         return present_training_workflow_record(workflow.to_dict())
 
 
-def ensure_training_workflow_record(workflow_id, project_path, dataset_name, dataset_path=None):
+def ensure_training_workflow_record(
+    workflow_id,
+    project_path,
+    dataset_name,
+    dataset_path=None,
+    vision_task_type=None,
+):
     """确保指定训练工作流记录存在。"""
     existing = get_training_workflow_record(workflow_id, include_archived=True)
     if existing:
-        return present_training_workflow_record(existing)
-    return create_training_workflow_record(project_path, dataset_name, dataset_path=dataset_path, workflow_id=workflow_id)
+        if existing.get("vision_task_type"):
+            return present_training_workflow_record(existing)
+        return touch_training_workflow_record(
+            workflow_id,
+            vision_task_type=require_workflow_vision_task_type(
+                vision_task_type if vision_task_type is not None else load_dataset_vision_task_type(dataset_path) if dataset_path else None
+            ),
+        ) or present_training_workflow_record(existing)
+    return create_training_workflow_record(
+        project_path,
+        dataset_name,
+        dataset_path=dataset_path,
+        workflow_id=workflow_id,
+        vision_task_type=vision_task_type,
+    )
 
 
 def touch_training_workflow_record(workflow_id, **patch):

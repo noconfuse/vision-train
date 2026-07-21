@@ -138,6 +138,107 @@ export const post = (url, data, cfg) => http.post(url, data, cfg).then(r => r.da
 export const put = (url, data, cfg) => http.put(url, data, cfg).then(r => r.data);
 export const del = (url, cfg) => http.delete(url, cfg).then(r => r.data);
 
+function consumeSse(url, onEvent) {
+  return new Promise((resolve, reject) => {
+    const token = getAuthToken();
+    const headers = { Accept: 'text/event-stream' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    fetch(url, { method: 'GET', headers })
+      .then(resp => {
+        if (!resp.ok) {
+          resp.text().then(t => {
+            let msg = `HTTP ${resp.status}`;
+            try {
+              const j = JSON.parse(t);
+              if (j?.error) msg = j.error;
+              else if (j?.data?.error) msg = j.data.error;
+            } catch (e) {
+              if (t) msg = `${msg}: ${t.slice(0, 100)}`;
+            }
+            reject(new Error(msg));
+          }).catch(() => reject(new Error(`HTTP ${resp.status}`)));
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let resolved = false;
+        const handleSseChunk = (rawChunk) => {
+          const chunk = String(rawChunk || '').trim();
+          if (!chunk.startsWith('data:')) return false;
+          const data = chunk
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trim())
+            .join('\n')
+            .trim();
+          if (!data) return false;
+          let ev;
+          try { ev = JSON.parse(data); } catch (e) { return false; }
+          if (onEvent) onEvent(ev);
+          if (ev.done && ev.success !== undefined) {
+            if (resolved) return true;
+            resolved = true;
+            if (ev.success) resolve(ev); else reject(new Error(ev.error || '处理失败'));
+            return true;
+          }
+          if (ev.done && ev.result?.success) {
+            if (resolved) return true;
+            resolved = true;
+            resolve(ev);
+            return true;
+          }
+          if (ev.done || ev.state === 'ready') {
+            if (resolved) return true;
+            resolved = true;
+            resolve(ev);
+            return true;
+          }
+          if (ev.error || ev.state === 'failed') {
+            if (resolved) return true;
+            resolved = true;
+            reject(new Error(ev.error || '处理失败'));
+            return true;
+          }
+          return false;
+        };
+        const flushBufferedEvents = () => {
+          const blocks = buffer.split(/\r?\n\r?\n/);
+          buffer = blocks.pop() || '';
+          for (const block of blocks) {
+            if (handleSseChunk(block) && resolved) return;
+          }
+        };
+        const flushTrailingBuffer = () => {
+          const tail = buffer.trim();
+          buffer = '';
+          if (tail) handleSseChunk(tail);
+        };
+        function read() {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              buffer += decoder.decode();
+              flushBufferedEvents();
+              if (!resolved) flushTrailingBuffer();
+              if (!resolved) reject(new Error('SSE 连接中断'));
+              return;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            flushBufferedEvents();
+            if (resolved) return;
+            read();
+          }).catch(err => {
+            if (!resolved) reject(err);
+          });
+        }
+        read();
+      })
+      .catch((err) => {
+        reject(err);
+      });
+  });
+}
+
 // ============================================================================
 // default export: 业务方法对象
 // 所有方法都已 unwrap：直接返回业务数据
@@ -167,74 +268,15 @@ const api = {
   },
   // SSE 流式 import process
   importDatasetProcess(jobId, onEvent) {
-    return new Promise((resolve, reject) => {
-      const url = `/api/dataset/import/process?job_id=${encodeURIComponent(jobId)}`;
-      const token = getAuthToken();
-      const headers = { Accept: 'text/event-stream' };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      fetch(url, { method: 'GET', headers })
-        .then(resp => {
-          if (!resp.ok) {
-            resp.text().then(t => {
-              let msg = `HTTP ${resp.status}`;
-              try {
-                const j = JSON.parse(t);
-                if (j?.error) msg = j.error;
-                else if (j?.data?.error) msg = j.data.error;
-              } catch (e) {
-                if (t) msg = `${msg}: ${t.slice(0, 100)}`;
-              }
-              reject(new Error(msg));
-            }).catch(() => reject(new Error(`HTTP ${resp.status}`)));
-            return;
-          }
-          const reader = resp.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let resolved = false;
-          function read() {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                if (!resolved) reject(new Error('SSE 连接中断'));
-                return;
-              }
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n\n');
-              buffer = lines.pop() || '';
-              for (const chunk of lines) {
-                const line = chunk.trim();
-                if (!line.startsWith('data:')) continue;
-                const data = line.slice(5).trim();
-                if (!data) continue;
-                let ev;
-                try { ev = JSON.parse(data); } catch (e) { continue; }
-                onEvent(ev);
-                if (ev.done && ev.success !== undefined) {
-                  if (resolved) return;
-                  resolved = true;
-                  if (ev.success) resolve(ev); else reject(new Error(ev.error || '导入失败'));
-                  return;
-                }
-                if (ev.done && ev.result?.success) {
-                  if (resolved) return;
-                  resolved = true;
-                  resolve(ev);
-                  return;
-                }
-                if (ev.done && ev.error) {
-                  if (resolved) return;
-                  resolved = true;
-                  reject(new Error(ev.error));
-                  return;
-                }
-              }
-              read();
-            }).catch(err => { if (!resolved) reject(err); });
-          }
-          read();
-        })
-        .catch(reject);
+    const url = `/api/dataset/import/process?job_id=${encodeURIComponent(jobId)}`;
+    // #region debug-point D:sse-start
+    __dbgReportDatasetImportSseDrop('D', 'sse_fetch_start', {
+      jobId,
+      hasToken: !!getAuthToken(),
+      url,
     });
+    // #endregion
+    return consumeSse(url, onEvent);
   },
 
   // Datasets
@@ -248,7 +290,17 @@ const api = {
   previewAugmentedSubset(data) { return post('/dataset/augment_subset', { ...data, dry_run: true }); },
 
   // Dataset Images & Annotation
-  getDatasetImages(params) { return get('/dataset/images', { params }); },
+  getDatasetImages(params, cfg = {}) { return get('/dataset/images', { ...(cfg || {}), params }); },
+  uploadDatasetImages(formData, onProgress) {
+    return post('/dataset/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: e => {
+        if (onProgress && e.total) {
+          onProgress(Math.round((e.loaded * 100) / e.total));
+        }
+      },
+    });
+  },
   downloadDatasetZip(params) {
     return http.get('/dataset/download', { params, responseType: 'blob' }).then(r => r.data);
   },
@@ -264,6 +316,10 @@ const api = {
 
   // Models
   getModels(params) { return get('/models', { params }); },
+  getPretrainedOptions(params) { return get('/pretrained/options', { params }); },
+  preparePretrainedModel(name, onEvent) {
+    return consumeSse(`/api/pretrained/prepare?name=${encodeURIComponent(name)}`, onEvent);
+  },
 
   // Training
   createTrainingWorkflow(data) { return post('/training/workflow/create', data); },
@@ -279,7 +335,6 @@ const api = {
   resumeTraining(data) { return post('/training/resume', data); },
   retryTraining(data) { return post('/training/retry', data); },
   getTrainingRunArtifacts(params) { return get('/training/run/artifacts', { params }); },
-  getPretrainedOptions() { return get('/pretrained/options'); },
 
   // Tasks
   listTasks(params) { return get('/tasks', { params }); },
@@ -287,11 +342,9 @@ const api = {
   stopTask(taskId) { return post(`/tasks/${taskId}/stop`, {}); },
   getTrainingMetricsHistory(taskId) { return get('/training/metrics_history', { params: { task_id: taskId } }); },
 
-  // Training model_exports / test_dirs / inference
+  // Training model_exports
   getTrainingModelExports(params) { return get('/training/model_exports', { params }); },
   deleteTrainingModelExport(data) { return post('/training/model_export/delete', data); },
-  getTrainingTestDirs(params) { return get('/training/test_dirs', { params }); },
-  startTestInference(data) { return post('/training/test_inference/start', data); },
 
   // 评估 / 导出
   startEvaluate(data) { return post('/training/start_evaluate', data); },

@@ -1,0 +1,134 @@
+"""定义训练配置能力表，收口训练表单、增强参数和指标展示。"""
+
+from contexts.model.domain.capabilities import (
+    MODEL_TRAINING_MODE_UNSUPPORTED,
+    MODEL_TRAINING_MODE_YOLO_CLASSIFY,
+    MODEL_TRAINING_MODE_YOLO_DETECT,
+)
+
+
+def _parse_freeze(value):
+    """解析检测训练的冻结层配置。"""
+    if isinstance(value, str) and value.lower() == "backbone":
+        return 10
+    return int(value)
+
+_PROFILE_MAP = {
+    MODEL_TRAINING_MODE_YOLO_DETECT: {
+        "supports_batch_calibration": True,
+        "environment_hint": "训练环境会自动更新。批次校准只是辅助工具，不属于工作流主步骤。",
+        "empty_calibration_hint": "选择模型后可开始校准。",
+        "history_metric": {"key": "map50", "label": "mAP50", "format": "percent"},
+        "default_config": {
+            "epochs": 100,
+            "batch": 16,
+            "imgsz": 640,
+            "freeze": 0,
+            "lr0": 0.01,
+            "rect": False,
+            "cos_lr": False,
+        },
+        "basic_fields": [
+            {"key": "epochs", "label": "轮数", "placeholder": "100"},
+            {"key": "batch", "label": "批次", "placeholder": "16"},
+            {"key": "imgsz", "label": "图像尺寸", "placeholder": "640"},
+            {"key": "freeze", "label": "冻结层数", "placeholder": "0"},
+            {"key": "lr0", "label": "初始学习率", "placeholder": "0.01"},
+            {"key": "rect", "label": "矩形训练", "type": "checkbox"},
+        ],
+        "advanced_fields": [
+            {"key": "mosaic", "label": "Mosaic", "placeholder": "1.0"},
+            {"key": "mixup", "label": "Mixup", "placeholder": "0.15"},
+            {"key": "copy_paste", "label": "CopyPaste", "placeholder": "0.0"},
+            {"key": "degrees", "label": "旋转角度", "placeholder": "0.0"},
+            {"key": "translate", "label": "平移", "placeholder": "0.1"},
+            {"key": "scale", "label": "缩放", "placeholder": "0.5"},
+            {"key": "shear", "label": "剪切", "placeholder": "0.0"},
+            {"key": "flipud", "label": "上下翻转", "placeholder": "0.0"},
+            {"key": "fliplr", "label": "左右翻转", "placeholder": "0.5"},
+            {"key": "hsv_h", "label": "HSV-Hue", "placeholder": "0.015"},
+            {"key": "hsv_s", "label": "HSV-Saturation", "placeholder": "0.7"},
+            {"key": "hsv_v", "label": "HSV-Value", "placeholder": "0.4"},
+            {"key": "close_mosaic", "label": "关闭 Mosaic", "placeholder": "10"},
+            {"key": "cos_lr", "label": "Cosine LR", "type": "checkbox"},
+        ],
+        "arg_specs": [
+            ("epochs", int),
+            ("imgsz", int),
+            ("batch", int),
+            ("freeze", _parse_freeze),
+            ("cos_lr", bool),
+            ("flipud", float),
+            ("fliplr", float),
+            ("hsv_h", float),
+            ("hsv_s", float),
+            ("hsv_v", float),
+            ("lr0", float),
+            ("lrf", float),
+            ("rect", bool),
+            ("mosaic", float),
+            ("mixup", float),
+            ("copy_paste", float),
+            ("degrees", float),
+            ("translate", float),
+            ("scale", float),
+            ("shear", float),
+            ("perspective", float),
+            ("close_mosaic", int),
+        ],
+    },
+    MODEL_TRAINING_MODE_YOLO_CLASSIFY: {
+        "supports_batch_calibration": False,
+        "environment_hint": "当前是分类训练，训练会直接使用当前运行环境启动，测试推理可在测试评估页执行。",
+        "empty_calibration_hint": "分类训练暂不提供批次校准。",
+        "history_metric": {"key": "top1", "label": "Top-1", "format": "percent"},
+        "default_config": {
+            "epochs": 100,
+            "batch": 16,
+            "imgsz": 224,
+            "lr0": 0.01,
+        },
+        "basic_fields": [
+            {"key": "epochs", "label": "轮数", "placeholder": "100"},
+            {"key": "batch", "label": "批次", "placeholder": "16"},
+            {"key": "imgsz", "label": "图像尺寸", "placeholder": "224"},
+            {"key": "lr0", "label": "初始学习率", "placeholder": "0.01"},
+        ],
+        "advanced_fields": [],
+        "arg_specs": [
+            ("epochs", int),
+            ("imgsz", int),
+            ("batch", int),
+            ("lr0", float),
+        ],
+    },
+    MODEL_TRAINING_MODE_UNSUPPORTED: {
+        "supports_batch_calibration": False,
+        "environment_hint": "当前任务类型暂未接入训练。",
+        "empty_calibration_hint": "当前任务类型暂未接入批次校准。",
+        "history_metric": {"key": "", "label": "", "format": "plain"},
+        "default_config": {},
+        "basic_fields": [],
+        "advanced_fields": [],
+        "arg_specs": [],
+    },
+}
+
+
+def get_training_profile(training_mode):
+    """返回训练方式对应的完整配置。"""
+    return _PROFILE_MAP.get(training_mode, _PROFILE_MAP[MODEL_TRAINING_MODE_UNSUPPORTED])
+
+
+def build_training_profile(training_mode):
+    """构造可序列化的训练配置能力表。"""
+    profile = get_training_profile(training_mode)
+    return {
+        "supports_batch_calibration": bool(profile["supports_batch_calibration"]),
+        "environment_hint": profile["environment_hint"],
+        "empty_calibration_hint": profile["empty_calibration_hint"],
+        "history_metric": dict(profile["history_metric"]),
+        "default_config": dict(profile["default_config"]),
+        "basic_fields": [dict(item) for item in profile["basic_fields"]],
+        "advanced_fields": [dict(item) for item in profile["advanced_fields"]],
+    }

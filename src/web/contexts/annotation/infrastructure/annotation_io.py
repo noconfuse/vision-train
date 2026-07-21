@@ -1,16 +1,21 @@
-"""处理标注文件、图片上下文和待标注列表的读写。"""
+"""处理标注协议共用的文件编解码与图片上下文解析。"""
 
 import os
 
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
 from contexts.dataset.infrastructure.dataset_layout import (
+    extract_classification_class_name,
     build_label_relpath,
     get_dataset_auto_labels_dir,
-    get_dataset_images_dir,
     get_dataset_labels_dir,
+    get_dataset_split_dir,
+    get_dataset_split_content_dir,
+    get_dataset_unlabeled_dir,
 )
-from shared.utils.media_constants import IMAGE_FILE_EXTENSIONS
-from shared.utils.path_utils import build_file_items, is_within_path, resolve_storage_path, slice_items
+from contexts.dataset.infrastructure.dataset_schema import load_dataset_names
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
+from shared.utils.path_utils import is_within_path, resolve_storage_path
 from shared.utils.value_utils import require_present
 from shared.utils.yolo_utils import parse_yolo_class_id
 
@@ -24,12 +29,65 @@ def get_dataset_root(project_path, dataset_name):
 
 
 def resolve_dataset_image_context(project_path, dataset_name, split, image_ref):
-    """解析图片路径以及对应的人工和自动标签路径。"""
+    """解析图片路径、标签路径以及分类目录上下文。"""
     image_path = resolve_storage_path(image_ref)
     require_present(image_path=image_path)
 
     ds_root = get_dataset_root(project_path, dataset_name)
-    img_dir = get_dataset_images_dir(ds_root, split)
+    return build_dataset_image_context(ds_root, split, image_path)
+
+
+def build_dataset_image_context(dataset_root, split, image_path):
+    """基于已知数据集根目录和图片路径解析标注上下文。"""
+    image_path = resolve_storage_path(image_path)
+    require_present(image_path=image_path)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    if not os.path.isfile(image_path):
+        raise ValueError("图片不存在")
+
+    split_dir = get_dataset_split_dir(dataset_root, split)
+    unlabeled_dir = get_dataset_unlabeled_dir(dataset_root, split)
+    auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+    manual_dir = get_dataset_labels_dir(dataset_root, split)
+    img_dir = get_dataset_split_content_dir(dataset_root, split, vision_task_type)
+    class_names = load_dataset_names(dataset_root)
+
+    if vision_task_type == VISION_TASK_TYPE_CLASSIFY:
+        is_unlabeled = is_within_path(image_path, unlabeled_dir)
+        if is_unlabeled:
+            rel = os.path.relpath(image_path, unlabeled_dir)
+            rel_noext = os.path.splitext(rel)[0]
+            class_name = ""
+            sample_relative_path = rel
+            auto_label_path = os.path.join(auto_dir, "unlabeled", build_label_relpath(rel_noext))
+        else:
+            if not is_within_path(image_path, split_dir):
+                raise ValueError("image_path 非法")
+            rel = os.path.relpath(image_path, split_dir)
+            rel_noext = os.path.splitext(rel)[0]
+            class_name = extract_classification_class_name(rel)
+            sample_relative_path = rel.split(os.sep, 1)[1] if class_name and os.sep in rel else os.path.basename(image_path)
+            auto_label_path = ""
+        return {
+            "dataset_root": dataset_root,
+            "split": split,
+            "vision_task_type": vision_task_type,
+            "image_path": image_path,
+            "image_dir": unlabeled_dir if is_unlabeled else split_dir,
+            "relative_path": rel,
+            "relative_noext": rel_noext,
+            "sample_relative_path": sample_relative_path,
+            "manual_dir": manual_dir,
+            "auto_dir": auto_dir,
+            "manual_label_path": "",
+            "auto_label_path": auto_label_path,
+            "class_names": class_names,
+            "class_name": class_name,
+            "is_unlabeled": is_unlabeled,
+            "split_dir": split_dir,
+            "unlabeled_dir": unlabeled_dir,
+        }
+
     if not is_within_path(image_path, img_dir):
         raise ValueError("image_path 非法")
     if not os.path.isfile(image_path):
@@ -37,10 +95,10 @@ def resolve_dataset_image_context(project_path, dataset_name, split, image_ref):
 
     rel = os.path.relpath(image_path, img_dir)
     rel_noext = os.path.splitext(rel)[0]
-    manual_dir = get_dataset_labels_dir(ds_root, split)
-    auto_dir = get_dataset_auto_labels_dir(ds_root, split)
     return {
-        "dataset_root": ds_root,
+        "dataset_root": dataset_root,
+        "split": split,
+        "vision_task_type": vision_task_type,
         "image_path": image_path,
         "image_dir": img_dir,
         "relative_path": rel,
@@ -49,6 +107,11 @@ def resolve_dataset_image_context(project_path, dataset_name, split, image_ref):
         "auto_dir": auto_dir,
         "manual_label_path": os.path.join(manual_dir, build_label_relpath(rel_noext)),
         "auto_label_path": os.path.join(auto_dir, build_label_relpath(rel_noext)),
+        "class_names": class_names,
+        "class_name": extract_classification_class_name(rel),
+        "is_unlabeled": False,
+        "split_dir": split_dir,
+        "unlabeled_dir": unlabeled_dir,
     }
 
 
@@ -80,7 +143,7 @@ def get_image_size_fallback(image_path):
     return 1, 1
 
 
-def encode_yolo_lines(labels, width, height):
+def encode_detect_lines(labels, width, height):
     """把矩形框列表编码为 YOLO 文本行。"""
     lines = []
     for item in labels or []:
@@ -97,7 +160,7 @@ def encode_yolo_lines(labels, width, height):
     return lines
 
 
-def decode_yolo_file(label_path, width, height):
+def decode_detect_file(label_path, width, height):
     """把 YOLO 标签文件解码为像素坐标框。"""
     boxes = []
     if not os.path.exists(label_path):
@@ -121,37 +184,37 @@ def decode_yolo_file(label_path, width, height):
     except Exception:
         return []
     return boxes
-def list_missing_annotations(project_path, dataset_name, split, offset=0, limit=50):
-    """列出缺少人工标签或空标签的图片。"""
-    ds_root = get_dataset_root(project_path, dataset_name)
-    img_dir = get_dataset_images_dir(ds_root, split)
-    lbl_dir = get_dataset_labels_dir(ds_root, split)
-    missing = []
-    for root, _, files in os.walk(img_dir):
-        for file_name in files:
-            if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
-                continue
-            image_path = os.path.join(root, file_name)
-            rel = os.path.relpath(image_path, img_dir)
-            label_path = os.path.join(lbl_dir, build_label_relpath(rel))
-            if not os.path.exists(label_path) or os.path.getsize(label_path) == 0:
-                missing.append(image_path)
-    return slice_items(build_file_items(missing), offset=offset, limit=limit)
 
 
-def list_pending_auto_annotations(project_path, dataset_name, split, offset=0, limit=50):
-    """列出存在自动标签待确认的图片。"""
-    ds_root = get_dataset_root(project_path, dataset_name)
-    img_dir = get_dataset_images_dir(ds_root, split)
-    auto_dir = get_dataset_auto_labels_dir(ds_root, split)
-    items = []
-    for root, _, files in os.walk(img_dir):
-        for file_name in files:
-            if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
-                continue
-            image_path = os.path.join(root, file_name)
-            rel = os.path.relpath(image_path, img_dir)
-            auto_label_path = os.path.join(auto_dir, build_label_relpath(rel))
-            if os.path.exists(auto_label_path):
-                items.append(image_path)
-    return slice_items(build_file_items(items), offset=offset, limit=limit)
+def decode_classification_file(label_path):
+    """把分类标签文件解码为单个类别 id。"""
+    if not os.path.exists(label_path):
+        return None
+    try:
+        with open(label_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                return parse_yolo_class_id(text.split()[0])
+    except Exception:
+        return None
+    return None
+
+
+def encode_classification_lines(annotation):
+    """把图像级分类标注编码为单行类别 id。"""
+    class_id = annotation.get("class_id") if isinstance(annotation, dict) else None
+    if class_id is None or class_id == "":
+        return []
+    return [str(int(class_id))]
+
+
+def resolve_classification_class_id(context):
+    """从分类样本当前目录推导类别 id。"""
+    class_name = context.get("class_name") or ""
+    class_names = context.get("class_names") or []
+    try:
+        return next(index for index, name in enumerate(class_names) if str(name) == class_name)
+    except StopIteration:
+        return None

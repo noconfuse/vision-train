@@ -3,20 +3,16 @@
 from flask import Blueprint
 
 from app.http import json_body_endpoint, param, query_params_endpoint
-from contexts.annotation.infrastructure.annotation_io import (
-    list_missing_annotations,
-    list_pending_auto_annotations,
-)
-from contexts.annotation.infrastructure.auto_annotation_runner import (
-    auto_annotate_image,
-    get_batch_auto_annotation_status,
-    start_batch_auto_annotation,
-)
 from contexts.annotation.application.use_cases import (
     commit_auto_annotation,
     get_annotation_payload,
+    list_missing_annotations,
+    list_pending_auto_annotations,
     save_auto_annotation,
     save_manual_annotation,
+    auto_annotate_image,
+    get_batch_auto_annotation_status,
+    start_batch_auto_annotation,
 )
 from shared.utils.path_utils import resolve_project_path
 
@@ -41,7 +37,7 @@ bp.add_url_rule(
         auto_annotate_image,
         project_path=param("project_path", required=True, transform=resolve_project_path),
         image_ref=param("image_path", required=True),
-        model_path=param("model_path"),
+        model_path=param("model_path", required=True, required_message="自动标注必须显式选择模型"),
         conf=param("conf", default=0.25),
         max_det=param("max_det", default=200),
     ),
@@ -54,7 +50,7 @@ bp.add_url_rule(
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
         split=param("split", default="train"),
-        model_path=param("model_path"),
+        model_path=param("model_path", required=True, required_message="自动标注必须显式选择模型"),
         image_paths=param("image_paths", default=list),
         conf=param("conf", default=0.25),
         max_det=param("max_det", default=200),
@@ -83,7 +79,7 @@ bp.add_url_rule(
         dataset_name=param("dataset_name", required=True),
         split=param("split", default="train"),
         image_ref=param("image_path", required=True),
-        labels=param("labels", default=list),
+        annotation=param("annotation", default=dict),
     ),
     methods=["POST"],
 )
@@ -117,7 +113,7 @@ bp.add_url_rule(
         dataset_name=param("dataset_name", required=True),
         split=param("split", default="train"),
         image_ref=param("image_path", required=True),
-        labels=param("labels", default=list),
+        annotation=param("annotation", default=dict),
     ),
     methods=["POST"],
 )

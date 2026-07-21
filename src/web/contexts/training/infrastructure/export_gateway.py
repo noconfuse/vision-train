@@ -26,6 +26,7 @@ from contexts.task.infrastructure.worker_task_ops import (
 )
 from contexts.training.domain.training_constants import WORKFLOW_TYPE_TRAINING
 from contexts.training.infrastructure.artifact_scanner import scan_export_outputs, validate_export_request
+from contexts.training.infrastructure.execution_context import resolve_task_vision_task_type
 from contexts.training.infrastructure.export_runtime import attach_export_progress_callbacks
 from contexts.training.infrastructure.runtime_profile import get_device
 from contexts.training.infrastructure.training_artifacts import build_training_export_dir
@@ -35,7 +36,7 @@ from shared.utils.fs_utils import move_path, remove_path_silent
 from shared.utils.path_utils import is_within_path, project_name_from_path, resolve_storage_path
 from shared.utils.time_utils import now_iso
 from shared.utils.value_utils import parse_bool
-from task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED, is_active_task_status
+from protocols.task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING, TASK_STATUS_STOPPED, is_active_task_status
 
 
 def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=False, int8=False):
@@ -43,13 +44,15 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
     src_task = load_task(src_task_id)
     if not src_task or not src_task.get("artifacts", {}).get(ARTIFACT_OUTPUT_DIR):
         raise ValueError("任务或产物不可用")
-    validate_export_request(fmt, half, int8)
     workflow_id = src_task.get("workflow_id") or src_task_id
+    vision_task_type = resolve_task_vision_task_type(src_task)
+    validate_export_request(fmt, half, int8, vision_task_type=vision_task_type)
     ensure_training_workflow_record(
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=src_task.get("dataset_name"),
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
     )
     source_artifacts = src_task.get("artifacts") or {}
     out_dir = source_artifacts[ARTIFACT_OUTPUT_DIR]
@@ -62,6 +65,7 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
         type_=TASK_TYPE_EXPORT,
         dataset_name=src_task.get("dataset_name"),
         dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
         payload={
             "src_task_id": src_task_id,
             "weight_path": weight_path,
@@ -82,7 +86,7 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
     artifacts = build_worker_artifacts(export_dir, "export-worker.log", "task_worker")
     artifacts[ARTIFACT_EXPORT_PATH] = ""
     update_task_status(export_task["id"], artifacts=artifacts)
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"))
+    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
     try:
         proc, _ = spawn_worker_process(export_task["id"], artifacts[ARTIFACT_LOG_PATH], "task_worker")
     except Exception as exc:
@@ -128,7 +132,12 @@ def execute_export_task(task_id):
         export_format = payload.get("format", "onnx")
         export_int8 = parse_bool(payload.get("int8", False))
         export_half = parse_bool(payload.get("half", False))
-        validate_export_request(export_format, export_half, export_int8)
+        validate_export_request(
+            export_format,
+            export_half,
+            export_int8,
+            vision_task_type=resolve_task_vision_task_type(task),
+        )
         update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=max(task.get("progress") or 0, 5), message="正在加载导出模型...")
         model = YOLO(weight_path)
         attach_export_progress_callbacks(

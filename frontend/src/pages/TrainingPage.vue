@@ -5,7 +5,7 @@
       { label: datasetName || '数据集' }
     ]" :back-href="backHref">
       <template #meta>
-        <span v-if="dataset" class="vt-tag vt-tag-info">训练数据集</span>
+        <span v-if="dataset" class="vt-tag" :class="getDatasetTypeTagClass(dataset)">{{ getDatasetTypeLabel(dataset) }}</span>
         <div v-if="isTrainingRunning" class="flex items-center gap-2 text-xs text-emerald-700">
           <span class="vt-status-dot vt-status-dot--success h-1.5 w-1.5"></span>
           <span class="font-mono">训练运行中</span>
@@ -79,6 +79,7 @@
             :dataset-name="datasetName"
             :task="workflowTrainingTask"
             :can-open-evaluate="hasEvaluateStep"
+            :has-test-split="hasDatasetTest"
             @training-started="onTrainingStarted"
             @evaluate="goToWorkflowStep(WORKFLOW_STEP.EVALUATE)"
             @export="goToWorkflowStep(WORKFLOW_STEP.EXPORT_CONFIG)"
@@ -103,7 +104,7 @@
             <div class="max-w-md text-center">
               <div class="text-3xl leading-none text-slate-300">...</div>
               <div class="mt-4 text-sm font-medium text-slate-700">当前工作流还没有训练记录</div>
-              <div class="mt-2 text-sm text-gray-500">先在“训练配置”步骤启动训练，这里会持续展示任务进度、测试评估和导出结果。</div>
+              <div class="mt-2 text-sm text-gray-500">先在“训练配置”步骤启动训练，这里会持续展示任务进度、测试集评估（需数据集提供 test 划分）和导出结果。</div>
             </div>
           </div>
           <div v-else class="flex-1 min-h-0 bg-white border border-dashed border-gray-300 px-8 py-10 flex items-center justify-center">
@@ -151,21 +152,27 @@
                 {{ trainingWorkflows.length }}
               </div>
             </div>
-            <div v-if="workflowsLoading" class="text-xs text-gray-400 py-4 text-center">加载中...</div>
-            <div v-else class="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
+            <div v-if="!showArchivedWorkflows" class="mb-3 shrink-0">
               <button
-                v-if="!showArchivedWorkflows"
-                class="vt-choice-card vt-choice-card--compact w-full border-dashed"
-                :class="isCreatingWorkflow ? 'vt-choice-card--selected border-dashed' : 'vt-choice-card--interactive border-slate-300 hover:bg-slate-50/60'"
+                type="button"
+                class="vt-btn-solid-primary vt-btn-size-md w-full justify-between"
+                :class="isCreatingWorkflow ? 'shadow-sm ring-1 ring-[color:var(--vt-color-primary-border)]' : ''"
                 @click="openCreateWorkflow"
               >
-                <div class="flex items-center justify-between gap-2">
-                  <div>
-                    <div class="text-[13px] font-semibold text-slate-900">新建工作流</div>
-                  </div>
-                  <AppIcon name="createProject" class="h-4 w-4 text-slate-500" />
-                </div>
+                <span class="inline-flex items-center gap-2">
+                  <AppIcon name="createProject" class="h-4 w-4" />
+                  <span>{{ isCreatingWorkflow ? '正在新建工作流' : '新建工作流' }}</span>
+                </span>
+                <span class="text-[11px] font-medium text-white/80">
+                  {{ isCreatingWorkflow ? '已进入配置' : '开始训练流程' }}
+                </span>
               </button>
+              <div class="mt-1 px-0.5 text-[11px] text-slate-400">
+                新流程从训练配置开始，不影响已有记录。
+              </div>
+            </div>
+            <div v-if="workflowsLoading" class="text-xs text-gray-400 py-4 text-center">加载中...</div>
+            <div v-else class="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
               <div v-if="trainingWorkflows.length === 0" class="text-xs text-gray-400 py-2 text-center">
                 {{ showArchivedWorkflows ? '暂无已归档工作流' : '暂无工作流记录' }}
               </div>
@@ -187,13 +194,7 @@
                         {{ getWorkflowTitle(workflow) }}
                       </div>
                       <div
-                        v-if="workflow.is_archived"
-                        class="vt-note mt-0.5 text-gray-500"
-                      >
-                        最终状态：{{ getTaskStatusLabel(workflow.status) }}
-                      </div>
-                      <div
-                        v-if="workflow.latest_training_task_resume_available === false && workflow.status === TASK_STATUS.FAILED"
+                        v-if="!workflow.is_archived && workflow.latest_training_task_resume_available === false && workflow.status === TASK_STATUS.FAILED"
                         class="vt-note vt-note--warn mt-0.5"
                       >
                         不可继续，需重新训练
@@ -225,13 +226,14 @@
                     content-class="max-w-[16rem] text-left"
                   >
                     <template #trigger>
-                      <button
+                      <AsyncButton
                         class="vt-icon-btn vt-icon-btn--sm text-slate-500 hover:text-slate-800"
-                        :disabled="workflowActionLoading || isWorkflowActive(workflow)"
+                        :disabled="isWorkflowActive(workflow)"
+                        :pending="isActionPending(archiveWorkflowActionKey(workflow.id))"
                         @click.stop="archiveWorkflow(workflow)"
                       >
                         <AppIcon name="archive" class="h-3.5 w-3.5" />
-                      </button>
+                      </AsyncButton>
                     </template>
                     归档工作流
                   </UiTooltip>
@@ -241,13 +243,14 @@
                     content-class="max-w-[16rem] text-left"
                   >
                     <template #trigger>
-                      <button
+                      <AsyncButton
                         class="vt-icon-btn vt-icon-btn--sm vt-icon-btn--danger"
-                        :disabled="workflowActionLoading || isWorkflowActive(workflow)"
+                        :disabled="isWorkflowActive(workflow)"
+                        :pending="isActionPending(deleteWorkflowActionKey(workflow.id))"
                         @click.stop="deleteWorkflow(workflow)"
                       >
                         <AppIcon name="delete" class="h-3.5 w-3.5" />
-                      </button>
+                      </AsyncButton>
                     </template>
                     永久删除工作流
                   </UiTooltip>
@@ -273,14 +276,18 @@
                 <div class="mt-2 text-[11px] text-gray-400 font-mono break-all">{{ dataset.path }}</div>
               </div>
             </div>
-            <div class="grid grid-cols-3 gap-3 mt-4">
+            <div class="grid grid-cols-4 gap-3 mt-4">
               <div>
-                <div class="text-xs text-gray-500">图片数</div>
+                <div class="text-xs text-gray-500">总样本</div>
                 <div class="text-base font-mono text-slate-800">{{ dataset.image_count ?? '-' }}</div>
               </div>
               <div>
-                <div class="text-xs text-gray-500">标签数</div>
-                <div class="text-base font-mono text-slate-800">{{ dataset.label_count ?? '-' }}</div>
+                <div class="text-xs text-gray-500">已标注</div>
+                <div class="text-base font-mono text-slate-800">{{ dataset.annotated_count ?? dataset.label_count ?? '-' }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500">未标注</div>
+                <div class="text-base font-mono text-slate-800">{{ dataset.unannotated_count ?? '-' }}</div>
               </div>
               <div>
                 <div class="text-xs text-gray-500">类别数</div>
@@ -338,11 +345,15 @@ import TrainingExportStep from '../components/TrainingExportStep.vue';
 import PageState from '../components/PageState.vue';
 import AppHeader from '../components/AppHeader.vue';
 import AppIcon from '../components/ui/AppIcon.vue';
+import AsyncButton from '../components/ui/AsyncButton.vue';
 import UiTooltip from '../components/ui/Tooltip.vue';
+import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../datasetType';
 import { TASK_STATUS, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted, isTaskTerminal } from '../taskStatus';
 import { isTrainingTask } from '../taskType';
 import { formatDateTime } from '../utils';
 import { WORKFLOW_STEP, normalizeWorkflowStep } from '../utils/trainingWorkflow';
+import { useAsyncAction } from '../composables/useAsyncAction';
+import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
 
 const route = useRoute();
 const router = useRouter();
@@ -351,6 +362,7 @@ const trainingStore = useTrainingStore();
 const workflowStore = useTrainingWorkflowStore();
 const { confirm: showConfirm } = useConfirm();
 const toast = useToast();
+const asyncAction = useAsyncAction();
 
 const projectName = computed(() => decodeURIComponent(route.params.project || ''));
 const datasetName = computed(() => decodeURIComponent(route.params.name || ''));
@@ -360,13 +372,16 @@ const dataset = computed(() => {
   if (!p) return null;
   return (p.datasets || []).find(d => d.name === datasetName.value) || null;
 });
+const trainingGuard = computed(() => resolveTrainingDatasetGuard(dataset.value));
 
 const loadError = ref('');
 const loading = ref(true);
 const selectedWorkflow = ref(null);
 const isCreatingWorkflow = ref(false);
 const showArchivedWorkflows = ref(false);
-const workflowActionLoading = ref(false);
+const archiveWorkflowActionKey = (workflowId) => `training-page:archive-workflow:${String(workflowId || '')}`;
+const deleteWorkflowActionKey = (workflowId) => `training-page:delete-workflow:${String(workflowId || '')}`;
+const isActionPending = (key) => asyncAction.isPending(key);
 
 // === 类别分布（按 count 倒序，最多显示 12 个） ===
 const MAX_CLASSES_SHOWN = 12;
@@ -450,7 +465,7 @@ const workflowSteps = computed(() => {
     },
     {
       key: WORKFLOW_STEP.EVALUATE,
-      title: '测试评估',
+      title: '测试集评估',
       optional: true,
       enabled: workflowTaskCompleted.value && hasEvaluateStep.value,
     },
@@ -560,7 +575,11 @@ const syncPageState = async () => {
   await ensureProjectsLoaded();
   if (dataset.value) {
     syncStore();
-    await loadTrainingWorkflows().catch(() => {});
+    if (!trainingGuard.value.enabled) {
+      loadError.value = trainingGuard.value.reason;
+    } else {
+      await loadTrainingWorkflows().catch(() => {});
+    }
   } else if (project.value) {
     loadError.value = `项目「${projectName.value}」下找不到数据集「${datasetName.value}」`;
   } else {
@@ -694,23 +713,22 @@ const archiveWorkflow = async (workflow) => {
     confirmText: '归档',
   });
   if (!ok) return;
-  workflowActionLoading.value = true;
-  try {
-    const archivedWorkflow = await workflowStore.archiveWorkflow({
-      project_path: project.value?.path || '',
-      workflow_id: workflow.id,
-    }, {
-      dataset_name: datasetName.value,
-    });
-    setWorkflowContext(archivedWorkflow, { archived: true });
-    await refreshWorkflowList(archivedWorkflow.id);
-    await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, archivedWorkflow.id);
-    toast.success('工作流已归档');
-  } catch (err) {
-    toast.error(err?.message || '归档工作流失败');
-  } finally {
-    workflowActionLoading.value = false;
-  }
+  await asyncAction.run(archiveWorkflowActionKey(workflow.id), async () => {
+    try {
+      const archivedWorkflow = await workflowStore.archiveWorkflow({
+        project_path: project.value?.path || '',
+        workflow_id: workflow.id,
+      }, {
+        dataset_name: datasetName.value,
+      });
+      setWorkflowContext(archivedWorkflow, { archived: true });
+      await refreshWorkflowList(archivedWorkflow.id);
+      await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, archivedWorkflow.id);
+      toast.success('工作流已归档');
+    } catch (err) {
+      toast.error(err?.message || '归档工作流失败');
+    }
+  });
 };
 
 const deleteWorkflow = async (workflow) => {
@@ -726,25 +744,24 @@ const deleteWorkflow = async (workflow) => {
     confirmText: '永久删除',
   });
   if (!ok) return;
-  workflowActionLoading.value = true;
-  try {
-    await workflowStore.deleteWorkflow({
-      project_path: project.value?.path || '',
-      workflow_id: workflow.id,
-    }, {
-      dataset_name: datasetName.value,
-    });
-    if (selectedWorkflow.value?.id === workflow.id) {
-      setWorkflowContext(null, { archived: true });
+  await asyncAction.run(deleteWorkflowActionKey(workflow.id), async () => {
+    try {
+      await workflowStore.deleteWorkflow({
+        project_path: project.value?.path || '',
+        workflow_id: workflow.id,
+      }, {
+        dataset_name: datasetName.value,
+      });
+      if (selectedWorkflow.value?.id === workflow.id) {
+        setWorkflowContext(null, { archived: true });
+      }
+      await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, '');
+      await refreshWorkflowList();
+      toast.success('工作流已永久删除');
+    } catch (err) {
+      toast.error(err?.message || '删除工作流失败');
     }
-    await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, '');
-    await refreshWorkflowList();
-    toast.success('工作流已永久删除');
-  } catch (err) {
-    toast.error(err?.message || '删除工作流失败');
-  } finally {
-    workflowActionLoading.value = false;
-  }
+  });
 };
 
 watch([projectName, datasetName], syncPageState, { immediate: true });

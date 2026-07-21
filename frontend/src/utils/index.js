@@ -26,6 +26,20 @@ export const formatDateTime = (value, options = {}) => {
   return `${parts.join('-')} ${clock}`;
 };
 
+export const parseOptionalNumber = (value, options = {}) => {
+  const {
+    integer = false,
+    min = Number.NEGATIVE_INFINITY,
+    max = Number.POSITIVE_INFINITY,
+  } = options;
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (integer && !Number.isInteger(parsed)) return null;
+  if (parsed < min || parsed > max) return null;
+  return parsed;
+};
+
 export const getModelExportFormatLabel = ({ path = '', format = '' } = {}) => {
   const normalizedPath = String(path || '').toLowerCase();
   const normalizedFormat = String(format || '').toLowerCase();

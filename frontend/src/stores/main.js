@@ -5,7 +5,8 @@ export const useMainStore = defineStore('main', {
   state: () => ({
     projects: [],
     currentProject: null,
-    pretrainedModels: [],        // 已下载的预训练 + 项目历史
+    pretrainedModels: [],        // 默认模型列表（训练等场景）
+    autoAnnotateModels: [],      // 自动标注候选模型列表
     pretrainedOptions: [],       // 全部官方预设（含未下载）
     selectedDataset: null,
     isLoading: false,
@@ -13,6 +14,30 @@ export const useMainStore = defineStore('main', {
   }),
   
   actions: {
+    mergePretrainedStatus(status) {
+      if (!status?.name) return;
+      const index = this.pretrainedOptions.findIndex((item) => item.name === status.name);
+      if (index === -1) return;
+      const current = this.pretrainedOptions[index];
+      this.pretrainedOptions[index] = {
+        ...current,
+        is_downloaded: !!status.is_downloaded,
+        local_path: status.local_path || null,
+        download_state: status.state || (status.is_downloaded ? 'ready' : current.download_state || 'idle'),
+        download_progress: typeof status.progress === 'number'
+          ? status.progress
+          : (status.is_downloaded ? 100 : current.download_progress || 0),
+        download_error: status.error || null,
+        download_message: status.message || '',
+        download_total_bytes: typeof status.total_bytes === 'number'
+          ? status.total_bytes
+          : (current.download_total_bytes || 0),
+        downloaded_bytes: typeof status.bytes_downloaded === 'number'
+          ? status.bytes_downloaded
+          : (current.downloaded_bytes || 0),
+      };
+    },
+
     /**
      * 拉取项目列表
      * @param {Object} [opts]
@@ -63,12 +88,13 @@ export const useMainStore = defineStore('main', {
       return res;
     },
 
-    async importDataset(file, projectPath, targetName, onProgress) {
+    async importDataset(file, projectPath, targetName, visionTaskType, onProgress) {
       // Phase 1: 上传
       const fd = new FormData();
       fd.append('file', file);
       if (projectPath) fd.append('project_path', projectPath);
       if (targetName) fd.append('target_name', targetName);
+      if (visionTaskType) fd.append('vision_task_type', visionTaskType);
       const upRes = await api.importDatasetUpload(fd, onProgress);
       const jobId = upRes?.job_id;
       if (!jobId) {
@@ -96,24 +122,48 @@ export const useMainStore = defineStore('main', {
       return res;
     },
     
-    async fetchModels() {
+    async fetchModels(visionTaskType, usage = '') {
       if (!this.currentProject) return;
       try {
-        const models = await api.getModels({ project_path: this.currentProject.path });
+        const models = await api.getModels({
+          project_path: this.currentProject.path,
+          vision_task_type: visionTaskType || undefined,
+          usage: usage || undefined,
+        });
+        if (usage === 'auto_annotate') {
+          this.autoAnnotateModels = models || [];
+          return;
+        }
         this.pretrainedModels = models || [];
       } catch (err) {
         console.error(err);
+        if (usage === 'auto_annotate') {
+          this.autoAnnotateModels = [];
+          return;
+        }
+        this.pretrainedModels = [];
       }
     },
 
-    async fetchPretrainedOptions() {
+    async fetchPretrainedOptions(visionTaskType) {
       try {
-        const res = await api.getPretrainedOptions();
+        const res = await api.getPretrainedOptions({
+          vision_task_type: visionTaskType || undefined,
+        });
         this.pretrainedOptions = Array.isArray(res) ? res : [];
       } catch (err) {
         console.error(err);
         this.pretrainedOptions = [];
       }
+    },
+
+    async preparePretrainedModel(name, visionTaskType, onEvent) {
+      const result = await api.preparePretrainedModel(name, (event) => {
+        this.mergePretrainedStatus(event);
+        if (onEvent) onEvent(event);
+      });
+      await this.fetchPretrainedOptions(visionTaskType);
+      return result;
     },
 
     selectProject(project) {

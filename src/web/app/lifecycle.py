@@ -19,7 +19,7 @@ from contexts.task.infrastructure.worker_task_ops import request_stop
 from db import init_db
 from shared.infra.worker_process import terminate_process_group
 from shared.utils.time_utils import now_iso
-from task_status import TASK_STATUS_ACTIVE, TASK_STATUS_INTERRUPTED
+from protocols.task_status import TASK_STATUS_ACTIVE, TASK_STATUS_INTERRUPTED
 
 logger = logging.getLogger(__name__)
 _runtime_shutdown_done = False

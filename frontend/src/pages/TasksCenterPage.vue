@@ -101,7 +101,14 @@
                       </div>
                       <div v-if="resumeSourceText(t)" class="mt-1 flex items-center gap-2 text-[10px]">
                         <span class="vt-text-accent">{{ resumeSourceText(t) }}</span>
-                        <button class="vt-text-accent hover:underline" @click="focusTaskById(resumeFromTaskId(t))">查看来源</button>
+                        <AsyncButton
+                          class="vt-text-accent hover:underline"
+                          :pending="isActionPending(focusTaskActionKey(resumeFromTaskId(t)))"
+                          loading-text="加载中..."
+                          @click="focusTaskById(resumeFromTaskId(t))"
+                        >
+                          查看来源
+                        </AsyncButton>
                       </div>
                       <div v-else-if="resumeChildrenCount(t.id) > 0" class="mt-1 text-[10px] text-emerald-700">
                         已续跑 {{ resumeChildrenCount(t.id) }} 次
@@ -131,12 +138,14 @@
                           <AppIcon name="workflow" class="h-3.5 w-3.5" />
                           <span>工作流</span>
                         </button>
-                        <button v-if="canView(t)"
+                        <AsyncButton v-if="canView(t)"
                                 class="vt-action-btn vt-action-btn--info"
+                                :pending="isActionPending(detailTaskActionKey(t.id))"
+                                loading-text="加载中..."
                                 @click="onView(t)">
                           <AppIcon name="detail" class="h-3.5 w-3.5" />
                           <span>详情</span>
-                        </button>
+                        </AsyncButton>
                         <button v-if="canJumpToEvaluate(t)"
                                 class="vt-action-btn vt-action-btn--warning"
                                 @click="openTrainingWorkflow(t, 'evaluate')">
@@ -217,9 +226,14 @@
             <div><span class="text-gray-500">数据集</span> · <span>{{ detailTask.dataset_name || '-' }}</span></div>
             <div v-if="resumeFromTaskId(detailTask)">
               <span class="text-gray-500">继续自任务</span> ·
-              <button class="vt-btn-link vt-text-accent font-mono" @click="focusTaskById(resumeFromTaskId(detailTask))">
+              <AsyncButton
+                class="vt-btn-link vt-text-accent font-mono"
+                :pending="isActionPending(focusTaskActionKey(resumeFromTaskId(detailTask)))"
+                loading-text="加载中..."
+                @click="focusTaskById(resumeFromTaskId(detailTask))"
+              >
                 {{ resumeFromTaskId(detailTask) }}
-              </button>
+              </AsyncButton>
             </div>
             <div v-if="resumeWeight(detailTask)"><span class="text-gray-500">恢复权重</span> · <span class="font-mono">{{ resumeWeight(detailTask) }}</span></div>
             <div v-if="resumeChildrenCount(detailTask.id) > 0"><span class="text-gray-500">继续训练次数</span> · <span class="font-mono">{{ resumeChildrenCount(detailTask.id) }}</span></div>
@@ -262,7 +276,9 @@ import { useMainStore } from '../stores/main';
 import api from '../api';
 import AppHeader from '../components/AppHeader.vue';
 import AppIcon from '../components/ui/AppIcon.vue';
+import AsyncButton from '../components/ui/AsyncButton.vue';
 import UiTooltip from '../components/ui/Tooltip.vue';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useToast } from '../composables/useToast';
 import {
   TASK_STATUS,
@@ -288,6 +304,7 @@ const store = useMainStore();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+const asyncAction = useAsyncAction();
 
 const tasks = ref([]);
 const loading = ref(false);
@@ -303,6 +320,9 @@ const detailError = ref('');
 const artifacts = ref({ images: [], weights: [] });
 
 let timer = null;
+const detailTaskActionKey = (taskId) => `tasks-center:detail:${String(taskId || '')}`;
+const focusTaskActionKey = (taskId) => `tasks-center:focus:${String(taskId || '')}`;
+const isActionPending = (key) => asyncAction.isPending(key);
 
 const typeLabel = (type) => getTaskTypeLabel(type);
 const typeIcon = (type) => getTaskTypeIcon(type);
@@ -379,24 +399,26 @@ const openTrainingWorkflow = async (task, step = '') => {
 
 const focusTaskById = async (taskId) => {
   if (!taskId) return;
-  highlightedTaskId.value = taskId;
-  const inList = tasks.value.find((item) => item.id === taskId);
-  if (inList) {
-    expandedId.value = taskId;
-    await onView(inList);
-  } else {
-    try {
-      const task = await api.getTask(taskId);
-      if (task?.id) {
-        detailTask.value = task;
-        detailLoading.value = false;
-        detailError.value = '';
+  await asyncAction.run(focusTaskActionKey(taskId), async () => {
+    highlightedTaskId.value = taskId;
+    const inList = tasks.value.find((item) => item.id === taskId);
+    if (inList) {
+      expandedId.value = taskId;
+      await onView(inList);
+    } else {
+      try {
+        const task = await api.getTask(taskId);
+        if (task?.id) {
+          detailTask.value = task;
+          detailLoading.value = false;
+          detailError.value = '';
+        }
+      } catch (e) {
+        toast.error(e?.message || '加载来源任务失败');
       }
-    } catch (e) {
-      toast.error(e?.message || '加载来源任务失败');
     }
-  }
-  setTimeout(() => { if (highlightedTaskId.value === taskId) highlightedTaskId.value = ''; }, 4000);
+    setTimeout(() => { if (highlightedTaskId.value === taskId) highlightedTaskId.value = ''; }, 4000);
+  });
 };
 
 const refreshDetailTask = async (taskList = tasks.value) => {
@@ -435,29 +457,32 @@ const toggleExpand = (id) => {
 };
 
 const onView = async (t) => {
-  detailTask.value = t;
-  detailLoading.value = true;
-  detailError.value = '';
-  artifacts.value = { images: [], weights: [] };
-  try {
-    const fresh = await api.getTask(t.id);
-    detailTask.value = fresh?.id ? fresh : t;
-    if (taskHasArtifactsView(t)) {
-      const res = await api.getTrainingRunArtifacts({
-        project_path: t.project_path,
-        dataset_name: t.dataset_name,
-        task_id: t.id,
-      });
-      artifacts.value = {
-        images: res?.images || [],
-        weights: res?.weights || [],
-      };
+  if (!t?.id) return;
+  await asyncAction.run(detailTaskActionKey(t.id), async () => {
+    detailTask.value = t;
+    detailLoading.value = true;
+    detailError.value = '';
+    artifacts.value = { images: [], weights: [] };
+    try {
+      const fresh = await api.getTask(t.id);
+      detailTask.value = fresh?.id ? fresh : t;
+      if (taskHasArtifactsView(t)) {
+        const res = await api.getTrainingRunArtifacts({
+          project_path: t.project_path,
+          dataset_name: t.dataset_name,
+          task_id: t.id,
+        });
+        artifacts.value = {
+          images: res?.images || [],
+          weights: res?.weights || [],
+        };
+      }
+    } catch (e) {
+      detailError.value = e?.message || '加载失败';
+    } finally {
+      detailLoading.value = false;
     }
-  } catch (e) {
-    detailError.value = e?.message || '加载失败';
-  } finally {
-    detailLoading.value = false;
-  }
+  });
 };
 
 onMounted(async () => {

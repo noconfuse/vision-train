@@ -13,6 +13,15 @@ _IMPORT_JOB_TTL = 3600
 _IMPORT_JOBS = {}
 
 
+def _resolve_import_archive_suffix(filename):
+    """从原始文件名解析暂存压缩包后缀。"""
+    lowered = str(filename or "").strip().lower()
+    for suffix in (".tar.gz", ".tgz", ".tar", ".zip"):
+        if lowered.endswith(suffix):
+            return suffix
+    return ".zip"
+
+
 def cleanup_import_jobs():
     """清理过期导入任务及其暂存压缩包。"""
     now = time.time()
@@ -24,12 +33,12 @@ def cleanup_import_jobs():
         _IMPORT_JOBS.pop(job_id, None)
 
 
-def create_import_job(project_path, dataset_name, uploaded_file):
+def create_import_job(project_path, dataset_name, uploaded_file, vision_task_type):
     """创建导入任务并把上传文件落到暂存区。"""
     job_id = uuid.uuid4().hex
     staging_dir = os.path.join(tempfile.gettempdir(), "vt_import_staging")
     os.makedirs(staging_dir, exist_ok=True)
-    staging_path = os.path.join(staging_dir, f"{job_id}.zip")
+    staging_path = os.path.join(staging_dir, f"{job_id}{_resolve_import_archive_suffix(uploaded_file.filename)}")
     uploaded_file.save(staging_path)
 
     _IMPORT_JOBS[job_id] = {
@@ -37,6 +46,7 @@ def create_import_job(project_path, dataset_name, uploaded_file):
         "ds_name": dataset_name,
         "staging_path": staging_path,
         "orig_filename": uploaded_file.filename,
+        "vision_task_type": vision_task_type,
         "updated_at": time.time(),
         "events": [],
         "phase": "uploaded",
@@ -81,8 +91,6 @@ def emit_import_event(job_id, phase=None, progress=None, message=None, **extra):
             **{key: value for key, value in (("phase", phase), ("progress", progress), ("message", message)) if value is not None},
         }
     )
-    if len(job["events"]) > 200:
-        job["events"] = job["events"][-200:]
 
 
 def serialize_import_event(event):

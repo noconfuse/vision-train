@@ -19,7 +19,7 @@ from contexts.task.infrastructure.task_repository import (
 )
 from shared.utils.fs_utils import remove_file_silent
 from shared.utils.time_utils import now_iso
-from task_status import TASK_STATUS_RUNNING
+from protocols.task_status import TASK_STATUS_RUNNING
 
 
 STOP_SIGNAL_FILENAME = ".stop-request"

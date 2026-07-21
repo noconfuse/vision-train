@@ -3,7 +3,10 @@
 import os
 
 from app.config import DATASET_CONFIG_FILENAME
-from shared.utils.media_constants import DATASET_SPLITS
+from contexts.dataset.infrastructure.dataset_task_type import (
+    save_dataset_vision_task_type,
+)
+from constants.media import DATASET_SPLITS
 from shared.utils.name_utils import TOKEN_NAME_PATTERN, validate_token_name
 from shared.utils.yaml_utils import (
     load_yaml_file,
@@ -11,6 +14,7 @@ from shared.utils.yaml_utils import (
     resolve_names_list as resolve_dataset_names_list,
     save_yaml_file,
 )
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 
 __all__ = [
     "build_standard_dataset_config",
@@ -28,6 +32,7 @@ __all__ = [
     "save_dataset_names",
     "save_standard_dataset_yaml",
     "save_dataset_tags",
+    "save_dataset_vision_task_type",
     "validate_dataset_name",
 ]
 
@@ -54,25 +59,33 @@ def _normalize_dataset_split_value(value, old_base, new_base):
     return abs_value
 
 
-def build_standard_dataset_config(names, *, include_val=True, include_test=True, val_fallback_split=None, tags=None):
+def build_standard_dataset_config(
+    names,
+    *,
+    vision_task_type=None,
+    include_val=True,
+    include_test=True,
+    val_fallback_split=None,
+    tags=None,
+):
     """构造符合项目协议的标准 dataset.yaml 内容。"""
     from contexts.dataset.infrastructure.dataset_layout import (
         DATASET_SPLIT_TEST,
         DATASET_SPLIT_TRAIN,
         DATASET_SPLIT_VAL,
-        build_dataset_yaml_image_ref,
+        build_dataset_yaml_split_ref,
     )
 
     config = {
         "path": ".",
-        "train": build_dataset_yaml_image_ref(DATASET_SPLIT_TRAIN),
-        "val": build_dataset_yaml_image_ref(val_fallback_split or DATASET_SPLIT_VAL)
+        "train": build_dataset_yaml_split_ref(DATASET_SPLIT_TRAIN, vision_task_type),
+        "val": build_dataset_yaml_split_ref(val_fallback_split or DATASET_SPLIT_VAL, vision_task_type)
         if include_val
-        else build_dataset_yaml_image_ref(DATASET_SPLIT_TRAIN),
+        else build_dataset_yaml_split_ref(DATASET_SPLIT_TRAIN, vision_task_type),
         "names": names,
     }
     if include_test:
-        config["test"] = build_dataset_yaml_image_ref(DATASET_SPLIT_TEST)
+        config["test"] = build_dataset_yaml_split_ref(DATASET_SPLIT_TEST, vision_task_type)
     cleaned_tags = resolve_dataset_tags({"tags": tags or []})
     if cleaned_tags:
         config["tags"] = cleaned_tags
@@ -166,12 +179,22 @@ def save_dataset_config(dataset_root, data):
     return save_dataset_config_file(os.path.join(dataset_root, DATASET_CONFIG_FILENAME), data)
 
 
-def save_standard_dataset_yaml(dataset_root, names, *, include_val=True, include_test=True, val_fallback_split=None, tags=None):
+def save_standard_dataset_yaml(
+    dataset_root,
+    names,
+    *,
+    vision_task_type=None,
+    include_val=True,
+    include_test=True,
+    val_fallback_split=None,
+    tags=None,
+):
     """按标准数据集协议生成并写回 dataset.yaml。"""
     return save_dataset_config(
         dataset_root,
         build_standard_dataset_config(
             names,
+            vision_task_type=vision_task_type,
             include_val=include_val,
             include_test=include_test,
             val_fallback_split=val_fallback_split,

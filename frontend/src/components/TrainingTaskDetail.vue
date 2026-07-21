@@ -72,12 +72,12 @@
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-sm">
         <div>
-          <div class="text-[11px] font-medium tracking-wide text-gray-500">最新指标</div>
-          <div class="mt-1 font-mono text-sm font-semibold text-slate-800">mAP50 {{ latestMetrics?.map50?.toFixed(3) ?? '-' }}</div>
+          <div class="text-[11px] font-medium tracking-wide text-gray-500">{{ primaryMetricLabel }}</div>
+          <div class="mt-1 font-mono text-sm font-semibold text-slate-800">{{ primaryMetricValue }}</div>
         </div>
         <div>
-          <div class="text-[11px] font-medium tracking-wide text-gray-500">综合指标</div>
-          <div class="mt-1 font-mono text-sm font-semibold text-slate-800">mAP50-95 {{ latestMetrics?.map50_95?.toFixed(3) ?? '-' }}</div>
+          <div class="text-[11px] font-medium tracking-wide text-gray-500">{{ secondaryMetricLabel }}</div>
+          <div class="mt-1 font-mono text-sm font-semibold text-slate-800">{{ secondaryMetricValue }}</div>
         </div>
         <div class="min-w-0">
           <div class="text-[11px] font-medium tracking-wide text-gray-500">训练输出</div>
@@ -109,7 +109,7 @@
 
     <div class="mb-4">
       <div class="vt-step-section-title">训练曲线与可视化</div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div v-if="localMetricsHistory.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <button
           type="button"
           class="border border-gray-200 bg-white p-3 text-left hover:border-slate-400 transition-colors"
@@ -118,17 +118,27 @@
           <div class="flex justify-between items-center mb-2">
             <span class="text-xs font-semibold text-gray-700">Training Loss</span>
             <div class="flex gap-2 text-[10px]">
-              <span class="text-red-500">Box</span>
-              <span class="vt-text-accent">Cls</span>
-              <span class="text-yellow-500">Dfl</span>
+              <span
+                v-for="series in resultProfile.task_detail?.loss_series || []"
+                :key="series.key"
+                :style="{ color: series.color }"
+              >
+                {{ series.label }}
+              </span>
             </div>
           </div>
           <svg viewBox="0 0 100 50" class="w-full h-24 overflow-visible" preserveAspectRatio="none">
             <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
             <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-            <polyline :points="getPoints(localMetricsHistory, 'box_loss')" fill="none" stroke="#ef4444" stroke-width="0.5" vector-effect="non-scaling-stroke" />
-            <polyline :points="getPoints(localMetricsHistory, 'cls_loss')" fill="none" stroke="#3b82f6" stroke-width="0.5" vector-effect="non-scaling-stroke" />
-            <polyline :points="getPoints(localMetricsHistory, 'dfl_loss')" fill="none" stroke="#eab308" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+            <polyline
+              v-for="series in resultProfile.task_detail?.loss_series || []"
+              :key="series.key"
+              :points="getPoints(localMetricsHistory, series.key)"
+              fill="none"
+              :stroke="series.color"
+              stroke-width="0.5"
+              vector-effect="non-scaling-stroke"
+            />
           </svg>
         </button>
         <button
@@ -137,22 +147,34 @@
           @click="openCurvePreview('metrics')"
         >
           <div class="flex justify-between items-center mb-2">
-            <span class="text-xs font-semibold text-gray-700">Metrics (mAP)</span>
+            <span class="text-xs font-semibold text-gray-700">{{ metricCurveTitle }}</span>
             <div class="flex gap-2 text-[10px]">
-              <span class="text-green-500">mAP50</span>
-              <span class="text-purple-500">mAP50-95</span>
+              <span
+                v-for="series in resultProfile.task_detail?.metric_series || []"
+                :key="series.key"
+                :style="{ color: series.color }"
+              >
+                {{ series.label }}
+              </span>
             </div>
           </div>
           <svg viewBox="0 0 100 50" class="w-full h-24 overflow-visible" preserveAspectRatio="none">
             <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
             <line x1="0" y1="25" x2="100" y2="25" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" stroke-dasharray="2" />
             <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-            <polyline :points="getMetricsPoints(localMetricsHistory, 'map50')" fill="none" stroke="#22c55e" stroke-width="0.5" vector-effect="non-scaling-stroke" />
-            <polyline :points="getMetricsPoints(localMetricsHistory, 'map50_95')" fill="none" stroke="#a855f7" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+            <polyline
+              v-for="series in resultProfile.task_detail?.metric_series || []"
+              :key="series.key"
+              :points="getMetricsPoints(localMetricsHistory, series.key)"
+              fill="none"
+              :stroke="series.color"
+              stroke-width="0.5"
+              vector-effect="non-scaling-stroke"
+            />
           </svg>
         </button>
       </div>
-      <div v-if="localMetricsHistory.length === 0" class="mt-3 border border-dashed border-gray-300 p-6 text-center text-sm text-gray-400">
+      <div v-else class="border border-dashed border-gray-300 p-6 text-center text-sm text-gray-400">
         暂无可展示的训练曲线，等待首轮 epoch 完成后自动更新。
       </div>
 
@@ -181,76 +203,78 @@
       </div>
     </div>
 
-    <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
-      <button
-        v-if="canResume"
-        @click="resumeTraining"
-        class="vt-btn-solid-primary vt-btn-size-lg"
-        :disabled="resumeSubmitting || retrySubmitting || stopSubmitting"
+    <div class="mt-4">
+      <div
+        v-if="showEvaluateTestHint"
+        class="mb-2 text-right text-xs leading-5 text-slate-500"
       >
-        <span
-          v-if="resumeSubmitting"
-          class="inline-block h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin"
-        ></span>
-        <AppIcon name="workflow" class="h-4 w-4" />
-        {{ resumeSubmitting ? '启动中...' : '继续训练' }}
-      </button>
-      <button
-        v-else-if="canRetry"
-        @click="retryTraining"
-        class="vt-btn-solid-primary vt-btn-size-lg inline-flex items-center gap-2"
-        :disabled="resumeSubmitting || retrySubmitting || stopSubmitting"
-      >
-        <span
-          v-if="retrySubmitting"
-          class="inline-block h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin"
-        ></span>
-        <span>{{ retrySubmitting ? '启动中...' : '重新训练' }}</span>
-        <UiTooltip
-          side="top"
-          align="center"
-          content-class="min-w-[20rem] max-w-[28rem] break-words text-left"
+        当前数据集没有 `test` 划分。训练过程已持续产出验证指标；如需独立测试集评估，请补充 `test` 集。
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <AsyncButton
+          v-if="canResume"
+          @click="resumeTraining"
+          class="vt-btn-solid-primary vt-btn-size-lg"
+          :disabled="taskActionPending"
+          :pending="isActionPending(resumeActionKey)"
+          loading-text="启动中..."
         >
-          <template #trigger>
-            <span
-              class="inline-flex h-4.5 w-4.5 cursor-help items-center justify-center rounded-full border border-white/35 bg-white/12 text-[10px] font-semibold leading-none text-white/90"
-              aria-hidden="true"
-            >
-              <AppIcon name="help" class="h-3.5 w-3.5" :stroke-width="2.25" />
-            </span>
-          </template>
-          {{ retryHintText }}
-        </UiTooltip>
-      </button>
-      <button
-        v-if="isRunning"
-        @click="stopTraining"
-        class="vt-btn-solid-danger vt-btn-size-lg"
-        :disabled="stopSubmitting || localTask?.status === TASK_STATUS.STOPPING"
-      >
-        <span
-          v-if="stopSubmitting || localTask?.status === TASK_STATUS.STOPPING"
-          class="inline-block h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin"
-        ></span>
-        <AppIcon name="close" class="h-4 w-4" />
-        {{ stopButtonLabel }}
-      </button>
-      <button
-        v-if="canGoEvaluate"
-        @click="$emit('evaluate')"
-        class="vt-btn-secondary vt-btn-size-lg"
-      >
-        <AppIcon name="evaluate" class="h-4 w-4" />
-        测试评估
-      </button>
-      <button
-        v-if="canGoExport"
-        @click="$emit('export')"
-        class="vt-btn-secondary vt-btn-size-lg"
-      >
-        <AppIcon name="export" class="h-4 w-4" />
-        导出
-      </button>
+          <AppIcon name="workflow" class="h-4 w-4" />
+          继续训练
+        </AsyncButton>
+        <AsyncButton
+          v-else-if="canRetry"
+          @click="retryTraining"
+          class="vt-btn-solid-primary vt-btn-size-lg inline-flex items-center gap-2"
+          :disabled="taskActionPending"
+          :pending="isActionPending(retryActionKey)"
+          loading-text="启动中..."
+        >
+          <span>重新训练</span>
+          <UiTooltip
+            side="top"
+            align="center"
+            content-class="min-w-[20rem] max-w-[28rem] break-words text-left"
+          >
+            <template #trigger>
+              <span
+                class="inline-flex h-4.5 w-4.5 cursor-help items-center justify-center rounded-full border border-white/35 bg-white/12 text-[10px] font-semibold leading-none text-white/90"
+                aria-hidden="true"
+              >
+                <AppIcon name="help" class="h-3.5 w-3.5" :stroke-width="2.25" />
+              </span>
+            </template>
+            {{ retryHintText }}
+          </UiTooltip>
+        </AsyncButton>
+        <AsyncButton
+          v-if="isRunning"
+          @click="stopTraining"
+          class="vt-btn-solid-danger vt-btn-size-lg"
+          :disabled="taskActionPending || localTask?.status === TASK_STATUS.STOPPING"
+          :pending="isActionPending(stopActionKey) || localTask?.status === TASK_STATUS.STOPPING"
+          :loading-text="stopButtonLabel"
+        >
+          <AppIcon name="close" class="h-4 w-4" />
+          停止训练
+        </AsyncButton>
+        <button
+          v-if="canGoEvaluate"
+          @click="$emit('evaluate')"
+          class="vt-btn-secondary vt-btn-size-lg"
+        >
+          <AppIcon name="evaluate" class="h-4 w-4" />
+          测试集评估
+        </button>
+        <button
+          v-if="canGoExport"
+          @click="$emit('export')"
+          class="vt-btn-secondary vt-btn-size-lg"
+        >
+          <AppIcon name="export" class="h-4 w-4" />
+          导出
+        </button>
+      </div>
     </div>
 
     <div
@@ -286,13 +310,24 @@
               <div class="text-sm font-semibold text-slate-800">{{ previewCurveTitle }}</div>
               <div class="flex gap-2 text-[11px]">
                 <template v-if="previewCurve === 'loss'">
-                  <span class="text-red-500">Box</span>
-                  <span class="vt-text-accent">Cls</span>
-                  <span class="text-yellow-500">Dfl</span>
+                  <template v-if="isClassificationTask">
+                    <span class="vt-text-accent">Loss</span>
+                  </template>
+                  <template v-else>
+                    <span class="text-red-500">Box</span>
+                    <span class="vt-text-accent">Cls</span>
+                    <span class="text-yellow-500">Dfl</span>
+                  </template>
                 </template>
                 <template v-else>
-                  <span class="text-green-500">mAP50</span>
-                  <span class="text-purple-500">mAP50-95</span>
+                  <template v-if="isClassificationTask">
+                    <span class="text-green-500">Top-1</span>
+                    <span class="text-purple-500">Top-5</span>
+                  </template>
+                  <template v-else>
+                    <span class="text-green-500">mAP50</span>
+                    <span class="text-purple-500">mAP50-95</span>
+                  </template>
                 </template>
               </div>
             </div>
@@ -305,9 +340,14 @@
               >
                 <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
                 <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-                <polyline :points="getPoints(localMetricsHistory, 'box_loss')" fill="none" stroke="#ef4444" stroke-width="0.45" vector-effect="non-scaling-stroke" />
-                <polyline :points="getPoints(localMetricsHistory, 'cls_loss')" fill="none" stroke="#3b82f6" stroke-width="0.45" vector-effect="non-scaling-stroke" />
-                <polyline :points="getPoints(localMetricsHistory, 'dfl_loss')" fill="none" stroke="#eab308" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                <template v-if="isClassificationTask">
+                  <polyline :points="getPoints(localMetricsHistory, 'train_loss')" fill="none" stroke="#3b82f6" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                </template>
+                <template v-else>
+                  <polyline :points="getPoints(localMetricsHistory, 'box_loss')" fill="none" stroke="#ef4444" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                  <polyline :points="getPoints(localMetricsHistory, 'cls_loss')" fill="none" stroke="#3b82f6" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                  <polyline :points="getPoints(localMetricsHistory, 'dfl_loss')" fill="none" stroke="#eab308" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                </template>
               </svg>
               <svg
                 v-else
@@ -318,8 +358,8 @@
                 <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
                 <line x1="0" y1="25" x2="100" y2="25" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" stroke-dasharray="2" />
                 <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-                <polyline :points="getMetricsPoints(localMetricsHistory, 'map50')" fill="none" stroke="#22c55e" stroke-width="0.45" vector-effect="non-scaling-stroke" />
-                <polyline :points="getMetricsPoints(localMetricsHistory, 'map50_95')" fill="none" stroke="#a855f7" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                <polyline :points="getMetricsPoints(localMetricsHistory, primaryMetricKey)" fill="none" stroke="#22c55e" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                <polyline :points="getMetricsPoints(localMetricsHistory, secondaryMetricKey)" fill="none" stroke="#a855f7" stroke-width="0.45" vector-effect="non-scaling-stroke" />
               </svg>
               <div class="mt-2 text-[11px] text-gray-500">点击空白处或右上角关闭预览。</div>
             </div>
@@ -341,9 +381,11 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useConfirm } from '../composables/useConfirm';
 import { useToast } from '../composables/useToast';
 import api from '../api';
+import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { useTrainingStore } from '../stores/training';
@@ -361,6 +403,7 @@ import {
 } from '../taskStatus';
 import { formatDateTime } from '../utils';
 import { getResumeFromTaskId } from '../utils/trainingTask';
+import { resolveTrainingResultProfile } from '../trainingResultProfile';
 
 const props = defineProps({
   projectPath: { type: String, required: true },
@@ -368,9 +411,11 @@ const props = defineProps({
   datasetName: { type: String, required: true },
   task: { type: Object, default: null },
   canOpenEvaluate: { type: Boolean, default: false },
+  hasTestSplit: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['evaluate', 'export', 'training-started']);
+const asyncAction = useAsyncAction();
 const { confirm: showConfirm } = useConfirm();
 const toast = useToast();
 const trainingStore = useTrainingStore();
@@ -380,12 +425,22 @@ const localMetricsHistory = ref([]);
 const localArtifacts = ref({ images: [], weights: [], config: null });
 const previewImage = ref(null);
 const previewCurve = ref('');
-const stopSubmitting = ref(false);
-const resumeSubmitting = ref(false);
-const retrySubmitting = ref(false);
+const buildTaskActionKey = (action) => `training-task-detail:${action}:${localTask.value?.id || ''}`;
+const stopActionKey = computed(() => buildTaskActionKey('stop'));
+const resumeActionKey = computed(() => buildTaskActionKey('resume'));
+const retryActionKey = computed(() => buildTaskActionKey('retry'));
+const isActionPending = (keyRef) => {
+  const key = typeof keyRef === 'string' ? keyRef : keyRef?.value;
+  return key ? asyncAction.isPending(key) : false;
+};
+const taskActionPending = computed(() => (
+  isActionPending(stopActionKey)
+  || isActionPending(resumeActionKey)
+  || isActionPending(retryActionKey)
+));
 const isRunning = computed(() => isTaskActive(localTask.value));
 const stopButtonLabel = computed(() => {
-  if (stopSubmitting.value || localTask.value?.status === TASK_STATUS.STOPPING) return '停止中...';
+  if (isActionPending(stopActionKey) || localTask.value?.status === TASK_STATUS.STOPPING) return '停止中...';
   return '停止训练';
 });
 const trainingConfig = computed(() => localTask.value?.payload?.training_config || {});
@@ -404,6 +459,11 @@ const retryHintText = computed(() => {
 });
 const canGoEvaluate = computed(() => isTaskCompleted(localTask.value) && props.canOpenEvaluate);
 const canGoExport = computed(() => isTaskCompleted(localTask.value));
+const showEvaluateTestHint = computed(() => (
+  isTaskCompleted(localTask.value)
+  && !props.hasTestSplit
+  && !props.canOpenEvaluate
+));
 const modelName = computed(() => localTask.value?.payload?.model_name || '-');
 const outputDirPath = computed(() => {
   const outputDir = localTask.value?.artifacts?.output_dir || '';
@@ -414,14 +474,23 @@ const latestMetrics = computed(() => {
   if (!localMetricsHistory.value.length) return null;
   return localMetricsHistory.value[localMetricsHistory.value.length - 1];
 });
+const resultProfile = computed(() => resolveTrainingResultProfile(localTask.value));
+const primaryMetricKey = computed(() => resultProfile.value.task_detail?.primary_metric?.key || '');
+const secondaryMetricKey = computed(() => resultProfile.value.task_detail?.secondary_metric?.key || '');
+const primaryMetricLabel = computed(() => resultProfile.value.task_detail?.primary_metric?.label || '最新指标');
+const secondaryMetricLabel = computed(() => resultProfile.value.task_detail?.secondary_metric?.label || '综合指标');
+const formatMetricText = (value) => (typeof value === 'number' ? value.toFixed(3) : '-');
+const primaryMetricValue = computed(() => `${resultProfile.value.task_detail?.primary_metric?.value_prefix || primaryMetricLabel.value} ${formatMetricText(latestMetrics.value?.[primaryMetricKey.value])}`);
+const secondaryMetricValue = computed(() => `${resultProfile.value.task_detail?.secondary_metric?.value_prefix || secondaryMetricLabel.value} ${formatMetricText(latestMetrics.value?.[secondaryMetricKey.value])}`);
 const progressSummary = computed(() => getTaskTerminalSummary(localTask.value, ''));
 const progressSummaryClass = computed(() => getTaskTerminalSummaryClass(localTask.value));
 const artifactImages = computed(() => Array.isArray(localArtifacts.value?.images) ? localArtifacts.value.images : []);
 const previewCurveTitle = computed(() => {
   if (previewCurve.value === 'loss') return 'Training Loss';
-  if (previewCurve.value === 'metrics') return 'Metrics (mAP)';
+  if (previewCurve.value === 'metrics') return metricCurveTitle.value;
   return '';
 });
+const metricCurveTitle = computed(() => resultProfile.value.task_detail?.metric_curve_title || 'Metrics');
 
 let pollingTimer = null;
 
@@ -434,7 +503,7 @@ const formatConfigValue = (value) => {
 
 const getPoints = (data, key, height = 50, width = 100) => {
   if (!data || data.length < 2) return '';
-  const values = data.map((d) => d[key] || 0);
+  const values = data.map((d) => Number(d[key] || d?.extra?.[key] || 0));
   const maxVal = Math.max(...values, 0.0001) * 1.1;
   return values.map((v, i) => {
     const x = (i / (values.length - 1)) * width;
@@ -447,7 +516,8 @@ const getMetricsPoints = (data, key, height = 50, width = 100) => {
   if (!data || data.length < 2) return '';
   return data.map((d, i) => {
     const x = (i / (data.length - 1)) * width;
-    const y = height - ((d[key] || 0) * height);
+    const value = Number(d[key] || d?.extra?.[key] || 0);
+    const y = height - (value * height);
     return `${x},${y}`;
   }).join(' ');
 };
@@ -513,7 +583,7 @@ const loadTaskSnapshot = async () => {
 };
 
 const stopTraining = async () => {
-  if (stopSubmitting.value || localTask.value?.status === TASK_STATUS.STOPPING) return;
+  if (localTask.value?.status === TASK_STATUS.STOPPING) return;
   const ok = await showConfirm({
     message: '确定要停止当前训练吗？\n当前进度会保存到 checkpoint，下次可继续。',
     title: '停止训练',
@@ -521,80 +591,77 @@ const stopTraining = async () => {
     confirmText: '停止',
   });
   if (!ok || !localTask.value?.id) return;
-  stopSubmitting.value = true;
-  try {
-    await api.stopTask(localTask.value.id);
-    localTask.value = {
-      ...localTask.value,
-      status: TASK_STATUS.STOPPING,
-      message: '已发送停止请求，等待任务安全退出...',
-    };
-    if (trainingStore.currentTask?.id === localTask.value.id) {
-      trainingStore.currentTask = {
-        ...trainingStore.currentTask,
+  await asyncAction.run(stopActionKey.value, async () => {
+    try {
+      await api.stopTask(localTask.value.id);
+      localTask.value = {
+        ...localTask.value,
         status: TASK_STATUS.STOPPING,
         message: '已发送停止请求，等待任务安全退出...',
       };
+      if (trainingStore.currentTask?.id === localTask.value.id) {
+        trainingStore.currentTask = {
+          ...trainingStore.currentTask,
+          status: TASK_STATUS.STOPPING,
+          message: '已发送停止请求，等待任务安全退出...',
+        };
+      }
+      toast.success('已请求停止训练');
+      await loadTaskSnapshot();
+    } catch (err) {
+      toast.error(err?.message || '停止训练失败');
     }
-    toast.success('已请求停止训练');
-    await loadTaskSnapshot();
-  } catch (err) {
-    toast.error(err?.message || '停止训练失败');
-  } finally {
-    stopSubmitting.value = false;
-  }
+  });
 };
 
 const resumeTraining = async () => {
-  if (!localTask.value?.id || resumeSubmitting.value) return;
+  if (!localTask.value?.id) return;
   const ok = await showConfirm({
     message: '确定继续当前训练吗？系统会从最近可恢复的权重继续执行。',
     title: '继续训练',
     confirmText: '继续',
   });
   if (!ok) return;
-  resumeSubmitting.value = true;
-  try {
-    const data = await api.resumeTraining({
-      project_path: props.projectPath,
-      dataset_name: props.datasetName,
-      task_id: localTask.value.id,
-    });
-    if (data?.task_id) {
-      toast.success('已开始继续训练');
-      emit('training-started', data);
+  await asyncAction.run(resumeActionKey.value, async () => {
+    try {
+      const data = await api.resumeTraining({
+        project_path: props.projectPath,
+        dataset_name: props.datasetName,
+        task_id: localTask.value.id,
+      });
+      if (data?.task_id) {
+        toast.success('已开始继续训练');
+        emit('training-started', data);
+      }
+    } catch (err) {
+      toast.error(err?.message || '继续训练失败');
     }
-  } catch (err) {
-    toast.error(err?.message || '继续训练失败');
-  } finally {
-    resumeSubmitting.value = false;
-  }
+  });
 };
 
 const retryTraining = async () => {
-  if (!localTask.value?.id || retrySubmitting.value) return;
+  if (!localTask.value?.id) return;
   const ok = await showConfirm({
     message: '当前任务没有可恢复权重。系统会清理这次失败训练的中间产物，并在当前工作流下重新启动一次训练。',
     title: '重新训练',
     confirmText: '重新训练',
   });
   if (!ok) return;
-  retrySubmitting.value = true;
-  try {
-    const data = await api.retryTraining({
-      project_path: props.projectPath,
-      dataset_name: props.datasetName,
-      task_id: localTask.value.id,
-    });
-    if (data?.task_id) {
-      toast.success('已开始重新训练');
-      emit('training-started', data);
+  await asyncAction.run(retryActionKey.value, async () => {
+    try {
+      const data = await api.retryTraining({
+        project_path: props.projectPath,
+        dataset_name: props.datasetName,
+        task_id: localTask.value.id,
+      });
+      if (data?.task_id) {
+        toast.success('已开始重新训练');
+        emit('training-started', data);
+      }
+    } catch (err) {
+      toast.error(err?.message || '重新训练失败');
     }
-  } catch (err) {
-    toast.error(err?.message || '重新训练失败');
-  } finally {
-    retrySubmitting.value = false;
-  }
+  });
 };
 
 watch(() => props.task?.id, () => {

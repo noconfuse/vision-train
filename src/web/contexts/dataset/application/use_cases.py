@@ -2,17 +2,24 @@
 
 import os
 import random
-import shutil
 
+from contexts.dataset.domain.capabilities import (
+    DATASET_OPERATION_AUGMENT_DATASET,
+    DATASET_OPERATION_AUTO_ANNOTATE,
+    DATASET_OPERATION_CREATE_SUBSET,
+    DATASET_OPERATION_DELETE_LABEL,
+    DATASET_OPERATION_DEDUPLICATE_IMAGES,
+    DATASET_OPERATION_MERGE_DATASETS,
+    DATASET_OPERATION_REORDER_LABELS,
+    DATASET_OPERATION_SPLIT_DATASET,
+    DATASET_OPERATION_UPLOAD_IMAGES,
+    require_dataset_operation,
+)
 from contexts.dataset.infrastructure.dataset_layout import (
     DATASET_SPLIT_TRAIN,
     STANDARD_DATASET_SPLITS,
-    build_label_relpath,
     get_dataset_auto_labels_dir,
-    get_dataset_images_dir,
-    get_dataset_legacy_labels_dir,
-    get_dataset_labels_dir,
-    resolve_existing_label_path_for_image,
+    get_dataset_split_content_dir,
 )
 from contexts.project.infrastructure.project_paths import (
     get_project_dataset_dir,
@@ -22,6 +29,7 @@ from contexts.dataset.infrastructure.dataset_augmentation import build_augmented
 from contexts.dataset.infrastructure.dataset_import_runtime import (
     cleanup_import_jobs as cleanup_dataset_import_jobs,
     create_import_job as create_dataset_import_job,
+    has_import_job,
 )
 from contexts.dataset.infrastructure.dataset_labels import (
     delete_dataset_label as delete_label,
@@ -34,32 +42,37 @@ from contexts.dataset.infrastructure.dataset_mutations import (
 )
 from contexts.dataset.infrastructure.dataset_repository import analyze_dataset as analyze_dataset_record
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
+from contexts.dataset.infrastructure.dataset_repository import scan_project_datasets as scan_project_dataset_records
+from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
     load_dataset_yaml,
     require_dataset_config_path,
+    save_dataset_vision_task_type,
     save_standard_dataset_yaml,
     save_dataset_tags,
     validate_dataset_name as validate_name,
 )
-from shared.utils.media_constants import IMAGE_FILE_EXTENSIONS
-from shared.utils.fs_utils import allocate_nonconflicting_path, compute_file_md5, remove_file_silent, remove_tree
+from constants.media import IMAGE_FILE_EXTENSIONS
+from shared.utils.fs_utils import (
+    compute_file_md5,
+    remove_file_silent,
+    remove_tree,
+)
 from shared.utils.path_utils import (
     build_file_item,
     build_file_items,
-    derive_file_stem,
     is_within_path,
     resolve_allowed_dir_path,
-    resolve_relative_child_path,
-    resolve_safe_child_path,
     resolve_storage_path,
     sanitize_bundle_name,
     slice_items,
     storage_path_ref,
-    validate_filename,
 )
 from shared.utils.value_utils import parse_bool, require_present
+from shared.utils.zip_utils import split_archive_filename
 
 
 def _load_names(source_root):
@@ -71,6 +84,16 @@ def _load_names(source_root):
         if isinstance(raw, list):
             names = [str(x) for x in raw]
     return names
+
+
+def list_project_datasets(project_path):
+    """返回项目内全部受协议管理的数据集摘要，作为 dataset 上下文公开查询入口。"""
+    return scan_project_dataset_records(project_path)
+
+
+def has_dataset_import_job(job_id):
+    """判断导入任务是否仍有效，作为 dataset 上下文公开查询入口。"""
+    return has_import_job(job_id)
 
 
 def get_dataset_info(project_path, dataset_name):
@@ -100,36 +123,35 @@ def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
     target_root = get_project_dataset_dir(project_path, new_dataset_name)
     if os.path.exists(target_root):
         raise ValueError(f"数据集 {new_dataset_name} 已存在")
-    target_images_dir = get_dataset_images_dir(target_root, DATASET_SPLIT_TRAIN)
-    target_labels_dir = get_dataset_labels_dir(target_root, DATASET_SPLIT_TRAIN)
-    os.makedirs(target_images_dir, exist_ok=True)
-    os.makedirs(target_labels_dir, exist_ok=True)
-
-    count = 0
-    for image_path in image_paths:
-        image_path = resolve_storage_path(image_path)
-        if not image_path or not os.path.exists(image_path):
-            continue
-        image_name = os.path.basename(image_path)
-        shutil.copy2(image_path, os.path.join(target_images_dir, image_name))
-
-        label_path = resolve_existing_label_path_for_image(image_path)
-        if label_path:
-            shutil.copy2(label_path, os.path.join(target_labels_dir, os.path.basename(label_path)))
-        count += 1
 
     source_root = resolve_project_dataset_root(project_path, dataset_name=source_dataset)
+    if not source_root:
+        raise ValueError("源数据集不存在")
+    vision_task_type = load_dataset_vision_task_type(source_root)
+    require_dataset_operation(vision_task_type, DATASET_OPERATION_CREATE_SUBSET)
     names = {}
-    if source_root:
-        source_yaml = find_dataset_config(source_root)
-        if source_yaml:
-            names = load_dataset_yaml(source_root, default={}).get("names") or {}
-        if not names:
-            info = analyze_dataset_record(source_root) or {}
-            if info.get("names"):
-                names = {i: n for i, n in enumerate(info["names"])}
+    source_yaml = find_dataset_config(source_root)
+    if source_yaml:
+        names = load_dataset_yaml(source_root, default={}).get("names") or {}
+    if not names:
+        info = analyze_dataset_record(source_root) or {}
+        if info.get("names"):
+            names = {i: n for i, n in enumerate(info["names"])}
 
-    save_standard_dataset_yaml(target_root, names, include_test=False, val_fallback_split=DATASET_SPLIT_TRAIN)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    count = 0
+    for image_path in image_paths:
+        if strategy.copy_subset_sample(source_root, target_root, image_path):
+            count += 1
+
+    save_standard_dataset_yaml(
+        target_root,
+        names,
+        vision_task_type=vision_task_type,
+        include_test=False,
+        val_fallback_split=DATASET_SPLIT_TRAIN,
+    )
+    save_dataset_vision_task_type(target_root, vision_task_type)
     return {"dataset_name": new_dataset_name, "image_count": count, "dataset_root": storage_path_ref(target_root)}
 
 
@@ -144,6 +166,7 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
     source_root = resolve_project_dataset_root(project_path, dataset_name=source_dataset)
     if not source_root:
         raise ValueError("源数据集不存在")
+    require_dataset_operation(load_dataset_vision_task_type(source_root), DATASET_OPERATION_AUGMENT_DATASET)
     target_root = ""
     if not dry_run:
         target_root = get_project_dataset_dir(project_path, new_dataset_name)
@@ -154,6 +177,7 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
         source_root=source_root,
         target_root=target_root,
         names=_load_names(source_root),
+        vision_task_type=load_dataset_vision_task_type(source_root),
         split=str(payload.get("split") or DATASET_SPLIT_TRAIN).strip() or DATASET_SPLIT_TRAIN,
         target_class_configs=target_class_configs,
         non_target_keep_ratio=min(1.0, max(0.0, float(payload.get("non_target_keep_ratio") if payload.get("non_target_keep_ratio") is not None else 0.35))),
@@ -186,11 +210,9 @@ def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, o
     """按类别和标注状态筛选数据集图片。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
     dataset_root = get_project_dataset_dir(project_path, dataset_name)
-    img_dir = get_dataset_images_dir(dataset_root, split)
-    lbl_dir = get_dataset_labels_dir(dataset_root, split)
-    auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
-    if not os.path.exists(img_dir):
-        return {"items": [], "total": 0}
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    names = load_dataset_names(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
 
     unannotated = parse_bool(unannotated_raw)
     has_auto_label = parse_bool(has_auto_label_raw)
@@ -207,62 +229,24 @@ def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, o
     class_id_set = set(class_ids)
 
     images = []
-    for root, _, files in os.walk(img_dir):
-        for filename in files:
-            if not filename.lower().endswith(IMAGE_FILE_EXTENSIONS):
-                continue
-            image_path = os.path.join(root, filename)
-            rel = os.path.relpath(image_path, img_dir)
-            label_path = os.path.join(lbl_dir, build_label_relpath(rel))
-            auto_label_path = os.path.join(auto_dir, build_label_relpath(rel))
-            label_exists = os.path.exists(label_path)
-            label_has_content = label_exists and os.path.getsize(label_path) > 0
-            auto_label_exists = os.path.exists(auto_label_path)
-            auto_label_has_content = auto_label_exists and os.path.getsize(auto_label_path) > 0
-            if has_auto_label:
-                if not auto_label_exists:
-                    continue
-            if unannotated:
-                if label_exists:
-                    continue
-                images.append(
-                    {
-                        "path": image_path,
-                        "pending": auto_label_has_content,
-                        "has_auto_label": auto_label_has_content,
-                        "annotated": label_has_content,
-                    }
-                )
-                continue
-            if class_id_set:
-                present = set()
-                if label_has_content:
-                    try:
-                        with open(label_path, "r", encoding="utf-8") as handle:
-                            for line in handle:
-                                parts = line.strip().split()
-                                if not parts:
-                                    continue
-                                try:
-                                    present.add(int(float(parts[0])))
-                                except Exception:
-                                    continue
-                    except Exception:
-                        present = set()
-                has_any = bool(present & class_id_set)
-                if mode == "exclude":
-                    if has_any:
-                        continue
-                elif not has_any:
-                    continue
-            images.append(
-                {
-                    "path": image_path,
-                    "pending": auto_label_has_content,
-                    "has_auto_label": auto_label_has_content,
-                    "annotated": label_has_content,
-                }
-            )
+    for image_path in strategy.iter_list_image_paths(
+        dataset_root,
+        split,
+        unannotated=unannotated,
+        has_auto_label=has_auto_label,
+    ):
+        item = strategy.build_image_record(
+            dataset_root,
+            split,
+            image_path,
+            names,
+            class_id_set,
+            mode,
+            unannotated,
+            has_auto_label,
+        )
+        if item:
+            images.append(item)
     images.sort(key=lambda item: item["path"] if isinstance(item, dict) else str(item))
     items = build_file_items(images)
     return slice_items(items, offset=offset, limit=limit)
@@ -271,21 +255,14 @@ def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, o
 def upload_dataset_images(project_path, dataset_name, split, files):
     """保存上传图片并避免文件名冲突。"""
     require_present(project_path=project_path, dataset_name=dataset_name, files=files)
-    target_dir = get_dataset_images_dir(get_project_dataset_dir(project_path, dataset_name), split)
-    os.makedirs(target_dir, exist_ok=True)
-    saved = []
-    for file in files:
-        try:
-            filename = validate_filename(
-                file.filename,
-                allowed_extensions=IMAGE_FILE_EXTENSIONS,
-                field_name="图片名",
-            )
-        except ValueError:
-            continue
-        dst = allocate_nonconflicting_path(os.path.join(target_dir, filename))
-        file.save(dst)
-        saved.append(dst)
+    dataset_root = get_project_dataset_dir(project_path, dataset_name)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    require_dataset_operation(vision_task_type, DATASET_OPERATION_UPLOAD_IMAGES)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    saved = strategy.upload_images(dataset_root, split, files)
+    if not saved and files:
+        supported = ", ".join(IMAGE_FILE_EXTENSIONS)
+        raise ValueError(f"未保存任何图片，当前支持的图片格式为: {supported}")
     return {"saved": build_file_items(saved), "count": len(saved)}
 
 
@@ -293,32 +270,17 @@ def delete_dataset_image(project_path, dataset_name, split, image_rel=None, imag
     """删除图片及其手工和自动标签文件。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
     dataset_root = get_project_dataset_dir(project_path, dataset_name)
-    img_dir = get_dataset_images_dir(dataset_root, split)
-    lbl_dir = get_dataset_labels_dir(dataset_root, split)
-    auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
     if not image_rel and image_path:
         try:
-            image_rel = resolve_relative_child_path(image_path, root=img_dir)
+            image_rel = strategy.resolve_image_relative_path(dataset_root, split, image_path)
         except Exception:
             image_rel = None
     if not image_rel:
         raise ValueError("缺少 image_rel 或 image_path")
-
-    image_target_real = resolve_safe_child_path(img_dir, image_rel)
-    rel_noext = os.path.splitext(image_rel)[0]
-    label_path = resolve_safe_child_path(lbl_dir, build_label_relpath(rel_noext))
-    auto_path = resolve_safe_child_path(auto_dir, build_label_relpath(rel_noext))
-    deleted = {"image": False, "label": False, "auto_label": False}
-    if os.path.exists(image_target_real):
-        remove_file_silent(image_target_real)
-        deleted["image"] = True
-    if os.path.exists(label_path):
-        remove_file_silent(label_path)
-        deleted["label"] = True
-    if os.path.exists(auto_path):
-        remove_file_silent(auto_path)
-        deleted["auto_label"] = True
-    return {"deleted": deleted}
+    resolved_image_path = resolve_storage_path(image_path) if image_path else None
+    return {"deleted": strategy.delete_image(dataset_root, split, image_rel, image_path=resolved_image_path)}
 
 
 def batch_delete_dataset_images(project_path, dataset_name, split, image_paths):
@@ -344,6 +306,7 @@ def reorder_dataset_labels_use_case(project_path, dataset_name, order, splits=No
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
+    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_REORDER_LABELS)
     yaml_path = require_dataset_config_path(dataset_root)
     result = reorder_labels(dataset_root, yaml_path, order, splits=splits)
     return {"dataset_root": storage_path_ref(dataset_root), "yaml_path": storage_path_ref(yaml_path), **result}
@@ -357,6 +320,7 @@ def delete_dataset_label_use_case(project_path, dataset_name, class_id=None, cla
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
+    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_DELETE_LABEL)
     yaml_path = require_dataset_config_path(dataset_root)
     delete_id = resolve_label_id(yaml_path, class_id=class_id, class_name=class_name)
     return delete_label(dataset_root, yaml_path, delete_id, splits=splits, delete_empty_files=True)
@@ -378,6 +342,7 @@ def clear_dataset_auto_labels(project_path, dataset_name):
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
+    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_AUTO_ANNOTATE)
 
     deleted_files = 0
     cleared_splits = []
@@ -419,13 +384,17 @@ def validate_dataset(dataset_path):
     dataset_info = analyze_dataset_record(dataset_path)
     if not dataset_info:
         raise ValueError("无法分析数据集")
+    can_train = bool((dataset_info.get("capabilities") or {}).get("operations", {}).get("train"))
+    annotated_count = int(dataset_info.get("annotated_count") or dataset_info.get("label_count") or 0)
     validation = {
-        "can_train": dataset_info["annotation_rate"] > 0.8,
+        "can_train": can_train and bool(dataset_info.get("has_train")) and annotated_count > 0,
         "can_validate": dataset_info["has_val"],
         "can_test": dataset_info["has_test"],
         "annotation_rate": dataset_info["annotation_rate"],
         "image_count": dataset_info["image_count"],
         "label_count": dataset_info["label_count"],
+        "annotated_count": annotated_count,
+        "unannotated_count": int(dataset_info.get("unannotated_count") or 0),
     }
     return {"validation": validation, "dataset_info": dataset_info}
 
@@ -451,11 +420,16 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
         raise ValueError(f"数据集 {new_dataset_name} 已存在")
     names_a = _load_names(dataset_a_root)
     names_b = _load_names(dataset_b_root)
+    vision_task_type_a = load_dataset_vision_task_type(dataset_a_root)
+    vision_task_type_b = load_dataset_vision_task_type(dataset_b_root)
     if not names_a or not names_b:
         raise ValueError("无法读取数据集类别信息")
     if names_a != names_b:
         raise ValueError("两个数据集类别不一致，无法合并")
-    stats = merge_datasets(dataset_a_root, dataset_b_root, target_root, names_a)
+    if vision_task_type_a != vision_task_type_b:
+        raise ValueError("两个数据集任务类型不一致，无法合并")
+    require_dataset_operation(vision_task_type_a, DATASET_OPERATION_MERGE_DATASETS)
+    stats = merge_datasets(dataset_a_root, dataset_b_root, target_root, names_a, vision_task_type=vision_task_type_a)
     return {
         "dataset_root": storage_path_ref(target_root),
         "dataset_a_root": storage_path_ref(dataset_a_root),
@@ -466,30 +440,26 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
 
 
 def split_dataset_use_case(project_path, dataset_name, val_ratio=0.1, test_ratio=0):
-    """按比例重写标准数据集的 split 分布。"""
+    """按类别分层抽样重建标准数据集的 split 分布。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
+    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_SPLIT_DATASET)
     if float(val_ratio) + float(test_ratio) >= 1.0:
         raise ValueError("验证集和测试集比例之和必须小于1")
     counts = split_dataset(dataset_root, float(val_ratio), float(test_ratio), rng=random.Random())
     return {"dataset_name": dataset_name, "counts": counts}
 
 
-def create_import_upload_job(project_path_ref, target_name, uploaded_file):
+def create_import_upload_job(project_path_ref, target_name, uploaded_file, vision_task_type):
     """校验上传 zip 并登记数据集导入任务。"""
     cleanup_dataset_import_jobs()
     if not uploaded_file:
         raise ValueError('未上传文件，请用 form-data 字段 "file"')
     if not uploaded_file.filename:
         raise ValueError("文件名为空")
-    try:
-        inferred_name = derive_file_stem(uploaded_file.filename, allowed_extensions={".zip"}, field_name="压缩包")
-    except ValueError as exc:
-        if "扩展名不支持" in str(exc):
-            raise ValueError("仅支持 .zip 格式") from exc
-        raise
+    inferred_name, _archive_ext = split_archive_filename(uploaded_file.filename)
     dataset_name = (target_name or "").strip() or inferred_name
     err = validate_name(dataset_name)
     if err:
@@ -499,7 +469,7 @@ def create_import_upload_job(project_path_ref, target_name, uploaded_file):
     dest = os.path.join(training_dir, dataset_name)
     if os.path.exists(dest):
         raise ValueError(f"数据集 {dataset_name} 已存在")
-    return create_dataset_import_job(storage_path_ref(project_path_ref), dataset_name, uploaded_file)
+    return create_dataset_import_job(storage_path_ref(project_path_ref), dataset_name, uploaded_file, vision_task_type)
 
 
 def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=None, keep_split=DATASET_SPLIT_TRAIN):
@@ -511,6 +481,8 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name, dataset_path=dataset_path)
     if not dataset_root:
         raise ValueError("数据集不存在")
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    require_dataset_operation(vision_task_type, DATASET_OPERATION_DEDUPLICATE_IMAGES)
 
     splits = list(STANDARD_DATASET_SPLITS)
     keep_split = str(keep_split or DATASET_SPLIT_TRAIN).strip().lower()
@@ -525,7 +497,7 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
     errors = []
 
     for split in ordered_splits:
-        images_dir = get_dataset_images_dir(dataset_root, split)
+        images_dir = get_dataset_split_content_dir(dataset_root, split, vision_task_type)
         if not os.path.isdir(images_dir):
             continue
         for root, dirs, files in os.walk(images_dir):
@@ -558,21 +530,19 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
 
     deleted_images = 0
     deleted_labels = 0
+    strategy = resolve_dataset_task_strategy(vision_task_type)
     for item in duplicates:
         try:
             if os.path.exists(item["img"]):
-                remove_file_silent(item["img"])
-                deleted_images += 1
+                if strategy.delete_duplicate_image(dataset_root, item["split"], item["img"]):
+                    deleted_images += 1
         except Exception as exc:
             errors.append({"path": item["img"], "error": str(exc)})
 
         rel_noext = item["rel_noext"]
         split = item["split"]
-        for label_path in (
-            os.path.join(get_dataset_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
-            os.path.join(get_dataset_legacy_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
-            os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
-        ):
+        label_paths = strategy.resolve_deduplicate_label_paths(dataset_root, split, rel_noext)
+        for label_path in label_paths:
             try:
                 if os.path.exists(label_path):
                     remove_file_silent(label_path)

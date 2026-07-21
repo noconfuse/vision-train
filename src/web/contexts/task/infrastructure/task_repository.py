@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from db import session_scope
 from db.models import Task, TaskHistory
 from shared.utils.time_utils import now_iso
-from task_status import ACTIVE_TASK_STATUSES, TASK_STATUS_ACTIVE, TASK_STATUS_INTERRUPTED, TASK_STATUS_PENDING, TASK_STATUS_RUNNING, TASK_STATUS_STOPPING
+from protocols.task_status import ACTIVE_TASK_STATUSES, TASK_STATUS_ACTIVE, TASK_STATUS_INTERRUPTED, TASK_STATUS_PENDING, TASK_STATUS_RUNNING, TASK_STATUS_STOPPING
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ def create_task(
     type_,
     dataset_name=None,
     dataset_path=None,
+    vision_task_type=None,
     payload=None,
     message=None,
     artifacts=None,
@@ -36,6 +37,7 @@ def create_task(
         project_name=project_name,
         dataset_name=dataset_name,
         dataset_path=dataset_path,
+        vision_task_type=vision_task_type,
         status=TASK_STATUS_PENDING,
         progress=0,
         message=message or f"已创建{type_}任务",

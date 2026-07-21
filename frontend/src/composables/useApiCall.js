@@ -27,16 +27,16 @@ export const useApiCall = () => {
     try {
       const data = await promise;
       if (successMsg) toast.success(successMsg);
-      if (onSuccess) onSuccess(data);
+      if (onSuccess) await onSuccess(data);
       return data;
     } catch (e) {
       if (!silent) {
         toast.error(e?.message || errorMsg || '请求失败');
       }
-      if (onError) onError(null, e);
+      if (onError) await onError(null, e);
       return null;
     } finally {
-      if (finallyFn) finallyFn();
+      if (finallyFn) await finallyFn();
     }
   };
 };

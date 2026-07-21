@@ -2,6 +2,7 @@
 
 import os
 
+from shared.utils.fs_utils import is_within_path
 from shared.utils.value_utils import require_present
 
 from app.config import (
@@ -184,19 +185,6 @@ def resolve_and_validate_project(project_ref):
     return abs_path, project_name
 
 
-def is_within_path(path, root):
-    """判断路径是否位于指定根目录内部。"""
-    if not path or not root:
-        return False
-    try:
-        path_real = os.path.realpath(path)
-        root_real = os.path.realpath(root)
-        common = os.path.commonpath([path_real, root_real])
-    except Exception:
-        return False
-    return common == root_real
-
-
 def is_within_any_path(path, roots):
     """判断路径是否位于任一允许根目录内部。"""
     for root in roots or ():
@@ -238,14 +226,6 @@ def resolve_relative_child_path(path_ref, *, root):
     if not is_within_path(real_path, real_root):
         raise ValueError("非法路径")
     return os.path.relpath(real_path, real_root)
-
-
-def resolve_safe_child_path(root, *parts):
-    """在指定根目录下拼接子路径并阻止路径逃逸。"""
-    path = os.path.join(str(root or ""), *[str(part or "") for part in parts])
-    if not is_within_path(path, root):
-        raise ValueError("非法路径")
-    return path
 
 
 def validate_leaf_name(value, field_name="name"):
