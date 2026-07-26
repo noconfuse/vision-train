@@ -17,7 +17,12 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_unlabeled_dir,
     resolve_existing_label_path_for_image,
 )
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT
+from protocols.vision_task_type import (
+    VISION_TASK_TYPE_CLASSIFY,
+    VISION_TASK_TYPE_DETECT,
+    VISION_TASK_TYPE_POSE,
+    VISION_TASK_TYPE_SEGMENT,
+)
 from shared.utils.fs_utils import allocate_nonconflicting_path, is_within_path, remove_dir_if_empty, remove_file_silent, resolve_safe_child_path
 from shared.utils.path_utils import resolve_relative_child_path, resolve_storage_path, validate_filename
 
@@ -58,6 +63,10 @@ class BaseDatasetTaskStrategy:
     def resolve_deduplicate_label_paths(self, dataset_root, split, rel_noext):
         """返回去重时需要一并清理的关联标签文件列表。"""
         return [os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel_noext))]
+
+    def build_dataset_summary_metadata(self, _dataset_root, _data_config):
+        """返回任务专属的数据集摘要元信息。"""
+        return {}
 
 
 class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
@@ -398,9 +407,23 @@ class ClassifyDatasetTaskStrategy(BaseDatasetTaskStrategy):
         return True
 
 
+class SegmentDatasetTaskStrategy(DetectDatasetTaskStrategy):
+    """实例分割数据集策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_SEGMENT
+
+
+class PoseDatasetTaskStrategy(DetectDatasetTaskStrategy):
+    """姿态估计数据集策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_POSE
+
+
 _DATASET_TASK_STRATEGIES = {
     VISION_TASK_TYPE_DETECT: DetectDatasetTaskStrategy(),
     VISION_TASK_TYPE_CLASSIFY: ClassifyDatasetTaskStrategy(),
+    VISION_TASK_TYPE_SEGMENT: SegmentDatasetTaskStrategy(),
+    VISION_TASK_TYPE_POSE: PoseDatasetTaskStrategy(),
 }
 
 

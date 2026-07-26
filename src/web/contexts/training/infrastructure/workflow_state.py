@@ -89,6 +89,8 @@ def build_training_workflow(workflow_record, tasks):
         'project_path': workflow_meta.get('project_path') or (latest_task or {}).get('project_path'),
         'project_name': workflow_meta.get('project_name') or (latest_task or {}).get('project_name'),
         'dataset_name': workflow_meta.get('dataset_name') or (latest_task or {}).get('dataset_name'),
+        'dataset_id': workflow_meta.get('dataset_id') or (latest_task or {}).get('dataset_id'),
+        'dataset_version_id': workflow_meta.get('dataset_version_id') or (latest_task or {}).get('dataset_version_id'),
         'dataset_path': workflow_meta.get('dataset_path') or (latest_task or {}).get('dataset_path'),
         'vision_task_type': vision_task_type,
         'status': workflow_status,

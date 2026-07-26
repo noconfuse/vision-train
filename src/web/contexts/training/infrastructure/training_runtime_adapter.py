@@ -7,6 +7,8 @@ from contexts.model.domain.capabilities import (
     MODEL_TRAINING_MODE_UNSUPPORTED,
     MODEL_TRAINING_MODE_YOLO_CLASSIFY,
     MODEL_TRAINING_MODE_YOLO_DETECT,
+    MODEL_TRAINING_MODE_YOLO_POSE,
+    MODEL_TRAINING_MODE_YOLO_SEGMENT,
 )
 
 
@@ -101,6 +103,23 @@ def _resolve_class_name_id(class_names, class_name):
         if str(name) == class_name:
             return index
     return None
+
+
+def _to_float_list(values):
+    """尽量把张量/数组转成 float 列表。"""
+    if values is None:
+        return []
+    if hasattr(values, "tolist"):
+        values = values.tolist()
+    if not isinstance(values, list):
+        return []
+    result = []
+    for item in values:
+        try:
+            result.append(float(item))
+        except (TypeError, ValueError):
+            return []
+    return result
 
 
 class TrainingRuntimeAdapter:
@@ -214,9 +233,171 @@ class ClassifyTrainingRuntimeAdapter(TrainingRuntimeAdapter):
         return result
 
 
+class SegmentTrainingRuntimeAdapter(TrainingRuntimeAdapter):
+    """YOLO 实例分割训练运行时语义。"""
+
+    training_mode = MODEL_TRAINING_MODE_YOLO_SEGMENT
+
+    def build_epoch_update(self, trainer, epoch, epochs):
+        metrics = trainer.metrics
+        box_loss = _read_loss_item(trainer.loss_items, index=0)
+        seg_loss = _read_loss_item(trainer.loss_items, index=1)
+        cls_loss = _read_loss_item(trainer.loss_items, index=2)
+        dfl_loss = _read_loss_item(trainer.loss_items, index=3)
+        seg_map50 = _read_metric_value(metrics, keys=("metrics/mAP50(M)",))
+        seg_map50_95 = _read_metric_value(metrics, keys=("metrics/mAP50-95(M)",))
+        box_map50 = _read_metric_value(metrics, keys=("metrics/mAP50(B)",))
+        box_map50_95 = _read_metric_value(metrics, keys=("metrics/mAP50-95(B)",))
+        return {
+            "message": f"Epoch {epoch}/{epochs} seg_loss:{seg_loss:.4f} mask mAP50:{seg_map50:.4f}",
+            "history": {
+                "epoch": epoch,
+                "box_loss": box_loss,
+                "cls_loss": cls_loss,
+                "dfl_loss": dfl_loss,
+                "map50": seg_map50,
+                "map50_95": seg_map50_95,
+                "extra": {
+                    "seg_loss": seg_loss,
+                    "box_map50": box_map50,
+                    "box_map50_95": box_map50_95,
+                    "seg_map50": seg_map50,
+                    "seg_map50_95": seg_map50_95,
+                },
+            },
+        }
+
+    def build_evaluate_results(self, metrics, split):
+        return {
+            "split": split,
+            "box_precision": float(getattr(metrics.box, "mp", 0)),
+            "box_recall": float(getattr(metrics.box, "mr", 0)),
+            "box_map50": float(getattr(metrics.box, "map50", 0)),
+            "box_map50_95": float(getattr(metrics.box, "map", 0)),
+            "seg_precision": float(getattr(metrics.seg, "mp", 0)),
+            "seg_recall": float(getattr(metrics.seg, "mr", 0)),
+            "seg_map50": float(getattr(metrics.seg, "map50", 0)),
+            "seg_map50_95": float(getattr(metrics.seg, "map", 0)),
+        }
+
+    def build_inference_result(self, output, _image_path, _img_dir, _class_names):
+        names = getattr(output, "names", {}) or {}
+        boxes = []
+        segments = list(getattr(getattr(output, "masks", None), "xy", []) or [])
+        if output.boxes is not None:
+            for index, box in enumerate(output.boxes):
+                class_id = int(box.cls[0])
+                polygon = []
+                if index < len(segments):
+                    polygon = [[float(x), float(y)] for x, y in segments[index].tolist()]
+                boxes.append(
+                    {
+                        "xyxy": [float(value) for value in box.xyxy[0].tolist()],
+                        "conf": float(box.conf[0]),
+                        "cls": class_id,
+                        "class_name": names.get(class_id, f"class_{class_id}"),
+                        "segment": polygon,
+                    }
+                )
+        return {"boxes": boxes}
+
+
+class PoseTrainingRuntimeAdapter(TrainingRuntimeAdapter):
+    """YOLO 姿态估计训练运行时语义。"""
+
+    training_mode = MODEL_TRAINING_MODE_YOLO_POSE
+
+    def build_epoch_update(self, trainer, epoch, epochs):
+        metrics = trainer.metrics
+        box_loss = _read_loss_item(trainer.loss_items, index=0)
+        pose_loss = _read_loss_item(trainer.loss_items, index=1)
+        kobj_loss = _read_loss_item(trainer.loss_items, index=2)
+        cls_loss = _read_loss_item(trainer.loss_items, index=3)
+        dfl_loss = _read_loss_item(trainer.loss_items, index=4)
+        pose_map50 = _read_metric_value(metrics, keys=("metrics/mAP50(P)",))
+        pose_map50_95 = _read_metric_value(metrics, keys=("metrics/mAP50-95(P)",))
+        box_map50 = _read_metric_value(metrics, keys=("metrics/mAP50(B)",))
+        box_map50_95 = _read_metric_value(metrics, keys=("metrics/mAP50-95(B)",))
+        return {
+            "message": f"Epoch {epoch}/{epochs} pose_loss:{pose_loss:.4f} pose mAP50:{pose_map50:.4f}",
+            "history": {
+                "epoch": epoch,
+                "box_loss": box_loss,
+                "cls_loss": cls_loss,
+                "dfl_loss": dfl_loss,
+                "map50": pose_map50,
+                "map50_95": pose_map50_95,
+                "extra": {
+                    "pose_loss": pose_loss,
+                    "kobj_loss": kobj_loss,
+                    "box_map50": box_map50,
+                    "box_map50_95": box_map50_95,
+                    "pose_map50": pose_map50,
+                    "pose_map50_95": pose_map50_95,
+                },
+            },
+        }
+
+    def build_evaluate_results(self, metrics, split):
+        pose_metrics = getattr(metrics, "pose", None)
+        if pose_metrics is None:
+            pose_metrics = getattr(metrics, "box", None)
+        return {
+            "split": split,
+            "precision": float(getattr(pose_metrics, "mp", 0)),
+            "recall": float(getattr(pose_metrics, "mr", 0)),
+            "map50": float(getattr(pose_metrics, "map50", 0)),
+            "map50_95": float(getattr(pose_metrics, "map", 0)),
+            "box_map50": float(getattr(getattr(metrics, "box", None), "map50", 0)),
+            "box_map50_95": float(getattr(getattr(metrics, "box", None), "map", 0)),
+        }
+
+    def build_inference_result(self, output, _image_path, _img_dir, _class_names):
+        names = getattr(output, "names", {}) or {}
+        boxes = []
+        keypoints_xy = list(getattr(getattr(output, "keypoints", None), "xy", []) or [])
+        keypoints_conf = list(getattr(getattr(output, "keypoints", None), "conf", []) or [])
+        if output.boxes is not None:
+            for index, box in enumerate(output.boxes):
+                class_id = int(box.cls[0])
+                item = {
+                    "xyxy": [float(value) for value in box.xyxy[0].tolist()],
+                    "conf": float(box.conf[0]),
+                    "cls": class_id,
+                    "class_name": names.get(class_id, f"class_{class_id}"),
+                    "keypoints": [],
+                }
+                xy_points = []
+                if index < len(keypoints_xy):
+                    raw_points = keypoints_xy[index]
+                    if hasattr(raw_points, "tolist"):
+                        raw_points = raw_points.tolist()
+                    if isinstance(raw_points, list):
+                        for point in raw_points:
+                            if isinstance(point, list) and len(point) >= 2:
+                                try:
+                                    xy_points.append({"x": float(point[0]), "y": float(point[1])})
+                                except (TypeError, ValueError):
+                                    xy_points.append({"x": 0.0, "y": 0.0})
+                conf_points = []
+                if index < len(keypoints_conf):
+                    conf_points = _to_float_list(keypoints_conf[index])
+                for point_index, point in enumerate(xy_points):
+                    item["keypoints"].append(
+                        {
+                            **point,
+                            "conf": conf_points[point_index] if point_index < len(conf_points) else None,
+                        }
+                    )
+                boxes.append(item)
+        return {"boxes": boxes}
+
+
 _RUNTIME_ADAPTERS = {
     MODEL_TRAINING_MODE_YOLO_DETECT: DetectTrainingRuntimeAdapter(),
     MODEL_TRAINING_MODE_YOLO_CLASSIFY: ClassifyTrainingRuntimeAdapter(),
+    MODEL_TRAINING_MODE_YOLO_SEGMENT: SegmentTrainingRuntimeAdapter(),
+    MODEL_TRAINING_MODE_YOLO_POSE: PoseTrainingRuntimeAdapter(),
 }
 
 

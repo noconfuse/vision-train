@@ -486,9 +486,6 @@ const onView = async (t) => {
 };
 
 onMounted(async () => {
-  if (store.projects.length === 0) {
-    try { await store.fetchProjects({ silent: true }); } catch (_) {}
-  }
   await load();
   timer = setInterval(() => load(false), 2000);
 });

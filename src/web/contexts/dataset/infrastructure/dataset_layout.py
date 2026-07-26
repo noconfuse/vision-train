@@ -3,7 +3,7 @@
 import os
 
 from shared.utils.path_utils import normalize_path_ref
-from constants.media import DATASET_SPLITS
+from constants.media import DATASET_SPLITS, IMAGE_FILE_EXTENSIONS
 from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 
 DATASET_SPLIT_TRAIN = "train"
@@ -125,7 +125,12 @@ def resolve_existing_label_path_for_image(image_path):
 
 def build_label_relpath(image_relpath):
     """把图片相对路径转换为标签相对路径。"""
-    return os.path.splitext(str(image_relpath or ""))[0] + ".txt"
+    text = str(image_relpath or "")
+    root, ext = os.path.splitext(text)
+    lowered = str(ext or "").lower()
+    if lowered in IMAGE_FILE_EXTENSIONS or lowered == ".txt":
+        return root + ".txt"
+    return text + ".txt"
 
 
 def extract_classification_class_name(relative_path):

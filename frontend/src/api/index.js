@@ -47,6 +47,7 @@ function appendAuthTokenToAssetUrl(url) {
     && !url.startsWith('/api/video/stream?')
     && !url.startsWith('/api/video/task/image_file?')
     && !url.startsWith('/api/training/model_export_bundle?')
+    && !url.startsWith('/api/training/model_template_bundle?')
   ) {
     return url;
   }
@@ -269,18 +270,14 @@ const api = {
   // SSE 流式 import process
   importDatasetProcess(jobId, onEvent) {
     const url = `/api/dataset/import/process?job_id=${encodeURIComponent(jobId)}`;
-    // #region debug-point D:sse-start
-    __dbgReportDatasetImportSseDrop('D', 'sse_fetch_start', {
-      jobId,
-      hasToken: !!getAuthToken(),
-      url,
-    });
-    // #endregion
     return consumeSse(url, onEvent);
   },
 
   // Datasets
   getDatasetInfo(params) { return get('/dataset/info', { params }); },
+  getDatasetVersions(params) { return get('/dataset/versions', { params }); },
+  publishDatasetVersion(data) { return post('/dataset/publish_version', data); },
+  restoreDatasetVersion(data) { return post('/dataset/restore_version', data); },
   splitDataset(data) { return post('/dataset/split', data); },
   updateDatasetTags(data) { return post('/dataset/update_tags', data); },
   clearDatasetAutoLabels(data) { return post('/dataset/clear_auto_labels', data); },
@@ -313,6 +310,9 @@ const api = {
   getAutoAnnotateStatus(params) { return get('/auto_annotate/batch/status', { params }); },
   getAnnotation(params) { return get('/annotation/get', { params }); },
   saveAnnotation(data) { return post('/annotation/save', data); },
+  refineSegmentAnnotation(data) { return post('/annotation/segment/refine', data); },
+  refineSegmentBoundaryPatch(data) { return post('/annotation/segment/boundary_patch', data); },
+  eraseSegmentAnnotation(data) { return post('/annotation/segment/erase', data); },
 
   // Models
   getModels(params) { return get('/models', { params }); },
@@ -345,6 +345,12 @@ const api = {
   // Training model_exports
   getTrainingModelExports(params) { return get('/training/model_exports', { params }); },
   deleteTrainingModelExport(data) { return post('/training/model_export/delete', data); },
+
+  // Training deployment templates
+  startTrainingTemplate(data) { return post('/training/template/start', data); },
+  getTrainingTemplates(params) { return get('/training/templates', { params }); },
+  getTrainingTemplateSourceChoices(params) { return get('/training/template_source_choices', { params }); },
+  deleteTrainingTemplate(data) { return post('/training/template/delete', data); },
 
   // 评估 / 导出
   startEvaluate(data) { return post('/training/start_evaluate', data); },

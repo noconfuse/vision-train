@@ -2,7 +2,7 @@
 
 import os
 
-from app.config import DATASET_CONFIG_FILENAME
+from app.config import DATASET_CONFIG_FILENAME, DATASET_CONFIG_FILENAMES
 from contexts.dataset.infrastructure.dataset_task_type import (
     save_dataset_vision_task_type,
 )
@@ -14,7 +14,6 @@ from shared.utils.yaml_utils import (
     resolve_names_list as resolve_dataset_names_list,
     save_yaml_file,
 )
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 
 __all__ = [
     "build_standard_dataset_config",
@@ -37,6 +36,14 @@ __all__ = [
 ]
 
 DATASET_NAME_RE = TOKEN_NAME_PATTERN
+
+
+def _looks_like_dataset_config(config):
+    """判断 YAML 内容是否像一份数据集配置。"""
+    if not isinstance(config, dict):
+        return False
+    has_split = any(config.get(split) not in (None, "", []) for split in DATASET_SPLITS)
+    return has_split and config.get("names") not in (None, "", [])
 
 
 def _normalize_dataset_split_value(value, old_base, new_base):
@@ -93,9 +100,23 @@ def build_standard_dataset_config(
 
 
 def find_dataset_config(dataset_root):
-    """返回标准 dataset.yaml 的路径。"""
-    candidate = os.path.join(dataset_root, DATASET_CONFIG_FILENAME)
-    return candidate if os.path.isfile(candidate) else None
+    """返回标准 dataset.yaml，或可识别的外部数据集 YAML 配置路径。"""
+    for filename in DATASET_CONFIG_FILENAMES:
+        candidate = os.path.join(dataset_root, filename)
+        if os.path.isfile(candidate):
+            return candidate
+    if not os.path.isdir(dataset_root):
+        return None
+    for filename in sorted(os.listdir(dataset_root)):
+        lowered = filename.lower()
+        if lowered.startswith(".") or lowered in DATASET_CONFIG_FILENAMES or not lowered.endswith((".yaml", ".yml")):
+            continue
+        candidate = os.path.join(dataset_root, filename)
+        if not os.path.isfile(candidate):
+            continue
+        if _looks_like_dataset_config(load_yaml_file(candidate, default={})):
+            return candidate
+    return None
 
 
 def require_dataset_config_path(dataset_root):

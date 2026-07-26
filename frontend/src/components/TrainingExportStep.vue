@@ -199,6 +199,14 @@
         <AppIcon name="export" class="h-4 w-4" />
         {{ exportIdleActionLabel }}
       </AsyncButton>
+      <button
+        type="button"
+        class="vt-btn-secondary vt-btn-size-lg"
+        @click="emit('deployment-template')"
+      >
+        <AppIcon name="template" class="h-4 w-4" />
+        部署模板
+      </button>
     </div>
   </div>
 </template>
@@ -243,6 +251,7 @@ const props = defineProps({
   workflowId: { type: String, default: '' },
   exportTaskId: { type: String, default: '' },
 });
+const emit = defineEmits(['deployment-template']);
 
 const apiCall = useApiCall();
 const asyncAction = useAsyncAction();
@@ -340,6 +349,7 @@ const displayExportRecords = computed(() => {
       export_path: '',
       export_dir: '',
       progress: current.progress ?? 0,
+      templates: [],
     },
     ...records,
   ];

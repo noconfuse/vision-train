@@ -38,25 +38,9 @@ def build_auto_label_path(img_dir, auto_label_dir, image_path):
     return os.path.join(auto_label_dir, os.path.splitext(rel)[0] + ".txt")
 
 
-def extract_prediction_boxes(prediction, use_openvino):
-    """把不同推理后端的输出统一成框列表。"""
+def extract_prediction_boxes(prediction):
+    """把 Ultralytics 预测结果统一成框列表。"""
     boxes = []
-    if use_openvino:
-        try:
-            return [
-                {
-                    "class": int(box.get("class", 0)),
-                    "x1": float(box["x1"]),
-                    "y1": float(box["y1"]),
-                    "x2": float(box["x2"]),
-                    "y2": float(box["y2"]),
-                }
-                for box in (prediction or [])
-                if all(key in box for key in ("x1", "y1", "x2", "y2"))
-            ]
-        except Exception:
-            return []
-
     try:
         for box in prediction.boxes:
             xyxy = box.xyxy[0].tolist()

@@ -10,6 +10,7 @@ from contexts.task.domain.task_types import (
     TASK_TYPE_EXPORT,
     TASK_TYPE_FRAME_EXTRACTION,
     TASK_TYPE_INFERENCE,
+    TASK_TYPE_TEMPLATE,
     TASK_TYPE_TRAINING,
 )
 from contexts.task.infrastructure.task_runtime import load_task
@@ -20,6 +21,7 @@ from contexts.training.infrastructure.execution_runners import (
     execute_inference_task,
     execute_training_task,
 )
+from contexts.training.infrastructure.template_task_gateway import execute_template_task
 from contexts.video.infrastructure.video_execution_gateway import execute_extraction_task
 
 
@@ -53,6 +55,7 @@ def main():
         TASK_TYPE_EXPORT: execute_export_task,
         TASK_TYPE_INFERENCE: execute_inference_task,
         TASK_TYPE_FRAME_EXTRACTION: execute_extraction_task,
+        TASK_TYPE_TEMPLATE: execute_template_task,
     }
     handler = dispatch.get(task_type)
     if not handler:

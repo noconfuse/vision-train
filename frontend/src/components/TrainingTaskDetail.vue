@@ -20,6 +20,10 @@
           <div class="text-sm font-semibold text-slate-800">{{ trainingConfig?.imgsz ?? '-' }}</div>
         </div>
         <div class="vt-stat-card">
+          <div class="text-xs text-gray-500 mb-1">绑定版本</div>
+          <div class="text-sm font-semibold font-mono text-slate-800 break-all">{{ boundDatasetVersion }}</div>
+        </div>
+        <div class="vt-stat-card">
           <div class="text-xs text-gray-500 mb-1">初始学习率</div>
           <div class="text-sm font-semibold text-slate-800">{{ formatConfigValue(trainingConfig?.lr0) }}</div>
         </div>
@@ -310,24 +314,22 @@
               <div class="text-sm font-semibold text-slate-800">{{ previewCurveTitle }}</div>
               <div class="flex gap-2 text-[11px]">
                 <template v-if="previewCurve === 'loss'">
-                  <template v-if="isClassificationTask">
-                    <span class="vt-text-accent">Loss</span>
-                  </template>
-                  <template v-else>
-                    <span class="text-red-500">Box</span>
-                    <span class="vt-text-accent">Cls</span>
-                    <span class="text-yellow-500">Dfl</span>
-                  </template>
+                  <span
+                    v-for="series in (resultProfile.task_detail?.loss_series || [])"
+                    :key="series.key"
+                    :style="{ color: series.color }"
+                  >
+                    {{ series.label }}
+                  </span>
                 </template>
                 <template v-else>
-                  <template v-if="isClassificationTask">
-                    <span class="text-green-500">Top-1</span>
-                    <span class="text-purple-500">Top-5</span>
-                  </template>
-                  <template v-else>
-                    <span class="text-green-500">mAP50</span>
-                    <span class="text-purple-500">mAP50-95</span>
-                  </template>
+                  <span
+                    v-for="series in (resultProfile.task_detail?.metric_series || [])"
+                    :key="series.key"
+                    :style="{ color: series.color }"
+                  >
+                    {{ series.label }}
+                  </span>
                 </template>
               </div>
             </div>
@@ -340,8 +342,16 @@
               >
                 <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
                 <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-                <template v-if="isClassificationTask">
-                  <polyline :points="getPoints(localMetricsHistory, 'train_loss')" fill="none" stroke="#3b82f6" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                <template v-if="(resultProfile.task_detail?.loss_series || []).length">
+                  <polyline
+                    v-for="series in (resultProfile.task_detail?.loss_series || [])"
+                    :key="series.key"
+                    :points="getPoints(localMetricsHistory, series.key)"
+                    fill="none"
+                    :stroke="series.color"
+                    stroke-width="0.45"
+                    vector-effect="non-scaling-stroke"
+                  />
                 </template>
                 <template v-else>
                   <polyline :points="getPoints(localMetricsHistory, 'box_loss')" fill="none" stroke="#ef4444" stroke-width="0.45" vector-effect="non-scaling-stroke" />
@@ -358,8 +368,15 @@
                 <line x1="0" y1="0" x2="100" y2="0" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
                 <line x1="0" y1="25" x2="100" y2="25" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" stroke-dasharray="2" />
                 <line x1="0" y1="50" x2="100" y2="50" stroke="gray" stroke-opacity="0.2" stroke-width="0.2" />
-                <polyline :points="getMetricsPoints(localMetricsHistory, primaryMetricKey)" fill="none" stroke="#22c55e" stroke-width="0.45" vector-effect="non-scaling-stroke" />
-                <polyline :points="getMetricsPoints(localMetricsHistory, secondaryMetricKey)" fill="none" stroke="#a855f7" stroke-width="0.45" vector-effect="non-scaling-stroke" />
+                <polyline
+                  v-for="series in (resultProfile.task_detail?.metric_series || [])"
+                  :key="series.key"
+                  :points="getMetricsPoints(localMetricsHistory, series.key)"
+                  fill="none"
+                  :stroke="series.color"
+                  stroke-width="0.45"
+                  vector-effect="non-scaling-stroke"
+                />
               </svg>
               <div class="mt-2 text-[11px] text-gray-500">点击空白处或右上角关闭预览。</div>
             </div>
@@ -465,6 +482,11 @@ const showEvaluateTestHint = computed(() => (
   && !props.canOpenEvaluate
 ));
 const modelName = computed(() => localTask.value?.payload?.model_name || '-');
+const boundDatasetVersion = computed(() => (
+  localTask.value?.dataset_version_id
+  || localTask.value?.payload?.dataset_version_id
+  || '-'
+));
 const outputDirPath = computed(() => {
   const outputDir = localTask.value?.artifacts?.output_dir || '';
   return outputDir || '-';
@@ -480,8 +502,18 @@ const secondaryMetricKey = computed(() => resultProfile.value.task_detail?.secon
 const primaryMetricLabel = computed(() => resultProfile.value.task_detail?.primary_metric?.label || '最新指标');
 const secondaryMetricLabel = computed(() => resultProfile.value.task_detail?.secondary_metric?.label || '综合指标');
 const formatMetricText = (value) => (typeof value === 'number' ? value.toFixed(3) : '-');
-const primaryMetricValue = computed(() => `${resultProfile.value.task_detail?.primary_metric?.value_prefix || primaryMetricLabel.value} ${formatMetricText(latestMetrics.value?.[primaryMetricKey.value])}`);
-const secondaryMetricValue = computed(() => `${resultProfile.value.task_detail?.secondary_metric?.value_prefix || secondaryMetricLabel.value} ${formatMetricText(latestMetrics.value?.[secondaryMetricKey.value])}`);
+const resolveHistoryMetricValue = (entry, key) => {
+  if (!entry || !key) return undefined;
+  if (typeof entry[key] === 'number') return entry[key];
+  if (typeof entry?.extra?.[key] === 'number') return entry.extra[key];
+  return undefined;
+};
+const primaryMetricValue = computed(() => (
+  `${resultProfile.value.task_detail?.primary_metric?.value_prefix || primaryMetricLabel.value} ${formatMetricText(resolveHistoryMetricValue(latestMetrics.value, primaryMetricKey.value))}`
+));
+const secondaryMetricValue = computed(() => (
+  `${resultProfile.value.task_detail?.secondary_metric?.value_prefix || secondaryMetricLabel.value} ${formatMetricText(resolveHistoryMetricValue(latestMetrics.value, secondaryMetricKey.value))}`
+));
 const progressSummary = computed(() => getTaskTerminalSummary(localTask.value, ''));
 const progressSummaryClass = computed(() => getTaskTerminalSummaryClass(localTask.value));
 const artifactImages = computed(() => Array.isArray(localArtifacts.value?.images) ? localArtifacts.value.images : []);

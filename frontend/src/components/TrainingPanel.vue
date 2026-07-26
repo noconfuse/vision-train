@@ -131,6 +131,7 @@
                 <input
                   type="number"
                   v-model="config[field.key]"
+                  :step="resolveFieldStep(field)"
                   class="vt-input vt-control-md"
                   :placeholder="field.placeholder"
                 >
@@ -142,17 +143,20 @@
             <button @click="showAdvanced = !showAdvanced" class="w-full flex justify-between items-center p-2.5 hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
               <span class="flex items-center gap-2">
                 <AppIcon name="settings" class="h-4 w-4 text-gray-500" />
-                高级增强参数
+                高级配置
               </span>
               <AppIcon name="chevronDown" class="h-4 w-4 text-gray-400 transition-transform duration-200" :class="showAdvanced ? 'rotate-180' : ''" />
             </button>
 
             <div v-show="showAdvanced" class="p-3 border-t border-gray-200 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 bg-gray-50">
-              <div v-for="field in advancedFields" :key="field.key" :class="field.type === 'checkbox' ? 'flex items-end' : ''">
+              <div v-for="field in advancedFields" :key="field.key" :class="field.type === 'checkbox' ? 'flex flex-col' : ''">
                 <template v-if="field.type === 'checkbox'">
-                  <label class="vt-check-card vt-check-card--interactive w-full h-[34px] mt-auto items-center px-2 py-1.5">
-                    <input type="checkbox" v-model="config[field.key]" class="vt-checkbox">
-                    <span class="text-xs font-medium text-gray-700 select-none">{{ field.label }}</span>
+                  <div aria-hidden="true" class="block text-[10px] uppercase tracking-wider font-medium text-transparent mb-1 select-none">
+                    &nbsp;
+                  </div>
+                  <label class="vt-check-card vt-check-card--interactive !items-center w-full h-[34px] px-2 py-1.5 gap-2">
+                    <input type="checkbox" v-model="config[field.key]" class="vt-checkbox !mt-0">
+                    <span class="text-xs font-medium leading-none text-gray-700 select-none">{{ field.label }}</span>
                   </label>
                 </template>
                 <template v-else>
@@ -160,7 +164,7 @@
                   <input
                     type="number"
                     v-model="config[field.key]"
-                    step="0.1"
+                    :step="resolveFieldStep(field)"
                     class="vt-input vt-control-md"
                     :placeholder="field.placeholder"
                   >
@@ -175,9 +179,7 @@
       <aside class="space-y-4 xl:sticky xl:top-3">
         <div class="border border-gray-200 p-4 bg-slate-50/60">
           <div class="vt-step-section-title">{{ trainingProfile.supports_batch_calibration ? '环境与校准' : '训练环境' }}</div>
-          <div class="text-xs text-gray-500 mb-4">{{ trainingProfile.environment_hint }}</div>
-
-          <div class="mb-4">
+          <div class="mt-4 mb-4">
             <div class="text-xs font-semibold text-slate-700 mb-3">当前训练环境</div>
             <div v-if="runtimeProfile" class="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -211,7 +213,7 @@
                   <div class="text-xs text-gray-500">GPU</div>
                   <div class="text-slate-800 break-words">{{ runtimeProfile.gpu?.name || '-' }}</div>
                 </div>
-                <div>
+                <div v-if="!isUnifiedMemoryRuntime">
                   <div class="text-xs text-gray-500">可用显存</div>
                   <div class="font-mono text-slate-800">{{ formatBytes(runtimeProfile.gpu?.free_memory_bytes) }}</div>
                 </div>
@@ -227,12 +229,13 @@
                 <div class="text-[11px] text-gray-500 mt-1">用当前模型、图像尺寸和设备做一次短时试跑，确认可启动批次范围。</div>
               </div>
               <AsyncButton
-                class="vt-btn-secondary text-xs"
+                class="vt-btn-secondary text-xs inline-flex items-center gap-1 whitespace-nowrap shrink-0"
                 :disabled="!canCalibrate || selectedPresetNeedsPreparation || isTaskActive(batchCalibration)"
                 :pending="isActionPending(CALIBRATION_ACTION_KEY) || isTaskActive(batchCalibration)"
                 :loading-text="calibrationButtonLabel"
                 @click="startBatchCalibration(shouldForceCalibration)"
               >
+                <AppIcon name="target" class="h-3.5 w-3.5" />
                 {{ calibrationIdleButtonLabel }}
               </AsyncButton>
             </div>
@@ -245,10 +248,6 @@
                 <div>
                   <div class="text-xs text-gray-500">当前图像尺寸</div>
                   <div class="font-mono text-slate-800">{{ displayedCalibrationImgsz }}</div>
-                </div>
-                <div>
-                  <div class="text-xs text-gray-500">运行设备</div>
-                  <div class="font-mono text-slate-800">{{ runtimeProfile?.device?.label || '-' }}</div>
                 </div>
                 <div>
                   <div class="text-xs text-gray-500">校准状态</div>
@@ -298,10 +297,7 @@
                   batch={{ attempt.batch }} · {{ attempt.ok ? '通过' : '失败' }} · {{ attempt.duration_ms }}ms
                 </div>
               </div>
-              <div v-if="!batchCalibration" class="text-sm text-gray-500">
-                {{ trainingProfile.empty_calibration_hint }}
-              </div>
-              <div v-else-if="batchCalibrationResult?.max_batch" class="text-xs text-slate-600">
+              <div v-if="batchCalibrationResult?.max_batch" class="text-xs text-slate-600">
                 该结果表示当前环境下的实测可启动上限。
               </div>
               <div v-else-if="!isTaskActive(batchCalibration)" class="text-xs text-slate-600">
@@ -379,6 +375,7 @@ const asyncAction = useAsyncAction();
 const currentTask = computed(() => trainingStore.currentTask);
 const isRunning = computed(() => isTaskActive(currentTask.value));
 const runtimeProfile = computed(() => trainingStore.runtimeProfile);
+const isUnifiedMemoryRuntime = computed(() => runtimeProfile.value?.device?.type === 'mps');
 const batchCalibration = computed(() => trainingStore.batchCalibration);
 const batchCalibrationResult = computed(() => batchCalibration.value?.artifacts?.calibration_result || null);
 const calibrationPayload = computed(() => batchCalibration.value?.payload || {});
@@ -432,6 +429,7 @@ const BASE_TRAINING_DEFAULTS = {
   imgsz: 640,
   freeze: 0,
   lr0: 0.01,
+  lrf: '',
   rect: false,
   mosaic: '',
   mixup: '',
@@ -449,6 +447,8 @@ const BASE_TRAINING_DEFAULTS = {
   close_mosaic: '',
   cos_lr: false,
 };
+
+const INTEGER_FIELD_KEYS = new Set(['epochs', 'batch', 'imgsz', 'freeze', 'close_mosaic']);
 
 const trainingConfigDefaults = computed(() => ({
   ...BASE_TRAINING_DEFAULTS,
@@ -559,27 +559,41 @@ const getHistoryMetricText = (model) => {
   return '';
 };
 
+const isBlankNumericValue = (value) => value === null || value === undefined || `${value}`.trim() === '';
+const parseOptionalInt = (value) => {
+  if (isBlankNumericValue(value)) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+const parseOptionalFloat = (value) => {
+  if (isBlankNumericValue(value)) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+const resolveFieldStep = (field) => (INTEGER_FIELD_KEYS.has(field.key) ? 1 : 'any');
+
 const FIELD_BUILDERS = {
-  epochs: (value) => parseInt(value, 10) || null,
-  batch: (value) => parseInt(value, 10) || null,
-  imgsz: (value) => parseInt(value, 10) || null,
-  freeze: (value) => value,
-  lr0: (value) => parseFloat(value) || null,
+  epochs: parseOptionalInt,
+  batch: parseOptionalInt,
+  imgsz: parseOptionalInt,
+  freeze: parseOptionalInt,
+  lr0: parseOptionalFloat,
+  lrf: parseOptionalFloat,
   rect: (value) => !!value,
-  mosaic: (value) => parseFloat(value) || null,
-  mixup: (value) => parseFloat(value) || null,
-  copy_paste: (value) => parseFloat(value) || null,
-  degrees: (value) => parseFloat(value) || null,
-  translate: (value) => parseFloat(value) || null,
-  scale: (value) => parseFloat(value) || null,
-  shear: (value) => parseFloat(value) || null,
-  perspective: (value) => parseFloat(value) || null,
-  flipud: (value) => parseFloat(value) || null,
-  fliplr: (value) => parseFloat(value) || null,
-  hsv_h: (value) => parseFloat(value) || null,
-  hsv_s: (value) => parseFloat(value) || null,
-  hsv_v: (value) => parseFloat(value) || null,
-  close_mosaic: (value) => parseInt(value, 10) || null,
+  mosaic: parseOptionalFloat,
+  mixup: parseOptionalFloat,
+  copy_paste: parseOptionalFloat,
+  degrees: parseOptionalFloat,
+  translate: parseOptionalFloat,
+  scale: parseOptionalFloat,
+  shear: parseOptionalFloat,
+  perspective: parseOptionalFloat,
+  flipud: parseOptionalFloat,
+  fliplr: parseOptionalFloat,
+  hsv_h: parseOptionalFloat,
+  hsv_s: parseOptionalFloat,
+  hsv_v: parseOptionalFloat,
+  close_mosaic: parseOptionalInt,
   cos_lr: (value) => !!value,
 };
 

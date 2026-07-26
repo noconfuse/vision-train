@@ -4,7 +4,7 @@ import os
 import importlib
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import DB_PATH, IO
@@ -56,3 +56,28 @@ def init_db():
     # 必须在 import models 之后才能 create_all（让 Base.metadata 看到所有表）
     importlib.import_module('.models', __package__)
     Base.metadata.create_all(engine)
+    _ensure_runtime_columns()
+
+
+def _ensure_runtime_columns():
+    """为无迁移框架的旧数据库补齐运行期新增列。"""
+    if not DB_URL.startswith('sqlite'):
+        return
+    expected_columns = {
+        "tasks": {
+            "dataset_id": "VARCHAR(32)",
+            "dataset_version_id": "VARCHAR(32)",
+        },
+        "workflow_records": {
+            "dataset_id": "VARCHAR(32)",
+            "dataset_version_id": "VARCHAR(32)",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table_name, columns in expected_columns.items():
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, column_type in columns.items():
+                if column_name in existing:
+                    continue
+                connection.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")

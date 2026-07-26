@@ -91,12 +91,12 @@
                 </div>
               </td>
               <td class="vt-table-cell">
-                <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 whitespace-nowrap" @click.stop>
+                <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 whitespace-nowrap">
                   <button
                     class="vt-action-btn vt-action-btn--primary"
                     :class="!isTrainingSupported(ds) ? 'cursor-not-allowed opacity-50' : ''"
                     :disabled="!isTrainingSupported(ds)"
-                    @click="goToTraining(ds)"
+                    @click.stop="goToTraining(ds)"
                   >
                     <AppIcon name="train" class="h-3.5 w-3.5" />
                     <span>训练</span>
@@ -104,25 +104,29 @@
                   <button
                     v-if="isSplitSupported(ds)"
                     class="vt-action-btn vt-action-btn--warning"
-                    @click="openSplit(ds)"
+                    @click.stop="openSplit(ds)"
                   >
                     <AppIcon name="split" class="h-3.5 w-3.5" />
                     <span>重切分</span>
                   </button>
-                  <button class="vt-action-btn vt-action-btn--info" @click="openTags(ds)">
+                  <button class="vt-action-btn vt-action-btn--info" @click.stop="openTags(ds)">
                     <AppIcon name="tags" class="h-3.5 w-3.5" />
                     <span>标签</span>
+                  </button>
+                  <button class="vt-action-btn vt-action-btn--info" @click.stop="openVersions(ds)">
+                    <AppIcon name="detail" class="h-3.5 w-3.5" />
+                    <span>版本</span>
                   </button>
                   <button
                     class="vt-action-btn"
                     :class="downloadingMap[ds.path] ? 'cursor-wait text-gray-400' : 'vt-action-btn--success'"
                     :disabled="!!downloadingMap[ds.path]"
-                    @click="downloadDataset(ds)"
+                    @click.stop="downloadDataset(ds)"
                   >
                     <AppIcon name="download" class="h-3.5 w-3.5" />
                     <span>{{ downloadingMap[ds.path] ? '打包中' : '下载' }}</span>
                   </button>
-                  <button class="vt-action-btn vt-action-btn--danger" @click="confirmDelete(ds)">
+                  <button class="vt-action-btn vt-action-btn--danger" @click.stop="confirmDelete(ds)">
                     <AppIcon name="delete" class="h-3.5 w-3.5" />
                     <span>删除</span>
                   </button>
@@ -220,6 +224,77 @@
       </div>
     </div>
 
+    <div v-if="versionsDataset" class="vt-modal-backdrop" @click.self="closeVersions">
+      <div class="vt-modal-panel vt-modal-panel--lg max-h-[80vh] overflow-y-auto p-5">
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-base font-semibold text-slate-800">数据集版本：{{ versionsDataset.name }}</h3>
+            <div class="mt-1 font-mono text-[11px] text-gray-400 break-all">
+              <span>ID {{ versionsDataset.dataset_id || '-' }}</span>
+              <span class="mx-1 text-gray-300">·</span>
+              <span>当前 {{ versionsDataset.current_version_id || '-' }}</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <AsyncButton
+              class="vt-btn-solid-primary vt-btn-size-md"
+              :pending="isActionPending(PUBLISH_VERSION_ACTION_KEY)"
+              loading-text="发布中..."
+              @click="publishVersion"
+            >
+              发布当前版本
+            </AsyncButton>
+            <button class="vt-btn-link" @click="closeVersions">关闭</button>
+          </div>
+        </div>
+
+        <div v-if="versionsLoading" class="py-10 text-center text-sm text-gray-400">加载版本中...</div>
+        <div v-else-if="versionRecords.length === 0" class="py-10 text-center text-sm text-gray-400">暂无版本记录</div>
+        <div v-else class="space-y-2">
+          <div
+            v-for="version in versionRecords"
+            :key="version.version_id"
+            class="vt-choice-card"
+            :class="version.version_id === versionsDataset.current_version_id ? 'vt-choice-card--selected' : 'vt-choice-card--interactive'"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-mono text-sm font-semibold text-slate-800">{{ version.version_id }}</span>
+                  <span class="vt-tag vt-tag--sm">{{ getVersionReasonLabel(version.reason) }}</span>
+                  <span v-if="version.version_id === versionsDataset.current_version_id" class="vt-tag vt-tag--sm">当前</span>
+                </div>
+                <div class="mt-1 text-xs text-slate-500">
+                  创建于 {{ formatVersionTime(version.created_at) }}
+                </div>
+                <div v-if="version.source_version_id" class="mt-1 font-mono text-[11px] text-gray-400">
+                  来源 {{ version.source_version_id }}
+                </div>
+              </div>
+              <div class="shrink-0">
+                <UiTooltip v-if="version.version_id !== versionsDataset.current_version_id" side="top" align="end">
+                  <template #trigger>
+                    <span class="inline-block" :class="isRestoreRedundant(version) ? 'cursor-not-allowed' : ''">
+                      <AsyncButton
+                        class="vt-btn-secondary vt-btn-size-sm"
+                        :disabled="isRestoreRedundant(version)"
+                        :pending="isActionPending(restoreVersionActionKey(version.version_id))"
+                        loading-text="恢复中..."
+                        @click="restoreVersion(version)"
+                      >
+                        恢复为当前
+                      </AsyncButton>
+                    </span>
+                  </template>
+                  <template v-if="isRestoreRedundant(version)">当前已是该版本的恢复结果</template>
+                </UiTooltip>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 删除确认 Modal -->
     <div v-if="deleteDataset" class="vt-modal-backdrop" @click.self="closeDelete">
       <div class="vt-modal-panel vt-modal-panel--md p-5">
@@ -251,10 +326,13 @@ import api from '../api';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { useToast } from '../composables/useToast';
 import { useApiCall } from '../composables/useApiCall';
+import { useConfirm } from '../composables/useConfirm';
 import { useDatasets } from '../composables/useDatasets';
+import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
 import ImportDatasetModal from './ImportDatasetModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
+import UiTooltip from './ui/Tooltip.vue';
 import {
   getDatasetTypeLabel,
   getDatasetTypeProgressClass,
@@ -263,17 +341,20 @@ import {
 import { DATASET_OPERATION, resolveDatasetOperationGuard } from '../datasetCapabilities';
 import { assertCapabilityGuard } from '../capabilityGuards';
 import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
-import { buildDatasetZipFilename, triggerBlobDownload } from '../utils';
+import { buildDatasetZipFilename, formatDateTime, triggerBlobDownload } from '../utils';
 
 const store = useMainStore();
+const workflowStore = useTrainingWorkflowStore();
 const router = useRouter();
 const toast = useToast();
+const { confirm: showConfirm } = useConfirm();
 const apiCall = useApiCall();
 const asyncAction = useAsyncAction();
 const { allDatasets } = useDatasets();
 const SPLIT_ACTION_KEY = 'dataset-list:split';
 const TAGS_ACTION_KEY = 'dataset-list:save-tags';
 const DELETE_ACTION_KEY = 'dataset-list:delete';
+const PUBLISH_VERSION_ACTION_KEY = 'dataset-list:publish-version';
 const isActionPending = (key) => asyncAction.isPending(key);
 
 // 打开数据集详情页
@@ -315,6 +396,9 @@ const testRatio = ref(0.0);
 const tagsDataset = ref(null);
 const editTags = ref([]);
 const newTag = ref('');
+const versionsDataset = ref(null);
+const versionsLoading = ref(false);
+const versionRecords = ref([]);
 
 const deleteDataset = ref(null);
 
@@ -325,6 +409,28 @@ const getTrainingGuard = (dataset) => resolveTrainingDatasetGuard(dataset);
 const getSplitGuard = (dataset) => resolveDatasetOperationGuard(dataset, DATASET_OPERATION.SPLIT_DATASET);
 const isTrainingSupported = (dataset) => getTrainingGuard(dataset).enabled;
 const isSplitSupported = (dataset) => getSplitGuard(dataset).enabled;
+const formatVersionTime = (value) => formatDateTime(value, { dateStyle: 'compact', timeStyle: 'short' });
+const restoreVersionActionKey = (versionId) => `dataset-list:restore-version:${String(versionId || '')}`;
+const VERSION_REASON_LABELS = Object.freeze({
+  bootstrap: '初始化',
+  import: '导入',
+  manual_publish: '手动发布',
+  restore: '恢复版本',
+  create_subset: '生成子集',
+  augment_subset: '弱类补偿',
+  merge_dataset_pair: '合并数据集',
+  split_dataset: '重切分',
+  deduplicate_dataset: '图片去重',
+});
+const getVersionReasonLabel = (reason) => VERSION_REASON_LABELS[String(reason || '').trim()] || String(reason || '未知变更');
+
+const isRestoreRedundant = (version) => {
+  if (!version || !versionsDataset.value?.current_version_id) return false;
+  if (version.version_id === versionsDataset.value.current_version_id) return false;
+  const current = versionRecords.value.find((item) => item.version_id === versionsDataset.value.current_version_id);
+  if (!current) return false;
+  return current.reason === 'restore' && current.source_version_id === version.version_id;
+};
 
 const refreshProjectsKeepSelection = async () => {
   const cur = store.currentProject;
@@ -339,6 +445,33 @@ const refreshProjectsKeepSelection = async () => {
     } else {
       store.selectedDataset = null;
     }
+  }
+};
+
+const findDatasetAfterRefresh = (source) => {
+  if (!source) return null;
+  return allDatasets.value.find((item) => item.dataset_id && item.dataset_id === source.dataset_id)
+    || allDatasets.value.find((item) => item.path === source.path)
+    || allDatasets.value.find((item) => item.name === source.name)
+    || null;
+};
+
+const loadVersions = async (dataset = versionsDataset.value) => {
+  if (!dataset || !store.currentProject?.path) return;
+  versionsLoading.value = true;
+  try {
+    const result = await api.getDatasetVersions({
+      project_path: store.currentProject.path,
+      dataset_name: dataset.name,
+    });
+    versionRecords.value = Array.isArray(result?.versions) ? result.versions : [];
+    versionsDataset.value = {
+      ...dataset,
+      dataset_id: result?.dataset_id || dataset.dataset_id,
+      current_version_id: result?.current_version_id || dataset.current_version_id,
+    };
+  } finally {
+    versionsLoading.value = false;
   }
 };
 
@@ -420,6 +553,23 @@ const closeTags = () => {
   newTag.value = '';
 };
 
+const openVersions = async (ds) => {
+  versionsDataset.value = ds;
+  versionRecords.value = [];
+  try {
+    await loadVersions(ds);
+  } catch (e) {
+    versionsDataset.value = null;
+    toast.error(e?.message || '加载版本失败');
+  }
+};
+
+const closeVersions = () => {
+  versionsDataset.value = null;
+  versionRecords.value = [];
+  versionsLoading.value = false;
+};
+
 const addTag = () => {
   const t = (newTag.value || '').trim();
   if (!t) return;
@@ -450,6 +600,60 @@ const saveTags = async () => {
   });
 };
 
+const publishVersion = async () => {
+  if (!versionsDataset.value || !store.currentProject?.path) return;
+  await asyncAction.run(PUBLISH_VERSION_ACTION_KEY, async () => {
+    await apiCall(api.publishDatasetVersion({
+      project_path: store.currentProject.path,
+      dataset_name: versionsDataset.value.name,
+      reason: 'manual_publish',
+    }), {
+      onSuccess: async () => {
+        await refreshProjectsKeepSelection();
+        const refreshedDataset = findDatasetAfterRefresh(versionsDataset.value) || versionsDataset.value;
+        versionsDataset.value = refreshedDataset;
+        workflowStore.invalidateDataset({
+          project_path: store.currentProject.path,
+          dataset_name: refreshedDataset.name,
+          dataset_id: refreshedDataset.dataset_id,
+        });
+        await loadVersions(refreshedDataset);
+        toast.success('已发布新版本');
+      },
+    });
+  });
+};
+
+const restoreVersion = async (version) => {
+  if (!versionsDataset.value || !version?.version_id || !store.currentProject?.path) return;
+  const ok = await showConfirm({
+    title: '恢复数据集版本',
+    message: `将把当前工作数据集恢复为版本 ${version.version_id}，并生成一个新的当前版本，是否继续？`,
+    confirmText: '恢复',
+  });
+  if (!ok) return;
+  await asyncAction.run(restoreVersionActionKey(version.version_id), async () => {
+    await apiCall(api.restoreDatasetVersion({
+      project_path: store.currentProject.path,
+      dataset_name: versionsDataset.value.name,
+      version_id: version.version_id,
+    }), {
+      onSuccess: async () => {
+        await refreshProjectsKeepSelection();
+        const refreshedDataset = findDatasetAfterRefresh(versionsDataset.value) || versionsDataset.value;
+        versionsDataset.value = refreshedDataset;
+        workflowStore.invalidateDataset({
+          project_path: store.currentProject.path,
+          dataset_name: refreshedDataset.name,
+          dataset_id: refreshedDataset.dataset_id,
+        });
+        await loadVersions(refreshedDataset);
+        toast.success('已恢复到指定版本');
+      },
+    });
+  });
+};
+
 const confirmDelete = (ds) => {
   deleteDataset.value = ds;
 };
@@ -467,6 +671,11 @@ const runDelete = async () => {
       dataset_path: deleteDataset.value.path
     }), {
       onSuccess: async () => {
+        workflowStore.invalidateDataset({
+          project_path: store.currentProject.path,
+          dataset_name: deleteDataset.value.name,
+          dataset_id: deleteDataset.value.dataset_id,
+        });
         await refreshProjectsKeepSelection();
         closeDelete();
         toast.success('数据集已删除');

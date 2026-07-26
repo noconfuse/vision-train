@@ -12,7 +12,10 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_split_content_dir,
     get_dataset_unlabeled_dir,
 )
-from contexts.dataset.infrastructure.dataset_schema import load_dataset_names
+from contexts.dataset.infrastructure.dataset_schema import (
+    load_dataset_names,
+    load_dataset_yaml,
+)
 from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
 from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 from shared.utils.path_utils import is_within_path, resolve_storage_path
@@ -218,3 +221,300 @@ def resolve_classification_class_id(context):
         return next(index for index, name in enumerate(class_names) if str(name) == class_name)
     except StopIteration:
         return None
+
+
+def encode_segment_lines(labels, width, height):
+    """把分割多边形列表编码为 YOLO segment 文本行。"""
+    lines = []
+    for item in labels or []:
+        cls = int(item.get("class", 0))
+        points = item.get("points") or []
+        if len(points) < 3:
+            continue
+        coords = []
+        last = None
+        for pt in points:
+            x = float(pt.get("x"))
+            y = float(pt.get("y"))
+            x = max(0.0, min(float(width), x))
+            y = max(0.0, min(float(height), y))
+            pair = (x, y)
+            if last is not None and pair == last:
+                continue
+            last = pair
+            coords.append(x / float(width))
+            coords.append(y / float(height))
+        if len(coords) < 6:
+            continue
+        lines.append(f"{cls} " + " ".join(f"{v:.6f}" for v in coords))
+    return lines
+
+
+def decode_segment_file(label_path, width, height):
+    """把 YOLO segment 标签文件解码为像素坐标多边形。"""
+    polygons = []
+    if not os.path.exists(label_path):
+        return polygons
+    try:
+        with open(label_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                parts = line.strip().split()
+                if len(parts) < 7:
+                    continue
+                cls = parse_yolo_class_id(parts[0])
+                coords = parts[1:]
+                if len(coords) < 6:
+                    continue
+                if len(coords) % 2 == 1:
+                    coords = coords[:-1]
+                points = []
+                for idx in range(0, len(coords), 2):
+                    try:
+                        x = float(coords[idx]) * float(width)
+                        y = float(coords[idx + 1]) * float(height)
+                    except Exception:
+                        continue
+                    x = max(0.0, min(float(width), x))
+                    y = max(0.0, min(float(height), y))
+                    points.append({"x": x, "y": y})
+                if len(points) < 3:
+                    continue
+                if points and points[0] == points[-1]:
+                    points = points[:-1]
+                polygons.append({"class": cls, "points": points})
+    except Exception:
+        return []
+    return polygons
+
+
+def _normalize_pose_kpt_shape(raw_kpt_shape):
+    """把配置中的 kpt_shape 规范为 [count, dims]。"""
+    if not isinstance(raw_kpt_shape, (list, tuple)) or len(raw_kpt_shape) != 2:
+        return None
+    try:
+        keypoint_count = int(raw_kpt_shape[0])
+        dims = int(raw_kpt_shape[1])
+    except (TypeError, ValueError):
+        return None
+    if keypoint_count <= 0 or dims not in (2, 3):
+        return None
+    return [keypoint_count, dims]
+
+
+def _normalize_pose_skeleton(raw_skeleton, keypoint_count):
+    """把 skeleton 规范为 zero-based 的 [[from, to], ...]。"""
+    if not isinstance(raw_skeleton, list) or keypoint_count <= 0:
+        return []
+    normalized_pairs = []
+    one_based_pairs = []
+    for pair in raw_skeleton:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        try:
+            start = int(pair[0])
+            end = int(pair[1])
+        except (TypeError, ValueError):
+            continue
+        normalized_pairs.append([start, end])
+        one_based_pairs.append([start - 1, end - 1])
+    if not normalized_pairs:
+        return []
+
+    def _is_valid(pairs):
+        return all(0 <= start < keypoint_count and 0 <= end < keypoint_count and start != end for start, end in pairs)
+
+    if _is_valid(normalized_pairs):
+        return normalized_pairs
+    if _is_valid(one_based_pairs):
+        return one_based_pairs
+    return []
+
+
+def load_pose_annotation_meta(dataset_root, class_names=None):
+    """读取 pose 标注所需的关键点元数据。"""
+    config = load_dataset_yaml(dataset_root, default={})
+    kpt_shape = _normalize_pose_kpt_shape((config or {}).get("kpt_shape")) or [0, 3]
+    keypoint_count = int(kpt_shape[0])
+    dims = int(kpt_shape[1])
+    flip_idx = (config or {}).get("flip_idx")
+    if not isinstance(flip_idx, list) or len(flip_idx) != keypoint_count:
+        flip_idx = list(range(keypoint_count))
+    else:
+        flip_idx = [int(value) for value in flip_idx]
+    raw_kpt_names = (config or {}).get("kpt_names")
+    normalized_kpt_names = {}
+    if isinstance(raw_kpt_names, dict):
+        for raw_class_id, names in raw_kpt_names.items():
+            try:
+                class_id = int(raw_class_id)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(names, list) and len(names) == keypoint_count:
+                normalized_kpt_names[class_id] = [str(name) for name in names]
+    default_names = [f"kpt_{index}" for index in range(keypoint_count)]
+    class_count = len(class_names or [])
+    for class_id in range(class_count):
+        normalized_kpt_names.setdefault(class_id, list(default_names))
+    if not normalized_kpt_names:
+        normalized_kpt_names[0] = list(default_names)
+    skeleton = _normalize_pose_skeleton((config or {}).get("skeleton"), keypoint_count)
+    return {
+        "kpt_shape": [keypoint_count, dims],
+        "keypoint_count": keypoint_count,
+        "dims": dims,
+        "flip_idx": flip_idx,
+        "kpt_names": normalized_kpt_names,
+        "skeleton": skeleton,
+    }
+
+
+def _infer_pose_line_dims(payload_length, kpt_shape):
+    """按配置或标签长度推断单行 pose 标签的关键点维度。"""
+    normalized_shape = _normalize_pose_kpt_shape(kpt_shape)
+    if normalized_shape:
+        keypoint_count, dims = normalized_shape
+        expected_length = keypoint_count * dims
+        if payload_length >= expected_length:
+            return dims, keypoint_count
+    if payload_length > 0 and payload_length % 3 == 0:
+        return 3, payload_length // 3
+    if payload_length > 0 and payload_length % 2 == 0:
+        return 2, payload_length // 2
+    return None, 0
+
+
+def decode_pose_file(label_path, width, height, *, kpt_shape=None):
+    """把 YOLO pose 标签解码为像素坐标关键点实例。"""
+    instances = []
+    if not os.path.exists(label_path):
+        return instances
+    try:
+        with open(label_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                cls = parse_yolo_class_id(parts[0])
+                cx = float(parts[1]) * float(width)
+                cy = float(parts[2]) * float(height)
+                ww = float(parts[3]) * float(width)
+                hh = float(parts[4]) * float(height)
+                x1 = max(0.0, cx - ww / 2.0)
+                y1 = max(0.0, cy - hh / 2.0)
+                x2 = min(float(width), cx + ww / 2.0)
+                y2 = min(float(height), cy + hh / 2.0)
+                payload = parts[5:]
+                dims, keypoint_count = _infer_pose_line_dims(len(payload), kpt_shape)
+                if not dims or keypoint_count <= 0:
+                    continue
+                points = []
+                for index in range(keypoint_count):
+                    base = index * dims
+                    try:
+                        px = float(payload[base]) * float(width)
+                        py = float(payload[base + 1]) * float(height)
+                    except (TypeError, ValueError, IndexError):
+                        px = 0.0
+                        py = 0.0
+                    visible = 0
+                    if dims == 3:
+                        try:
+                            visible = int(float(payload[base + 2]))
+                        except (TypeError, ValueError, IndexError):
+                            visible = 0
+                    elif px > 0 or py > 0:
+                        visible = 2
+                    px = max(0.0, min(float(width), px))
+                    py = max(0.0, min(float(height), py))
+                    visible = max(0, min(2, visible))
+                    points.append({"x": px, "y": py, "visible": visible})
+                instances.append(
+                    {
+                        "class": cls,
+                        "x1": x1,
+                        "y1": y1,
+                        "x2": x2,
+                        "y2": y2,
+                        "keypoints": points,
+                    }
+                )
+    except Exception:
+        return []
+    return instances
+
+
+def _build_pose_bbox(instance, width, height, keypoints):
+    """优先使用实例自带 bbox，缺失时从可见关键点回推。"""
+    try:
+        x1 = float(instance.get("x1"))
+        y1 = float(instance.get("y1"))
+        x2 = float(instance.get("x2"))
+        y2 = float(instance.get("y2"))
+    except (TypeError, ValueError):
+        x1 = y1 = x2 = y2 = None
+    if None not in (x1, y1, x2, y2) and x2 > x1 and y2 > y1:
+        return (
+            max(0.0, min(float(width), x1)),
+            max(0.0, min(float(height), y1)),
+            max(0.0, min(float(width), x2)),
+            max(0.0, min(float(height), y2)),
+        )
+    visible_points = [
+        (
+            max(0.0, min(float(width), float(point.get("x", 0.0)))),
+            max(0.0, min(float(height), float(point.get("y", 0.0)))),
+        )
+        for point in (keypoints or [])
+        if int(point.get("visible", 0) or 0) > 0
+    ]
+    if not visible_points:
+        return 0.0, 0.0, 0.0, 0.0
+    xs = [point[0] for point in visible_points]
+    ys = [point[1] for point in visible_points]
+    min_x = min(xs)
+    max_x = max(xs)
+    min_y = min(ys)
+    max_y = max(ys)
+    if max_x <= min_x:
+        max_x = min(float(width), min_x + 1.0)
+    if max_y <= min_y:
+        max_y = min(float(height), min_y + 1.0)
+    return min_x, min_y, max_x, max_y
+
+
+def encode_pose_lines(labels, width, height, *, kpt_shape=None):
+    """把关键点实例编码为 YOLO pose 文本行。"""
+    lines = []
+    normalized_shape = _normalize_pose_kpt_shape(kpt_shape)
+    keypoint_count = int(normalized_shape[0]) if normalized_shape else 0
+    dims = int(normalized_shape[1]) if normalized_shape else 3
+    for item in labels or []:
+        cls = int(item.get("class", 0))
+        keypoints = list((item or {}).get("keypoints") or [])
+        current_count = keypoint_count or len(keypoints)
+        if current_count <= 0:
+            continue
+        x1, y1, x2, y2 = _build_pose_bbox(item, width, height, keypoints)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        cx = ((x1 + x2) / 2.0) / float(width)
+        cy = ((y1 + y2) / 2.0) / float(height)
+        ww = max(0.0, x2 - x1) / float(width)
+        hh = max(0.0, y2 - y1) / float(height)
+        coords = []
+        for index in range(current_count):
+            point = keypoints[index] if index < len(keypoints) and isinstance(keypoints[index], dict) else {}
+            visible = int(point.get("visible", 0) or 0)
+            visible = max(0, min(2, visible))
+            if visible > 0:
+                px = max(0.0, min(float(width), float(point.get("x", 0.0))))
+                py = max(0.0, min(float(height), float(point.get("y", 0.0))))
+            else:
+                px = 0.0
+                py = 0.0
+            coords.append(f"{px / float(width):.6f}")
+            coords.append(f"{py / float(height):.6f}")
+            if dims == 3:
+                coords.append(str(max(0, min(2, visible))))
+        lines.append(f"{cls} {cx:.6f} {cy:.6f} {ww:.6f} {hh:.6f} " + " ".join(coords))
+    return lines

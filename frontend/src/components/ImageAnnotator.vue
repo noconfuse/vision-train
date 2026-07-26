@@ -26,17 +26,28 @@
           >
             <!-- Existing Boxes -->
             <g v-for="(box, idx) in displayBoxes" :key="idx">
+              <rect
+                v-if="box.is_auto"
+                :x="box.x1 * imgWidth"
+                :y="box.y1 * imgHeight"
+                :width="(box.x2 - box.x1) * imgWidth"
+                :height="(box.y2 - box.y1) * imgHeight"
+                stroke="rgba(255, 255, 255, 0.95)"
+                :stroke-width="(selectedBoxIdx === idx ? 4.5 : 3.5) / scale"
+                fill="transparent"
+                pointer-events="none"
+              />
               <!-- Box Rect -->
               <rect
                 :x="box.x1 * imgWidth"
                 :y="box.y1 * imgHeight"
                 :width="(box.x2 - box.x1) * imgWidth"
                 :height="(box.y2 - box.y1) * imgHeight"
-                :stroke="getColor(box.class)"
-                :stroke-width="selectedBoxIdx === idx ? 3 / scale : 2 / scale"
-                :stroke-opacity="box.is_auto ? 0.55 : 0.9"
-                :stroke-dasharray="box.is_auto ? '4' : '0'"
-                fill="transparent"
+                :stroke="box.is_auto ? '#22d3ee' : getColor(box.class)"
+                :stroke-width="box.is_auto ? ((selectedBoxIdx === idx ? 3.25 : 2.5) / scale) : ((selectedBoxIdx === idx ? 3 : 2) / scale)"
+                :stroke-opacity="box.is_auto ? 1 : 0.9"
+                :stroke-dasharray="box.is_auto ? '10 6' : '0'"
+                :fill="box.is_auto ? 'rgba(34, 211, 238, 0.06)' : 'transparent'"
                 :class="selectedBoxIdx === idx ? 'opacity-100' : 'opacity-80 hover:opacity-100'"
                 style="cursor: move; touch-action: none;"
                 @pointerdown="onBoxPointerDown(idx, $event)"
@@ -58,11 +69,11 @@
               <text
                 :x="box.x1 * imgWidth"
                 :y="Math.max(12 / scale, box.y1 * imgHeight - 5 / scale)"
-                :fill="getColor(box.class)"
+                :fill="box.is_auto ? '#67e8f9' : getColor(box.class)"
                 :font-size="12 / scale"
                 font-weight="bold"
-                :opacity="box.is_auto ? 0.8 : 1"
-                style="text-shadow: 1px 1px 1px black; cursor: move; touch-action: none;"
+                :opacity="1"
+                style="text-shadow: 0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9); cursor: move; touch-action: none;"
                 @pointerdown="onBoxPointerDown(idx, $event)"
               >
                 {{ getClassName(box.class) }} {{ box.is_auto ? '(Auto)' : '' }}

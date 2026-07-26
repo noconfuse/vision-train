@@ -99,6 +99,14 @@
             :dataset-name="datasetName"
             :workflow-id="selectedWorkflow?.id || ''"
             :training-task="workflowTrainingTask"
+            @deployment-template="goToDeploymentTemplate"
+          />
+          <TrainingTemplateStep
+            v-else-if="workflowStep === WORKFLOW_STEP.DEPLOYMENT_TEMPLATE && workflowTrainingTask"
+            :project-path="project?.path || ''"
+            :dataset-name="datasetName"
+            :workflow-id="selectedWorkflow?.id || ''"
+            :training-task="workflowTrainingTask"
           />
           <div v-else-if="hasWorkflowContext" class="flex-1 min-h-0 bg-white border border-dashed border-gray-300 px-8 py-10 flex items-center justify-center">
             <div class="max-w-md text-center">
@@ -273,7 +281,10 @@
                   </template>
                   {{ datasetName }}
                 </UiTooltip>
-                <div class="mt-2 text-[11px] text-gray-400 font-mono break-all">{{ dataset.path }}</div>
+                <div class="mt-2">
+                  <span class="text-xs text-gray-500">当前版本</span>
+                  <div class="font-mono text-[11px] text-slate-700 break-all mt-0.5">{{ dataset.current_version_id || '-' }}</div>
+                </div>
               </div>
             </div>
             <div class="grid grid-cols-4 gap-3 mt-4">
@@ -331,7 +342,7 @@
 </template>
 
 <script setup>
-import { computed, watch, ref } from 'vue';
+import { computed, watch, ref, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMainStore } from '../stores/main';
 import { useTrainingStore } from '../stores/training';
@@ -342,6 +353,7 @@ import TrainingPanel from '../components/TrainingPanel.vue';
 import TrainingTaskDetail from '../components/TrainingTaskDetail.vue';
 import TrainingEvaluateStep from '../components/TrainingEvaluateStep.vue';
 import TrainingExportStep from '../components/TrainingExportStep.vue';
+import TrainingTemplateStep from '../components/TrainingTemplateStep.vue';
 import PageState from '../components/PageState.vue';
 import AppHeader from '../components/AppHeader.vue';
 import AppIcon from '../components/ui/AppIcon.vue';
@@ -411,6 +423,7 @@ const routeDraft = computed(() => String(route.query.draft || '') === '1');
 const workflowListKey = computed(() => workflowStore.getDatasetCacheKey({
   project_path: project.value?.path || '',
   dataset_name: datasetName.value,
+  dataset_id: dataset.value?.dataset_id || '',
   archived_only: showArchivedWorkflows.value,
 }));
 const trainingWorkflows = computed(() => workflowStore.workflowLists[workflowListKey.value] || []);
@@ -419,7 +432,7 @@ const workflowsLoading = computed(() => !!workflowStore.workflowLoading[workflow
 const hasCurrentTaskForPage = computed(() => {
   const task = trainingStore.currentTask;
   if (!task) return false;
-  return isTrainingTask(task) && task.dataset_name === datasetName.value;
+  return isTrainingTask(task) && task.dataset_id === dataset.value?.dataset_id;
 });
 const isTrainingRunning = computed(() => hasCurrentTaskForPage.value && isTaskActive(trainingStore.currentTask));
 
@@ -436,6 +449,7 @@ const workflowStepOrder = [
   WORKFLOW_STEP.DETAIL,
   WORKFLOW_STEP.EVALUATE,
   WORKFLOW_STEP.EXPORT_CONFIG,
+  WORKFLOW_STEP.DEPLOYMENT_TEMPLATE,
 ];
 const resolveWorkflowStep = (step, task = workflowTrainingTask.value) => {
   const normalized = normalizeWorkflowStep(step);
@@ -472,6 +486,12 @@ const workflowSteps = computed(() => {
     {
       key: WORKFLOW_STEP.EXPORT_CONFIG,
       title: '模型导出',
+      optional: false,
+      enabled: workflowTaskCompleted.value,
+    },
+    {
+      key: WORKFLOW_STEP.DEPLOYMENT_TEMPLATE,
+      title: '部署模板',
       optional: false,
       enabled: workflowTaskCompleted.value,
     },
@@ -529,6 +549,7 @@ const selectWorkflowById = (workflowId) => {
     || workflowStore.getWorkflowFromState({
       project_path: project.value?.path || '',
       dataset_name: datasetName.value,
+      dataset_id: dataset.value?.dataset_id || '',
       workflow_id: workflowId,
       include_archived: true,
     })
@@ -563,16 +584,9 @@ const goBack = () => {
   });
 };
 
-const ensureProjectsLoaded = async () => {
-  if (store.projects.length === 0) {
-    try { await store.fetchProjects({ silent: true }); } catch (_) { /* silent */ }
-  }
-};
-
 const syncPageState = async () => {
   loading.value = true;
   loadError.value = '';
-  await ensureProjectsLoaded();
   if (dataset.value) {
     syncStore();
     if (!trainingGuard.value.enabled) {
@@ -590,12 +604,17 @@ const syncPageState = async () => {
 
 const loadTrainingWorkflows = async () => {
   if (!project.value?.path || !datasetName.value) {
-    workflowStore.invalidateDataset({ project_path: project.value?.path || '', dataset_name: datasetName.value });
+    workflowStore.invalidateDataset({
+      project_path: project.value?.path || '',
+      dataset_name: datasetName.value,
+      dataset_id: dataset.value?.dataset_id || '',
+    });
     return;
   }
   await workflowStore.fetchWorkflows({
     project_path: project.value.path,
     dataset_name: datasetName.value,
+    dataset_id: dataset.value?.dataset_id || '',
     archived_only: showArchivedWorkflows.value,
   });
 };
@@ -645,6 +664,7 @@ const loadSelectedWorkflow = async () => {
   const storedWorkflow = workflowStore.getWorkflowFromState({
     project_path: project.value?.path || '',
     dataset_name: datasetName.value,
+    dataset_id: dataset.value?.dataset_id || '',
     workflow_id: routeWorkflowId.value,
     include_archived: true,
   });
@@ -657,6 +677,7 @@ const loadSelectedWorkflow = async () => {
     const workflow = await workflowStore.fetchWorkflowDetail({
       project_path: project.value.path,
       dataset_name: datasetName.value,
+      dataset_id: dataset.value?.dataset_id || '',
       workflow_id: routeWorkflowId.value,
       include_archived: true,
     });
@@ -687,6 +708,10 @@ const goToWorkflowStep = async (step) => {
   const normalized = resolveWorkflowStep(step);
   const workflowId = selectedWorkflow.value?.id || '';
   await replaceWorkflowQuery(normalized, workflowId);
+};
+
+const goToDeploymentTemplate = async () => {
+  await goToWorkflowStep(WORKFLOW_STEP.DEPLOYMENT_TEMPLATE);
 };
 
 const setWorkflowArchivedView = async (value) => {
@@ -720,6 +745,7 @@ const archiveWorkflow = async (workflow) => {
         workflow_id: workflow.id,
       }, {
         dataset_name: datasetName.value,
+        dataset_id: dataset.value?.dataset_id || '',
       });
       setWorkflowContext(archivedWorkflow, { archived: true });
       await refreshWorkflowList(archivedWorkflow.id);
@@ -751,6 +777,7 @@ const deleteWorkflow = async (workflow) => {
         workflow_id: workflow.id,
       }, {
         dataset_name: datasetName.value,
+        dataset_id: dataset.value?.dataset_id || '',
       });
       if (selectedWorkflow.value?.id === workflow.id) {
         setWorkflowContext(null, { archived: true });
@@ -811,5 +838,9 @@ trainingStore.fetchCurrentTask().then(() => {
   if (isTaskActive(trainingStore.currentTask)) {
     trainingStore.pollCurrentTask();
   }
+});
+
+onBeforeUnmount(() => {
+  trainingStore.stopCurrentTaskPolling();
 });
 </script>

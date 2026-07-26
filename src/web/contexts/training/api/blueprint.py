@@ -3,11 +3,15 @@
 from flask import Blueprint
 
 from app.http import json_body_endpoint, json_endpoint, json_error_response, param, query_params, query_params_endpoint
+from contexts.task.domain.task_artifact_keys import ARTIFACT_TEMPLATE_DIR
+from contexts.task.domain.task_types import TASK_TYPE_TEMPLATE
+from contexts.task.infrastructure.task_runtime import load_task
 from contexts.training.application.commands import (
     archive_training_workflow_record,
     continue_training,
     create_training_workflow_record,
     delete_export_task_record,
+    delete_template_task_record,
     delete_training_workflow_record,
     restore_training_workflow_record,
     resume_training,
@@ -16,16 +20,20 @@ from contexts.training.application.commands import (
     start_export_task,
     start_inference_task,
     start_retry_training_task,
+    start_template_task_record,
     start_training_task,
 )
 from contexts.training.application.queries import (
     build_runtime_profile,
     get_training_artifacts,
     get_training_model_export_bundle_info,
+    get_training_model_template_bundle_info,
     get_training_model_exports,
     get_training_run_artifacts,
     get_training_workflow_record,
     list_task_history,
+    list_training_template_records_for_task,
+    list_training_template_source_choices,
     list_training_test_dirs,
     list_training_workflow_records,
     load_batch_calibration,
@@ -68,7 +76,8 @@ bp.add_url_rule(
     view_func=query_params_endpoint(
         load_batch_calibration,
         project_path=param("project_path", required=True, transform=resolve_project_path),
-        dataset_name=param("dataset_name"),
+        dataset_id=param("dataset_id"),
+        dataset_version_id=param("dataset_version_id"),
         model_name=param("model_name"),
         imgsz=param("imgsz", default=640),
     ),
@@ -94,7 +103,7 @@ bp.add_url_rule(
     view_func=query_params_endpoint(
         list_training_workflow_records,
         project_path=param("project_path", required=True, transform=resolve_project_path),
-        dataset_name=param("dataset_name"),
+        dataset_id=param("dataset_id"),
         include_archived=param("include_archived", transform=parse_bool),
         archived_only=param("archived_only", transform=parse_bool),
     ),
@@ -106,7 +115,7 @@ bp.add_url_rule(
         get_training_workflow_record,
         project_path=param("project_path", required=True, transform=resolve_project_path),
         workflow_id=param("workflow_id", required=True),
-        dataset_name=param("dataset_name"),
+        dataset_id=param("dataset_id"),
         include_archived=param("include_archived", transform=parse_bool),
     ),
     methods=["GET"],
@@ -235,6 +244,47 @@ bp.add_url_rule(
     ),
     methods=["POST"],
 )
+bp.add_url_rule(
+    "/api/training/template/start",
+    view_func=json_body_endpoint(
+        start_template_task_record,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        src_task_id=param("task_id", required=True),
+        template_type=param("template_type", required=True),
+        source=param("source", default="best"),
+        source_format=param("source_format", default="pt"),
+        source_model_path=param("source_model_path"),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/training/templates",
+    view_func=query_params_endpoint(
+        list_training_template_records_for_task,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        training_id=param("training_id", required=True),
+    ),
+    methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/training/template_source_choices",
+    view_func=query_params_endpoint(
+        list_training_template_source_choices,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        training_id=param("training_id", required=True),
+    ),
+    methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/training/template/delete",
+    view_func=json_body_endpoint(
+        delete_template_task_record,
+        silent=True,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        template_task_id=param("template_task_id", required=True),
+    ),
+    methods=["POST"],
+)
 
 
 @bp.route("/api/training/model_export_bundle")
@@ -255,6 +305,33 @@ def api_training_model_export_bundle():
         return json_error_response("非法路径", status_code=400)
 
     tmp_zip = build_directory_zip(info["export_real"], info["bundle_name"])
+    return send_temp_zip(tmp_zip, f"{info['bundle_name']}.zip")
+
+
+@bp.route("/api/training/model_template_bundle")
+def api_training_model_template_bundle():
+    """打包并下载指定模板任务对应的部署目录。"""
+    try:
+        params = query_params(
+            project_path=param("project_path", required=True, transform=resolve_project_path),
+            template_task_id=param("template_task_id", required=True),
+        )
+    except ValueError as exc:
+        return json_error_response(str(exc), status_code=400)
+    task = load_task(params["template_task_id"])
+    if not task or task.get("type") != TASK_TYPE_TEMPLATE:
+        return json_error_response("部署模板不存在", status_code=404)
+    template_dir_ref = ((task.get("artifacts") or {}).get(ARTIFACT_TEMPLATE_DIR)) or ""
+    if not template_dir_ref:
+        return json_error_response("部署模板尚未生成", status_code=400)
+    try:
+        info = get_training_model_template_bundle_info(params["project_path"], template_dir_ref)
+    except FileNotFoundError:
+        return json_error_response("部署模板不存在", status_code=404)
+    except Exception:
+        return json_error_response("非法路径", status_code=400)
+
+    tmp_zip = build_directory_zip(info["template_real"], info["bundle_name"])
     return send_temp_zip(tmp_zip, f"{info['bundle_name']}.zip")
 
 

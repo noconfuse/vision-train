@@ -117,4 +117,9 @@ def update_worker_task_progress(task_id, progress, message):
         return
     current_progress = int(task.get("progress") or 0)
     next_progress = max(current_progress, int(progress or 0))
-    update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=min(next_progress, 99), message=message)
+    update_task_status(
+        task_id,
+        status=TASK_STATUS_RUNNING,
+        progress=min(next_progress, 99),
+        message=message,
+    )

@@ -196,11 +196,17 @@ const resultProfile = computed(() => resolveTrainingResultProfile(evaluateTask.v
 const getMetricHelpText = (key) => {
   return resultProfile.value.metric_guides?.[key] || '';
 };
+const resolveHistoryMetricValue = (entry, key) => {
+  if (!entry || !key) return undefined;
+  if (typeof entry[key] === 'number') return entry[key];
+  if (typeof entry?.extra?.[key] === 'number') return entry.extra[key];
+  return undefined;
+};
 const trainingMetricCards = computed(() => {
   const cards = (resultProfile.value.training_metric_cards || []).map((item) => ({
     key: `train-${item.key}`,
     label: item.label,
-    value: formatMetric(latestTrainingMetrics.value?.[item.key]),
+    value: formatMetric(resolveHistoryMetricValue(latestTrainingMetrics.value, item.key)),
     valueClass: item.value_class,
     helpText: item.help_text,
   }));

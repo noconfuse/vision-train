@@ -23,6 +23,8 @@ def create_task(
     project_name,
     type_,
     dataset_name=None,
+    dataset_id=None,
+    dataset_version_id=None,
     dataset_path=None,
     vision_task_type=None,
     payload=None,
@@ -36,6 +38,8 @@ def create_task(
         project_path=project_path,
         project_name=project_name,
         dataset_name=dataset_name,
+        dataset_id=dataset_id,
+        dataset_version_id=dataset_version_id,
         dataset_path=dataset_path,
         vision_task_type=vision_task_type,
         status=TASK_STATUS_PENDING,
@@ -50,7 +54,8 @@ def create_task(
     with session_scope() as session:
         session.add(task)
         session.flush()
-        return task.to_dict()
+        snapshot = task.to_dict()
+    return snapshot
 
 
 def update_task(task_id, **patch):
@@ -79,7 +84,8 @@ def list_task_records(**filters):
     """按过滤条件查询任务记录列表。"""
     project_path = filters.get("project_path")
     type_ = filters.get("type_")
-    dataset_name = filters.get("dataset_name")
+    dataset_id = filters.get("dataset_id")
+    dataset_version_id = filters.get("dataset_version_id")
     status = filters.get("status")
     project_name = filters.get("project_name")
     limit = filters.get("limit", 200)
@@ -93,8 +99,10 @@ def list_task_records(**filters):
             query = query.filter(Task.project_name == project_name)
         if type_:
             query = query.filter(Task.type == type_)
-        if dataset_name:
-            query = query.filter(Task.dataset_name == dataset_name)
+        if dataset_id:
+            query = query.filter(Task.dataset_id == dataset_id)
+        if dataset_version_id:
+            query = query.filter(Task.dataset_version_id == dataset_version_id)
         if status:
             if status == TASK_STATUS_ACTIVE:
                 query = query.filter(Task.status.in_(ACTIVE_TASK_STATUSES))

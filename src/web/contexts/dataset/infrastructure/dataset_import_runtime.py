@@ -42,6 +42,7 @@ def create_import_job(project_path, dataset_name, uploaded_file, vision_task_typ
     uploaded_file.save(staging_path)
 
     _IMPORT_JOBS[job_id] = {
+        "id": job_id,
         "project": project_path,
         "ds_name": dataset_name,
         "staging_path": staging_path,

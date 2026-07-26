@@ -17,9 +17,12 @@ from contexts.dataset.application.use_cases import (
     get_dataset_info,
     has_dataset_import_job,
     list_dataset_images,
+    list_dataset_versions,
     list_project_datasets,
     merge_dataset_pair,
+    publish_dataset_version,
     reorder_dataset_labels_use_case,
+    restore_dataset_version,
     split_dataset_use_case,
     update_dataset_tags,
     upload_dataset_images,
@@ -70,6 +73,15 @@ bp.add_url_rule(
     "/api/dataset/info",
     view_func=query_params_endpoint(
         get_dataset_info,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+    ),
+    methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/dataset/versions",
+    view_func=query_params_endpoint(
+        list_dataset_versions,
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
     ),
@@ -175,6 +187,26 @@ bp.add_url_rule(
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
         tags=param("tags", default=list),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/publish_version",
+    view_func=json_body_endpoint(
+        publish_dataset_version,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        reason=param("reason", default="manual_publish"),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/restore_version",
+    view_func=json_body_endpoint(
+        restore_dataset_version,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        version_id=param("version_id", required=True),
     ),
     methods=["POST"],
 )

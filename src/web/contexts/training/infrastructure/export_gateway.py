@@ -51,6 +51,8 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=src_task.get("dataset_name"),
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
     )
@@ -64,6 +66,8 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
         project_name=project_name_from_path(project_path),
         type_=TASK_TYPE_EXPORT,
         dataset_name=src_task.get("dataset_name"),
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
         payload={
@@ -86,7 +90,13 @@ def start_export_task(project_path, src_task_id, fmt="onnx", imgsz=640, half=Fal
     artifacts = build_worker_artifacts(export_dir, "export-worker.log", "task_worker")
     artifacts[ARTIFACT_EXPORT_PATH] = ""
     update_task_status(export_task["id"], artifacts=artifacts)
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
+    touch_training_workflow_record(
+        workflow_id,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
+        dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
+    )
     try:
         proc, _ = spawn_worker_process(export_task["id"], artifacts[ARTIFACT_LOG_PATH], "task_worker")
     except Exception as exc:
@@ -115,6 +125,7 @@ def execute_export_task(task_id):
     if not task or task.get("type") != TASK_TYPE_EXPORT:
         raise ValueError(f"导出任务不存在: {task_id}")
     payload = task.get("payload") or {}
+    src_task = load_task(payload.get("src_task_id")) if payload.get("src_task_id") else None
     artifacts = task.get("artifacts") or {}
     stop_signal_path = artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
     weight_path = resolve_storage_path(payload.get("weight_path")) if payload.get("weight_path") else payload.get("weight_path")
@@ -167,7 +178,10 @@ def execute_export_task(task_id):
             TASK_STATUS_COMPLETED,
             "导出完成",
             progress=100,
-            artifacts_patch={"files": files, ARTIFACT_EXPORT_PATH: export_path},
+            artifacts_patch={
+                "files": files,
+                ARTIFACT_EXPORT_PATH: export_path,
+            },
             stop_signal_path=stop_signal_path,
         )
     except InterruptedError:

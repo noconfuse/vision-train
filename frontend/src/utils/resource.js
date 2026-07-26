@@ -65,6 +65,13 @@ export const getModelExportDownloadFilename = (exp = {}, target = 'primary') => 
   return ensureFileExtension(stem, extension);
 };
 
+export const getTemplateBundleDownloadFilename = (record = {}) => {
+  const taskId = String(record?.task_id || '').trim();
+  const templateType = sanitizeFilenameStem(record?.template_type || 'template', 'template');
+  const stem = sanitizeFilenameStem(taskId || 'template', 'template');
+  return ensureFileExtension(`${stem}_deployment_template_${templateType}`, 'zip');
+};
+
 export const triggerBlobDownload = (blob, filename = 'download') => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');

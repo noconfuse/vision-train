@@ -4,6 +4,8 @@ export const MODEL_TRAINING_MODE = Object.freeze({
   UNSUPPORTED: 'unsupported',
   YOLO_DETECT: 'yolo_detect',
   YOLO_CLASSIFY: 'yolo_classify',
+  YOLO_SEGMENT: 'yolo_segment',
+  YOLO_POSE: 'yolo_pose',
 });
 
 export const MODEL_OPERATION = Object.freeze({

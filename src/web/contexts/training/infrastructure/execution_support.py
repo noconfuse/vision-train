@@ -59,7 +59,7 @@ def build_training_args(training_config, training_context, save_dir):
         "project": os.path.dirname(save_dir),
         "name": os.path.basename(save_dir),
         "exist_ok": True,
-        "patience": 50,
+        "patience": 100,
         "save": True,
     }
 
@@ -115,18 +115,28 @@ def start_worker_task(task_id, running_message, failure_message, module_name, pr
     return {"task_id": task_id, "workflow_id": task.get("workflow_id")}
 
 
-def make_batch_calibration_key(project_path, dataset_name, model_name, imgsz, device_type):
+def make_batch_calibration_key(project_path, dataset_id, dataset_version_id, model_name, imgsz, device_type):
     """生成批次校准结果复用键。"""
-    return "|".join([project_name_from_path(project_path), dataset_name or "", os.path.basename(model_name or ""), str(int(imgsz or 640)), device_type or ""])
+    return "|".join([
+        project_name_from_path(project_path),
+        str(dataset_id or ""),
+        dataset_version_id or "",
+        os.path.basename(model_name or ""),
+        str(int(imgsz or 640)),
+        device_type or "",
+    ])
 
 
-def find_existing_batch_calibration(project_path, dataset_name, model_name, imgsz):
+def find_existing_batch_calibration(project_path, dataset_id, dataset_version_id, model_name, imgsz):
     """查找同配置下可复用的批次校准任务。"""
-    key = make_batch_calibration_key(project_path, dataset_name, model_name, imgsz, get_device())
+    if not dataset_id:
+        return None
+    key = make_batch_calibration_key(project_path, dataset_id, dataset_version_id, model_name, imgsz, get_device())
     items = list_project_tasks(
         project_path,
         type_=BATCH_CALIBRATION_TYPE,
-        dataset_name=dataset_name,
+        dataset_id=dataset_id,
+        dataset_version_id=dataset_version_id,
         limit=200,
         include_archived=True,
     )
@@ -139,12 +149,12 @@ def find_existing_batch_calibration(project_path, dataset_name, model_name, imgs
     return matched[0]
 
 
-def get_batch_calibration(project_path, dataset_name, model_name, imgsz):
+def get_batch_calibration(project_path, dataset_id, dataset_version_id, model_name, imgsz):
     """返回指定模型的批次校准记录。"""
-    if not project_path or not dataset_name or not model_name:
+    if not project_path or not dataset_id or not model_name:
         return None
     try:
         imgsz = int(imgsz or 640)
     except (TypeError, ValueError):
         imgsz = 640
-    return find_existing_batch_calibration(project_path, dataset_name, model_name, imgsz)
+    return find_existing_batch_calibration(project_path, dataset_id, dataset_version_id, model_name, imgsz)

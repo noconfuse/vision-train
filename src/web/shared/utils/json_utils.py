@@ -1,6 +1,8 @@
 """提供 JSON 文件的统一读写入口。"""
 
 import json
+import os
+import tempfile
 
 
 def load_json_file(file_path, default=None):
@@ -14,8 +16,21 @@ def load_json_file(file_path, default=None):
 
 def save_json_file(file_path, data, *, indent=2, ensure_ascii=False):
     """按统一编码参数写入 JSON 文件。"""
-    with open(file_path, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=indent, ensure_ascii=ensure_ascii)
+    parent_dir = os.path.dirname(file_path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".vt_json_", suffix=".tmp", dir=parent_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=indent, ensure_ascii=ensure_ascii)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, file_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
     return file_path
 
 

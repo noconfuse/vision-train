@@ -30,6 +30,8 @@ class Task(Base):
     project_path = Column(String(512), nullable=False)
     project_name = Column(String(128), nullable=True, index=True)
     dataset_name = Column(String(128), nullable=True, index=True)
+    dataset_id = Column(String(32), nullable=True, index=True)
+    dataset_version_id = Column(String(32), nullable=True, index=True)
     dataset_path = Column(String(512), nullable=True)
     vision_task_type = Column(String(32), nullable=True, index=True)
 
@@ -68,6 +70,8 @@ class Task(Base):
             'project_path': self.project_path,
             'project_name': self.project_name,
             'dataset_name': self.dataset_name,
+            'dataset_id': self.dataset_id,
+            'dataset_version_id': self.dataset_version_id,
             'dataset_path': self.dataset_path,
             'vision_task_type': self.vision_task_type,
             'status': self.status,
@@ -95,6 +99,8 @@ class WorkflowRecord(Base):
     project_path = Column(String(512), nullable=False)
     project_name = Column(String(128), nullable=True, index=True)
     dataset_name = Column(String(128), nullable=True, index=True)
+    dataset_id = Column(String(32), nullable=True, index=True)
+    dataset_version_id = Column(String(32), nullable=True, index=True)
     dataset_path = Column(String(512), nullable=True)
     vision_task_type = Column(String(32), nullable=True, index=True)
     created_at = Column(String(32), nullable=False, default=now_iso)
@@ -114,6 +120,8 @@ class WorkflowRecord(Base):
             'project_path': self.project_path,
             'project_name': self.project_name,
             'dataset_name': self.dataset_name,
+            'dataset_id': self.dataset_id,
+            'dataset_version_id': self.dataset_version_id,
             'dataset_path': self.dataset_path,
             'vision_task_type': self.vision_task_type,
             'created_at': self.created_at,

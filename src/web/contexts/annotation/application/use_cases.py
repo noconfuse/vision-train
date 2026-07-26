@@ -8,6 +8,12 @@ from contexts.annotation.infrastructure.auto_annotation_runner import (
 from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
 from contexts.annotation.infrastructure.annotation_io import get_dataset_root, resolve_dataset_image_context
 from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.annotation.infrastructure.segment_refine import (
+    refine_polygon_with_grabcut,
+    refine_polygon_boundary_patch,
+    erase_polygon_with_stroke,
+)
+from protocols.vision_task_type import VISION_TASK_TYPE_SEGMENT
 
 
 def _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref):
@@ -84,3 +90,90 @@ def start_batch_auto_annotation(project_path, dataset_name, split="train", model
 def get_batch_auto_annotation_status(task_id=None):
     """查询批量自动标注任务状态，作为 annotation 上下文公开入口。"""
     return read_batch_auto_annotation_status(task_id=task_id)
+
+
+def refine_segment_annotation(project_path, dataset_name, split, image_ref, stroke, class_id=0, spacing_px=10):
+    context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
+    if context["vision_task_type"] != VISION_TASK_TYPE_SEGMENT:
+        raise ValueError("当前任务类型不支持分割拟合")
+    _ = strategy
+    stroke_points = (stroke or {}).get("points") or []
+    if not isinstance(stroke_points, list) or len(stroke_points) < 3:
+        raise ValueError("缺少有效包围轨迹")
+    result = refine_polygon_with_grabcut(
+        context["image_path"],
+        stroke_points,
+        spacing_px=float(spacing_px or 10),
+        iterations=3,
+        snap_radius_px=6,
+    )
+    return {
+        "vision_task_type": context["vision_task_type"],
+        "width": result.get("width"),
+        "height": result.get("height"),
+        "polygons": [
+            {
+                "class": int(class_id or 0),
+                "points": result.get("points") or [],
+            }
+        ],
+    }
+
+
+def refine_segment_boundary_patch_annotation(project_path, dataset_name, split, image_ref, polygon, point_idx, target_point, class_id=0, spacing_px=10):
+    context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
+    if context["vision_task_type"] != VISION_TASK_TYPE_SEGMENT:
+        raise ValueError("当前任务类型不支持边界精修")
+    _ = strategy
+    polygon_points = (polygon or {}).get("points") or []
+    if len(polygon_points) < 3:
+        raise ValueError("缺少当前轮廓")
+    result = refine_polygon_boundary_patch(
+        context["image_path"],
+        polygon_points,
+        point_idx=int(point_idx),
+        target_point=target_point or {},
+        spacing_px=float(spacing_px or 10),
+        patch_arc_px=56,
+        snap_radius_px=8,
+    )
+    return {
+        "vision_task_type": context["vision_task_type"],
+        "width": result.get("width"),
+        "height": result.get("height"),
+        "polygons": [
+            {
+                "class": int(class_id or 0),
+                "points": result.get("points") or [],
+            }
+        ],
+    }
+
+
+def erase_segment_annotation(project_path, dataset_name, split, image_ref, polygon, stroke, class_id=0, spacing_px=10, stroke_width_px=18):
+    context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
+    if context["vision_task_type"] != VISION_TASK_TYPE_SEGMENT:
+        raise ValueError("当前任务类型不支持橡皮擦微调")
+    _ = strategy
+    polygon_points = (polygon or {}).get("points") or []
+    stroke_points = (stroke or {}).get("points") or []
+    if len(polygon_points) < 3:
+        raise ValueError("缺少当前轮廓")
+    if len(stroke_points) < 2:
+        raise ValueError("缺少橡皮擦轨迹")
+    result = erase_polygon_with_stroke(
+        context["image_path"],
+        polygon_points,
+        stroke_points,
+        spacing_px=float(spacing_px or 10),
+        stroke_width_px=float(stroke_width_px or 18),
+    )
+    out_polys = []
+    for p in result.get("polygons") or []:
+        out_polys.append({"class": int(class_id or 0), "points": p.get("points") or []})
+    return {
+        "vision_task_type": context["vision_task_type"],
+        "width": result.get("width"),
+        "height": result.get("height"),
+        "polygons": out_polys,
+    }

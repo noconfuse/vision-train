@@ -86,11 +86,13 @@ def build_export_record(project_path, training_task_id, export_dir, export_task)
     scan_root = export_dir
     raw_files = []
     relative_base = export_dir
+    bundle_root = export_dir
     if export_status == "completed":
         export_path = task_artifacts.get(ARTIFACT_EXPORT_PATH) or ""
         scan_root = export_path or export_dir
         raw_files = scan_export_outputs(scan_root)
         relative_base = scan_root if os.path.isdir(scan_root) else os.path.dirname(scan_root)
+        bundle_root = scan_root if os.path.isdir(scan_root) else export_dir
 
     files = build_file_items(raw_files, relative_to=relative_base)
 
@@ -108,7 +110,7 @@ def build_export_record(project_path, training_task_id, export_dir, export_task)
         "export_path": storage_path_ref(export_path) if export_path else "",
         "primary_model_path": (primary_model or {}).get("path", ""),
         "primary_model_url": (primary_model or {}).get("url"),
-        "bundle_url": build_export_bundle_url(project_path, scan_root) if export_status == "completed" and scan_root else None,
+        "bundle_url": build_export_bundle_url(project_path, bundle_root) if export_status == "completed" and bundle_root else None,
         "files": files,
         "total_size_bytes": sum(item["size_bytes"] for item in files),
     }

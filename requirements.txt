@@ -7,4 +7,5 @@ ultralytics
 onnx
 openvino
 nncf
+opencv-python-headless
 SQLAlchemy>=2.0

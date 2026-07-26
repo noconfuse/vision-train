@@ -5,6 +5,7 @@ export const WORKFLOW_STEP = Object.freeze({
   DETAIL: 'detail',
   EVALUATE: 'evaluate',
   EXPORT_CONFIG: 'export_config',
+  DEPLOYMENT_TEMPLATE: 'deployment_template',
 });
 
 const WORKFLOW_STEP_VALUES = new Set(Object.values(WORKFLOW_STEP));
@@ -17,5 +18,6 @@ export const getWorkflowPreferredStepFromTask = (task, preferredStep = '') => {
   if (preferredStep) return preferredStep;
   if (task?.type === TASK_TYPE.EVALUATE) return WORKFLOW_STEP.EVALUATE;
   if (task?.type === TASK_TYPE.EXPORT) return WORKFLOW_STEP.EXPORT_CONFIG;
+  if (task?.type === TASK_TYPE.TEMPLATE) return WORKFLOW_STEP.DEPLOYMENT_TEMPLATE;
   return WORKFLOW_STEP.DETAIL;
 };

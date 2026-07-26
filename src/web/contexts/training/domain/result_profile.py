@@ -1,6 +1,11 @@
 """定义训练评估与推理展示能力表。"""
 
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT
+from protocols.vision_task_type import (
+    VISION_TASK_TYPE_CLASSIFY,
+    VISION_TASK_TYPE_DETECT,
+    VISION_TASK_TYPE_POSE,
+    VISION_TASK_TYPE_SEGMENT,
+)
 
 
 def _build_classify_recommendations(results):
@@ -80,6 +85,98 @@ def _build_detect_recommendations(results):
     return suggestions
 
 
+def _build_segment_recommendations(results):
+    seg_precision = float(results.get("seg_precision") or 0)
+    seg_recall = float(results.get("seg_recall") or 0)
+    seg_map50 = float(results.get("seg_map50") or 0)
+    seg_map50_95 = float(results.get("seg_map50_95") or 0)
+    box_mask_gap = max(0.0, float(results.get("box_map50") or 0) - seg_map50)
+    suggestions = []
+    if seg_map50_95 >= 0.45 and seg_precision >= 0.65 and seg_recall >= 0.65:
+        suggestions.append({
+            "tone": "success",
+            "title": "可以进入导出验证",
+            "content": "测试集上的掩码指标已经比较稳定，建议导出模型并用真实业务图片抽样确认轮廓质量。",
+        })
+    elif seg_map50_95 < 0.25:
+        suggestions.append({
+            "tone": "warn",
+            "title": "建议继续补数据或重训",
+            "content": "当前掩码整体效果偏弱，优先补充复杂边界、遮挡和小目标样本，再重新训练。",
+        })
+    if seg_recall < 0.55:
+        suggestions.append({
+            "tone": "warn",
+            "title": "Mask Recall 偏低",
+            "content": "漏分割较多，建议补充边界复杂、尺度变化大的目标样本。",
+        })
+    if seg_precision < 0.55:
+        suggestions.append({
+            "tone": "warn",
+            "title": "Mask Precision 偏低",
+            "content": "误分割较多，建议清洗轮廓标注并补充容易混淆的背景样本。",
+        })
+    if box_mask_gap > 0.12:
+        suggestions.append({
+            "tone": "info",
+            "title": "框准但轮廓偏粗",
+            "content": "检测框指标明显高于掩码指标，说明模型更擅长找目标而不是描边，建议重点检查多边形标注质量。",
+        })
+    if not suggestions:
+        suggestions.append({
+            "tone": "info",
+            "title": "建议结合业务样本继续验证",
+            "content": "测试集结果已经可作为参考，下一步更适合拿真实业务图片抽样检查掩码边界质量。",
+        })
+    return suggestions
+
+
+def _build_pose_recommendations(results):
+    precision = float(results.get("precision") or 0)
+    recall = float(results.get("recall") or 0)
+    map50 = float(results.get("map50") or 0)
+    map50_95 = float(results.get("map50_95") or 0)
+    strict_gap = max(0.0, map50 - map50_95)
+    suggestions = []
+    if map50_95 >= 0.5 and precision >= 0.7 and recall >= 0.7:
+        suggestions.append({
+            "tone": "success",
+            "title": "可以进入导出验证",
+            "content": "关键点指标已经比较稳定，建议导出模型并用真实业务图片抽样确认关键点定位质量。",
+        })
+    elif map50_95 < 0.3:
+        suggestions.append({
+            "tone": "warn",
+            "title": "建议继续补数据或重训",
+            "content": "关键点整体效果偏弱，优先补充遮挡、姿态变化大和边界模糊的样本，再重新训练。",
+        })
+    if recall < 0.6:
+        suggestions.append({
+            "tone": "warn",
+            "title": "关键点 Recall 偏低",
+            "content": "漏点较多，建议补充复杂姿态、小目标和部分遮挡样本。",
+        })
+    if precision < 0.6:
+        suggestions.append({
+            "tone": "warn",
+            "title": "关键点 Precision 偏低",
+            "content": "误点较多，建议清洗关键点标注并检查相邻部位是否容易混淆。",
+        })
+    if strict_gap > 0.18:
+        suggestions.append({
+            "tone": "info",
+            "title": "关键点精细定位仍可提升",
+            "content": "Pose mAP50 与 Pose mAP50-95 差距较大，说明粗定位可以，但精确落点还不稳定，建议重点检查关键点定义与标注一致性。",
+        })
+    if not suggestions:
+        suggestions.append({
+            "tone": "info",
+            "title": "建议结合业务样本继续验证",
+            "content": "测试集结果已经可作为参考，下一步更适合拿真实业务图片抽样检查关键点可用性。",
+        })
+    return suggestions
+
+
 _PROFILE_MAP = {
     VISION_TASK_TYPE_CLASSIFY: {
         "metric_guides": {
@@ -152,6 +249,89 @@ _PROFILE_MAP = {
             ],
         },
         "recommendations_builder": _build_detect_recommendations,
+    },
+    VISION_TASK_TYPE_SEGMENT: {
+        "metric_guides": {
+            "box_map50": "框级 mAP50，反映目标是否被找准。",
+            "box_map50_95": "框级严格 mAP，反映定位稳定性。",
+            "seg_map50": "掩码 mAP50，直接反映轮廓分割质量。",
+            "seg_map50_95": "掩码严格 mAP，适合做最终验收。",
+        },
+        "training_metric_cards": [
+            {"key": "seg_map50", "label": "训练 Mask mAP50", "help_text": "看掩码轮廓整体可用性，越高越好。", "value_class": "text-emerald-700"},
+            {"key": "seg_map50_95", "label": "训练 Mask mAP50-95", "help_text": "更严格，适合做实例分割最终验收。", "value_class": "vt-text-accent"},
+        ],
+        "evaluate_metric_cards": [
+            {"key": "box_map50", "label": "Box mAP50", "help_text": "框级 mAP50，反映目标是否被找准。", "value_class": "text-slate-800"},
+            {"key": "box_map50_95", "label": "Box mAP50-95", "help_text": "框级严格 mAP，反映定位稳定性。", "value_class": "text-slate-800"},
+            {"key": "seg_map50", "label": "Mask mAP50", "help_text": "掩码 mAP50，直接反映轮廓分割质量。", "value_class": "text-emerald-700"},
+            {"key": "seg_map50_95", "label": "Mask mAP50-95", "help_text": "掩码严格 mAP，适合做最终验收。", "value_class": "vt-text-accent"},
+        ],
+        "inference": {
+            "supports_confidence_threshold": True,
+            "supports_max_det": True,
+            "intro_text": "分割推理会返回目标框及对应轮廓。",
+            "result_mode": "detection",
+            "meta_mode": "box_count",
+        },
+        "task_detail": {
+            "primary_metric": {"key": "seg_map50", "label": "最新 Mask mAP50", "value_prefix": "Mask mAP50"},
+            "secondary_metric": {"key": "seg_map50_95", "label": "综合 Mask mAP50-95", "value_prefix": "Mask mAP50-95"},
+            "metric_curve_title": "Metrics (Mask mAP)",
+            "loss_series": [
+                {"key": "box_loss", "label": "Box", "color": "#ef4444"},
+                {"key": "seg_loss", "label": "Seg", "color": "#22c55e"},
+                {"key": "cls_loss", "label": "Cls", "color": "#3b82f6"},
+                {"key": "dfl_loss", "label": "Dfl", "color": "#eab308"},
+            ],
+            "metric_series": [
+                {"key": "seg_map50", "label": "Mask mAP50", "color": "#22c55e"},
+                {"key": "seg_map50_95", "label": "Mask mAP50-95", "color": "#a855f7"},
+            ],
+        },
+        "recommendations_builder": _build_segment_recommendations,
+    },
+    VISION_TASK_TYPE_POSE: {
+        "metric_guides": {
+            "precision": "关注误点，越高越稳。",
+            "recall": "关注漏点，越高越全。",
+            "map50": "Pose mAP50，反映关键点整体可用性。",
+            "map50_95": "更严格的 Pose mAP，适合做最终验收。",
+        },
+        "training_metric_cards": [
+            {"key": "map50", "label": "训练 Pose mAP50", "help_text": "看关键点整体可用性，越高越好。", "value_class": "text-emerald-700"},
+            {"key": "map50_95", "label": "训练 Pose mAP50-95", "help_text": "更严格，适合做姿态模型最终验收。", "value_class": "vt-text-accent"},
+        ],
+        "evaluate_metric_cards": [
+            {"key": "precision", "label": "Precision", "help_text": "关注误点，越高越稳。", "value_class": "text-slate-800"},
+            {"key": "recall", "label": "Recall", "help_text": "关注漏点，越高越全。", "value_class": "text-slate-800"},
+            {"key": "map50", "label": "Pose mAP50", "help_text": "关键点整体可用性，越高越好。", "value_class": "text-emerald-700"},
+            {"key": "map50_95", "label": "Pose mAP50-95", "help_text": "更严格的 Pose mAP，适合做最终验收。", "value_class": "vt-text-accent"},
+        ],
+        "inference": {
+            "supports_confidence_threshold": True,
+            "supports_max_det": True,
+            "intro_text": "姿态推理会返回目标框及对应关键点。",
+            "result_mode": "detection",
+            "meta_mode": "box_count",
+        },
+        "task_detail": {
+            "primary_metric": {"key": "map50", "label": "最新 Pose mAP50", "value_prefix": "Pose mAP50"},
+            "secondary_metric": {"key": "map50_95", "label": "综合 Pose mAP50-95", "value_prefix": "Pose mAP50-95"},
+            "metric_curve_title": "Metrics (Pose mAP)",
+            "loss_series": [
+                {"key": "box_loss", "label": "Box", "color": "#ef4444"},
+                {"key": "pose_loss", "label": "Pose", "color": "#22c55e"},
+                {"key": "kobj_loss", "label": "Kobj", "color": "#f97316"},
+                {"key": "cls_loss", "label": "Cls", "color": "#3b82f6"},
+                {"key": "dfl_loss", "label": "Dfl", "color": "#eab308"},
+            ],
+            "metric_series": [
+                {"key": "map50", "label": "Pose mAP50", "color": "#22c55e"},
+                {"key": "map50_95", "label": "Pose mAP50-95", "color": "#a855f7"},
+            ],
+        },
+        "recommendations_builder": _build_pose_recommendations,
     },
 }
 

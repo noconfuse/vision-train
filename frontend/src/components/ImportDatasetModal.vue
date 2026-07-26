@@ -19,6 +19,8 @@
           <select v-model="visionTaskType" :disabled="uploading" class="vt-select">
             <option :value="VISION_TASK_TYPE.DETECT">检测</option>
             <option :value="VISION_TASK_TYPE.CLASSIFY">分类</option>
+            <option :value="VISION_TASK_TYPE.SEGMENT">分割</option>
+            <option :value="VISION_TASK_TYPE.POSE">姿态</option>
           </select>
           <div class="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             <div class="mb-1 font-medium text-slate-700">支持规范</div>
@@ -47,7 +49,7 @@
                 </div>
               </UiTooltip>
             </div>
-            <div v-else class="flex flex-wrap gap-2">
+            <div v-else-if="visionTaskType === VISION_TASK_TYPE.CLASSIFY" class="flex flex-wrap gap-2">
               <UiTooltip
                 v-for="spec in classifyDatasetSpecs"
                 :key="spec.key"
@@ -64,6 +66,56 @@
                     class="inline-flex items-center rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-100"
                   >
                     <code>{{ spec.label }}</code>
+                  </button>
+                </template>
+                <div class="p-3">
+                  <div class="mb-2 text-xs font-medium text-slate-600">目录示例</div>
+                  <pre class="overflow-x-auto rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-6 text-slate-800">{{ spec.example }}</pre>
+                </div>
+              </UiTooltip>
+            </div>
+            <div v-else-if="visionTaskType === VISION_TASK_TYPE.SEGMENT" class="flex flex-wrap gap-2">
+              <UiTooltip
+                v-for="spec in segmentDatasetSpecs"
+                :key="spec.key"
+                side="bottom"
+                align="start"
+                :side-offset="10"
+                :delay-duration="120"
+                :disable-hoverable-content="false"
+                :content-class="'!w-[26rem] !max-w-[26rem] !border-slate-200 !bg-white !p-0 !text-slate-900 shadow-xl'"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    {{ spec.label }}
+                  </button>
+                </template>
+                <div class="p-3">
+                  <div class="mb-2 text-xs font-medium text-slate-600">目录示例</div>
+                  <pre class="overflow-x-auto rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-6 text-slate-800">{{ spec.example }}</pre>
+                </div>
+              </UiTooltip>
+            </div>
+            <div v-else class="flex flex-wrap gap-2">
+              <UiTooltip
+                v-for="spec in poseDatasetSpecs"
+                :key="spec.key"
+                side="bottom"
+                align="start"
+                :side-offset="10"
+                :delay-duration="120"
+                :disable-hoverable-content="false"
+                :content-class="'!w-[26rem] !max-w-[26rem] !border-slate-200 !bg-white !p-0 !text-slate-900 shadow-xl'"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    {{ spec.label }}
                   </button>
                 </template>
                 <div class="p-3">
@@ -283,6 +335,46 @@ const classifyDatasetSpecs = [
       0003.jpg
     dog/
       0003.jpg`,
+  },
+];
+
+const segmentDatasetSpecs = [
+  {
+    key: 'yolo-segment',
+    label: 'YOLO Segment',
+    example: `dataset/
+  images/
+    train/
+    val/
+    test/
+  labels/
+    train/
+    val/
+    test/
+  dataset.yaml
+
+label line:
+  <class> <x1> <y1> <x2> <y2> ... <xn> <yn>`,
+  },
+];
+
+const poseDatasetSpecs = [
+  {
+    key: 'yolo-pose',
+    label: 'YOLO Pose',
+    example: `dataset/
+  images/
+    train/
+    val/
+    test/
+  labels/
+    train/
+    val/
+    test/
+  dataset.yaml  
+
+label line:
+  <class> <cx> <cy> <w> <h> <px1> <py1> <v1> ... <pxn> <pyn> <vn>`,
   },
 ];
 

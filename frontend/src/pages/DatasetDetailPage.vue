@@ -72,16 +72,9 @@ const goBack = () => {
   });
 };
 
-const ensureProjectsLoaded = async () => {
-  if (store.projects.length === 0) {
-    try { await store.fetchProjects({ silent: true }); } catch (_) { /* silent */ }
-  }
-};
-
 const syncPageState = async () => {
   loading.value = true;
   loadError.value = '';
-  await ensureProjectsLoaded();
   if (dataset.value) {
     syncStore();
   } else if (project.value) {

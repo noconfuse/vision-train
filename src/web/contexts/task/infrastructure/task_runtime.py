@@ -180,7 +180,11 @@ def list_task_items(
 
 def list_project_tasks(project_path, **filters):
     """按项目路径查询任务。"""
-    project_path = resolve_project_path(project_path)
+    # 注意：调用方可能传入“已经通过 resolve_and_validate_project 解析过的绝对路径”，
+    # 不能再走 resolve_project_path，否则 os.path.abspath 会把尾部斜杠去掉，
+    # 与 DB 里存的 project_path 字符串对不上。
+    if project_path and not os.path.isabs(project_path):
+        project_path = resolve_project_path(project_path)
     return list_tasks(project_path=project_path, **filters)
 def request_task_stop(task_id):
     """为活动任务写入停止信号。"""

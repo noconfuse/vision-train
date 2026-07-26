@@ -8,6 +8,9 @@ from contexts.annotation.application.use_cases import (
     get_annotation_payload,
     list_missing_annotations,
     list_pending_auto_annotations,
+    refine_segment_boundary_patch_annotation,
+    refine_segment_annotation,
+    erase_segment_annotation,
     save_auto_annotation,
     save_manual_annotation,
     auto_annotate_image,
@@ -70,6 +73,52 @@ bp.add_url_rule(
         limit=param("limit", default="50", transform=int),
     ),
     methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/annotation/segment/refine",
+    view_func=json_body_endpoint(
+        refine_segment_annotation,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_ref=param("image_path", required=True),
+        stroke=param("stroke", default=dict),
+        class_id=param("class_id", default=0, transform=int),
+        spacing_px=param("spacing_px", default=10),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/annotation/segment/boundary_patch",
+    view_func=json_body_endpoint(
+        refine_segment_boundary_patch_annotation,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_ref=param("image_path", required=True),
+        polygon=param("polygon", default=dict),
+        point_idx=param("point_idx", required=True, transform=int),
+        target_point=param("target_point", default=dict),
+        class_id=param("class_id", default=0, transform=int),
+        spacing_px=param("spacing_px", default=10),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/annotation/segment/erase",
+    view_func=json_body_endpoint(
+        erase_segment_annotation,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_ref=param("image_path", required=True),
+        polygon=param("polygon", default=dict),
+        stroke=param("stroke", default=dict),
+        class_id=param("class_id", default=0, transform=int),
+        spacing_px=param("spacing_px", default=10),
+        stroke_width_px=param("stroke_width_px", default=18),
+    ),
+    methods=["POST"],
 )
 bp.add_url_rule(
     "/api/annotation/save",

@@ -2,6 +2,7 @@
 
 import os
 
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta
 from contexts.task.domain.task_types import (
     TASK_TYPE_EVALUATE,
     TASK_TYPE_INFERENCE,
@@ -63,7 +64,14 @@ def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=6
         imgsz = int(imgsz or 640)
     except (TypeError, ValueError):
         raise ValueError("imgsz 必须是整数")
-    existing = find_existing_batch_calibration(project_path, dataset_name, model_name, imgsz)
+    training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
+    existing = find_existing_batch_calibration(
+        project_path,
+        training_context.get("dataset_id"),
+        training_context.get("dataset_version_id"),
+        model_name,
+        imgsz,
+    )
     if existing and is_active_task_status(existing.get("status")):
         return {"task_id": existing["id"], "workflow_id": existing.get("workflow_id") or workflow_id, "cached": False, "reused": True}
     if existing and existing.get("status") == "completed" and not force:
@@ -71,16 +79,24 @@ def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=6
     calibration_id = new_run_token()
     save_dir = build_training_calibration_dir(project_path, dataset_name, calibration_id)
     worker_artifacts = build_worker_artifacts(save_dir, "batch-calibration-worker.log", "task_worker")
-    training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
     if not training_context["training_profile"]["supports_batch_calibration"]:
         raise ValueError("当前任务类型暂不支持批次校准")
     device_type = get_device()
-    calibration_key = make_batch_calibration_key(project_path, dataset_name, model_name, imgsz, device_type)
+    calibration_key = make_batch_calibration_key(
+        project_path,
+        training_context.get("dataset_id"),
+        training_context.get("dataset_version_id"),
+        model_name,
+        imgsz,
+        device_type,
+    )
     task = start_task(
         project_path=project_path,
         project_name=project_name_from_path(project_path),
         type_=BATCH_CALIBRATION_TYPE,
         dataset_name=dataset_name,
+        dataset_id=training_context.get("dataset_id"),
+        dataset_version_id=training_context.get("dataset_version_id"),
         dataset_path=training_context["dataset_path"],
         vision_task_type=training_context["vision_task_type"],
         payload={
@@ -102,6 +118,8 @@ def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=6
     if workflow_id:
         touch_training_workflow_record(
             workflow_id,
+            dataset_id=training_context.get("dataset_id"),
+            dataset_version_id=training_context.get("dataset_version_id"),
             dataset_path=training_context["dataset_path"],
             vision_task_type=training_context["vision_task_type"],
         )
@@ -140,6 +158,8 @@ def start_training_task(
     training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
     config_save = {
         "dataset_name": dataset_name,
+        "dataset_id": training_context.get("dataset_id"),
+        "dataset_version_id": training_context.get("dataset_version_id"),
         "model_name": model_name,
         "config": training_config,
         "dataset_path": training_context["dataset_path"],
@@ -155,6 +175,8 @@ def start_training_task(
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
+        dataset_id=training_context.get("dataset_id"),
+        dataset_version_id=training_context.get("dataset_version_id"),
         dataset_path=training_context["dataset_path"],
         vision_task_type=training_context["vision_task_type"],
     )
@@ -163,6 +185,8 @@ def start_training_task(
         project_name=project_name_from_path(project_path),
         type_=TASK_TYPE_TRAINING,
         dataset_name=dataset_name,
+        dataset_id=training_context.get("dataset_id"),
+        dataset_version_id=training_context.get("dataset_version_id"),
         dataset_path=training_context["dataset_path"],
         vision_task_type=training_context["vision_task_type"],
         payload={
@@ -185,6 +209,8 @@ def start_training_task(
     task = update_task_status(task["id"], workflow_id=workflow["id"], workflow_type=WORKFLOW_TYPE_TRAINING)
     touch_training_workflow_record(
         workflow["id"],
+        dataset_id=training_context.get("dataset_id"),
+        dataset_version_id=training_context.get("dataset_version_id"),
         dataset_path=training_context["dataset_path"],
         vision_task_type=training_context["vision_task_type"],
     )
@@ -208,6 +234,8 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
     )
@@ -228,6 +256,8 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
         project_name=project_name_from_path(project_path),
         type_=TASK_TYPE_EVALUATE,
         dataset_name=dataset_name,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
         payload={"src_task_id": src_task_id, "weight": weight, "weight_path": weight_path, "data_yaml": data_yaml, "split": evaluate_split},
@@ -237,7 +267,13 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
     eval_task = update_task_status(eval_task["id"], workflow_id=workflow_id, workflow_type=WORKFLOW_TYPE_TRAINING)
     task_dir = build_training_task_run_dir(weights_dir, TASK_TYPE_EVALUATE, eval_task["id"])
     update_task_status(eval_task["id"], artifacts=build_worker_artifacts(task_dir, "evaluate-worker.log", "task_worker"))
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
+    touch_training_workflow_record(
+        workflow_id,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
+        dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
+    )
     return start_worker_task(eval_task["id"], "评估进程已启动...", "评估进程启动失败", "task_worker")
 
 
@@ -252,6 +288,8 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
         workflow_id=workflow_id,
         project_path=project_path,
         dataset_name=dataset_name,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
     )
@@ -268,6 +306,8 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
         project_name=project_name_from_path(project_path),
         type_=TASK_TYPE_INFERENCE,
         dataset_name=dataset_name,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
         dataset_path=src_task.get("dataset_path"),
         vision_task_type=vision_task_type,
         payload={"src_task_id": src_task_id, "weight_path": weight, "img_dir": img_dir, "test_subdir": test_subdir, "conf": conf, "max_det": max_det},
@@ -277,7 +317,13 @@ def start_inference_task(project_path, dataset_name, src_task_id, test_subdir="v
     inf_task = update_task_status(inf_task["id"], workflow_id=workflow_id, workflow_type=WORKFLOW_TYPE_TRAINING)
     task_dir = build_training_inference_dir(artifacts[ARTIFACT_OUTPUT_DIR], inf_task["id"])
     update_task_status(inf_task["id"], artifacts=build_worker_artifacts(task_dir, "inference-worker.log", "task_worker"))
-    touch_training_workflow_record(workflow_id, dataset_path=src_task.get("dataset_path"), vision_task_type=vision_task_type)
+    touch_training_workflow_record(
+        workflow_id,
+        dataset_id=src_task.get("dataset_id"),
+        dataset_version_id=src_task.get("dataset_version_id"),
+        dataset_path=src_task.get("dataset_path"),
+        vision_task_type=vision_task_type,
+    )
     return start_worker_task(inf_task["id"], "推理进程已启动...", "推理进程启动失败", "task_worker")
 
 
@@ -287,7 +333,9 @@ def start_retry_training_task(project_path, dataset_name, task_id):
     task = load_task(task_id)
     if not task:
         raise ValueError("任务不存在")
-    if task.get("project_path") != project_path or task.get("dataset_name") != dataset_name:
+    dataset_root = resolve_dataset_root(project_path, dataset_name, None)
+    dataset_id = load_dataset_identity_meta(dataset_root).get("dataset_id")
+    if task.get("project_path") != project_path or task.get("dataset_id") != dataset_id:
         raise ValueError("任务与当前数据集不匹配")
     if task.get("type") != TASK_TYPE_TRAINING:
         raise ValueError("仅训练任务支持重新训练")

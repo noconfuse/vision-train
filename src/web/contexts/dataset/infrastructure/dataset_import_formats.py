@@ -18,7 +18,7 @@ from contexts.dataset.infrastructure.dataset_layout import (
 )
 from contexts.dataset.infrastructure.dataset_schema import save_standard_dataset_yaml
 from constants.media import DATASET_SPLITS, IMAGE_FILE_EXTENSIONS, ROBOFLOW_CONFIG_FILENAMES
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_SEGMENT
 from shared.utils.json_utils import load_json_file
 from shared.utils.value_utils import first_non_empty_text
 from shared.utils.yaml_utils import load_yaml_file
@@ -184,6 +184,129 @@ def convert_coco_to_yolo(coco_root, yolo_root, progress_cb=None):
                     lines.append(f"{yolo_class_id} {xc:.6f} {yc:.6f} {nw:.6f} {nh:.6f}")
 
             label_path = os.path.join(yolo_lbl_dir, os.path.splitext(os.path.basename(src_img or f"{img_id}.jpg"))[0] + ".txt")
+            with open(label_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            if progress_cb and (i_idx % 50 == 0 or i_idx == n_imgs - 1):
+                progress_cb(s_idx, n_splits, i_idx + 1, n_imgs)
+
+
+def _normalize_polygon_points(points, width, height):
+    """把 COCO segmentation polygon 归一化为 YOLO 所需的点串。"""
+    normalized = []
+    if width <= 0 or height <= 0:
+        return normalized
+    for index in range(0, len(points), 2):
+        try:
+            x = float(points[index]) / width
+            y = float(points[index + 1]) / height
+        except (ValueError, TypeError, IndexError):
+            return []
+        normalized.extend([x, y])
+    return normalized if len(normalized) >= 6 else []
+
+
+def _build_coco_segment_line(annotation, cat_id_to_yolo, width, height):
+    """把单个 COCO polygon annotation 转成 YOLO segment 标签行。"""
+    cat_id = annotation.get("category_id")
+    if cat_id not in cat_id_to_yolo:
+        return None
+    segmentation = annotation.get("segmentation")
+    if not isinstance(segmentation, list):
+        return None
+    polygons = []
+    for polygon in segmentation:
+        if not isinstance(polygon, list):
+            continue
+        normalized = _normalize_polygon_points(polygon, width, height)
+        if normalized:
+            polygons.append(normalized)
+    if not polygons:
+        return None
+    best_polygon = max(polygons, key=lambda item: len(item))
+    coords = " ".join(f"{value:.6f}" for value in best_polygon)
+    return f"{cat_id_to_yolo[cat_id]} {coords}"
+
+
+def convert_coco_to_yolo_segment(coco_root, yolo_root, progress_cb=None):
+    """把 COCO segmentation 数据集转换为标准 YOLO segment 布局。"""
+    ann_dir_candidates = [os.path.join(coco_root, "annotations"), coco_root]
+    ann_dir = None
+    for candidate in ann_dir_candidates:
+        if os.path.isdir(candidate) and any(name.startswith("instances_") and name.endswith(".json") for name in os.listdir(candidate)):
+            ann_dir = candidate
+            break
+    if ann_dir is None:
+        raise ValueError("COCO 数据集未找到 annotations/instances_*.json")
+
+    split_map = {}
+    for json_path in glob.glob(os.path.join(ann_dir, "instances_*.json")):
+        name = os.path.splitext(os.path.basename(json_path))[0]
+        tail = name[len("instances_"):] if name.startswith("instances_") else "train"
+        split = "".join(ch for ch in tail if not ch.isdigit())
+        candidates = [
+            os.path.join(coco_root, tail),
+            os.path.join(coco_root, tail.replace("2017", "")),
+            os.path.join(coco_root, split),
+            os.path.join(coco_root, f"{split}2017"),
+        ]
+        img_dir = next((path for path in candidates if os.path.isdir(path)), None)
+        split_map[split] = (json_path, img_dir)
+    if not split_map:
+        raise ValueError("COCO 数据集无有效 split")
+
+    first_split = next(iter(split_map))
+    first_ann = load_json_file(split_map[first_split][0], default={}) or {}
+    if "categories" not in first_ann:
+        raise ValueError("COCO JSON 缺 categories 字段")
+    categories = sorted(first_ann["categories"], key=lambda category: category.get("id", 0))
+    cat_id_to_yolo = {category["id"]: idx for idx, category in enumerate(categories)}
+    names = [category["name"] for category in categories]
+
+    os.makedirs(yolo_root, exist_ok=True)
+    split_dirs = {}
+    for split in split_map:
+        os.makedirs(get_dataset_images_dir(yolo_root, split), exist_ok=True)
+        os.makedirs(get_dataset_labels_dir(yolo_root, split), exist_ok=True)
+        split_dirs[split] = (get_dataset_images_dir(yolo_root, split), get_dataset_labels_dir(yolo_root, split))
+
+    save_standard_dataset_yaml(
+        yolo_root,
+        {idx: name for idx, name in enumerate(names)},
+        vision_task_type=VISION_TASK_TYPE_SEGMENT,
+        include_val=True,
+        include_test=DATASET_SPLIT_TEST in split_map,
+    )
+
+    n_splits = max(1, len(split_map))
+    for s_idx, (split, (json_path, img_dir)) in enumerate(split_map.items()):
+        ann = load_json_file(json_path, default={}) or {}
+        images_by_id = {img["id"]: img for img in ann.get("images", [])}
+        by_image = {}
+        for annotation in ann.get("annotations", []):
+            by_image.setdefault(annotation["image_id"], []).append(annotation)
+
+        yolo_img_dir, yolo_lbl_dir = split_dirs[split]
+        n_imgs = max(1, len(images_by_id))
+        for i_idx, (img_id, img) in enumerate(images_by_id.items()):
+            src_img = os.path.join(img_dir, img["file_name"]) if img_dir else None
+            label_stem = os.path.splitext(os.path.basename(src_img or str(img.get("file_name") or f"{img_id}.jpg")))[0]
+            if src_img and os.path.isfile(src_img):
+                dst_img = os.path.join(yolo_img_dir, os.path.basename(src_img))
+                if not os.path.exists(dst_img):
+                    shutil.copyfile(src_img, dst_img)
+
+            anns = by_image.get(img_id, [])
+            lines = []
+            iw, ih = img.get("width", 0), img.get("height", 0)
+            if iw > 0 and ih > 0:
+                for annotation in anns:
+                    if annotation.get("iscrowd"):
+                        continue
+                    line = _build_coco_segment_line(annotation, cat_id_to_yolo, iw, ih)
+                    if line:
+                        lines.append(line)
+
+            label_path = os.path.join(yolo_lbl_dir, label_stem + ".txt")
             with open(label_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
             if progress_cb and (i_idx % 50 == 0 or i_idx == n_imgs - 1):

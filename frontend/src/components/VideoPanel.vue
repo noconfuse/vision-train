@@ -58,7 +58,7 @@ const handleUpload = async ({ formData, onProgress, onDone }) => {
 const deleteVideo = async (video) => {
   if (!video) return;
   const ok = await showConfirm({
-    message: `确定要删除视频「${video.name}」吗？\n关联的抽帧任务需自行清理。`,
+    message: `确定要删除视频「${video.name}」吗？\n关联的抽帧任务会一并清理。`,
     danger: true,
     confirmText: '删除',
   });
@@ -69,7 +69,10 @@ const deleteVideo = async (video) => {
       video_name: video.name
     }), {
       successMsg: `视频「${video.name}」已删除`,
-      onSuccess: () => fetchVideos(),
+      onSuccess: () => {
+        fetchVideos();
+        fetchTasks();
+      },
     });
   });
 };
@@ -615,9 +618,6 @@ onUnmounted(() => {
             <AppIcon name="video" class="h-4 w-4" />
             <span>上传视频</span>
           </button>
-          <AsyncButton @click="fetchVideos" class="vt-link" :pending="loading" loading-text="刷新中...">
-            刷新列表
-          </AsyncButton>
         </div>
       </div>
 

@@ -5,12 +5,12 @@ import os
 from contexts.dataset.domain.capabilities import (
     DATASET_OPERATION_TRAIN,
     build_dataset_capabilities,
-    require_dataset_operation,
 )
 from contexts.dataset.infrastructure.dataset_import_yolo import ensure_dataset_yaml
 from contexts.dataset.infrastructure.dataset_repository import find_dataset_config, resolve_project_dataset_root
 from contexts.dataset.infrastructure.dataset_schema import normalize_dataset_yaml_for_training
 from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_versioning import require_current_dataset_snapshot
 from contexts.model.domain.capabilities import (
     MODEL_TRAINING_MODE_UNSUPPORTED,
     build_model_capabilities,
@@ -72,10 +72,12 @@ def resolve_training_data_ref(vision_task_type, dataset_path, data_yaml):
     return require_existing_file_path(data_yaml, "训练数据配置不存在: {path}")
 
 
-def resolve_training_capability_context(vision_task_type):
+def resolve_training_capability_context(vision_task_type, dataset_metadata=None):
     """按任务类型构造训练执行所需的能力上下文。"""
-    dataset_capabilities = build_dataset_capabilities(vision_task_type)
-    require_dataset_operation(vision_task_type, DATASET_OPERATION_TRAIN)
+    dataset_capabilities = build_dataset_capabilities(vision_task_type, dataset_metadata=dataset_metadata)
+    if not dataset_capabilities["operations"].get(DATASET_OPERATION_TRAIN):
+        reason = dataset_capabilities.get("operation_disabled_reasons", {}).get(DATASET_OPERATION_TRAIN)
+        raise ValueError(reason or "当前数据集任务类型暂未接入训练")
     training_mode = dataset_capabilities["training_mode"]
     if training_mode == MODEL_TRAINING_MODE_UNSUPPORTED:
         raise ValueError("当前数据集任务类型暂未接入训练")
@@ -113,41 +115,46 @@ def resolve_training_model_context(model_name, vision_task_type, model_path=None
         "model_path": resolved_model_path,
         "model_vision_task_type": model_vision_task_type,
         "model_capabilities": model_capabilities,
-    }
+}
 
 
 def resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=None):
     """一次性解析训练/校准启动所需的完整上下文。"""
     dataset_root = resolve_dataset_root(project_path, dataset_name, dataset_path)
+    snapshot_binding = require_current_dataset_snapshot(project_path, dataset_root)
+    training_dataset_root = snapshot_binding["snapshot_path"]
     vision_task_type = load_dataset_vision_task_type(dataset_root)
     capability_context = resolve_training_capability_context(vision_task_type)
     model_context = resolve_training_model_context(model_name, vision_task_type, model_path=model_path)
-    data_yaml = find_dataset_config(dataset_root)
+    data_yaml = find_dataset_config(training_dataset_root)
     if not data_yaml:
-        ensure_dataset_yaml(dataset_root)
-        data_yaml = find_dataset_config(dataset_root)
+        ensure_dataset_yaml(training_dataset_root)
+        data_yaml = find_dataset_config(training_dataset_root)
     if not data_yaml:
         raise ValueError("未找到 dataset.yaml")
     data_yaml = resolve_storage_path(data_yaml) if data_yaml else data_yaml
     try:
-        data_yaml = normalize_dataset_yaml_in_place(data_yaml=data_yaml, dataset_root=dataset_root)
+        data_yaml = normalize_dataset_yaml_in_place(data_yaml=data_yaml, dataset_root=training_dataset_root)
     except Exception:
         pass
     return {
         **capability_context,
         **model_context,
-        "dataset_path": dataset_root,
+        "dataset_id": snapshot_binding["dataset_id"],
+        "dataset_version_id": snapshot_binding["dataset_version_id"],
+        "source_dataset_path": dataset_root,
+        "dataset_path": training_dataset_root,
         "data_yaml": data_yaml,
-        "data_ref": resolve_training_data_ref(vision_task_type, dataset_root, data_yaml),
+        "data_ref": resolve_training_data_ref(vision_task_type, training_dataset_root, data_yaml),
     }
 
 
 def resolve_task_training_runtime_context(task):
     """从训练任务记录中恢复训练执行上下文。"""
     vision_task_type = resolve_task_vision_task_type(task)
-    capability_context = resolve_training_capability_context(vision_task_type)
     artifacts = (task or {}).get("artifacts") or {}
     dataset_path = resolve_storage_path((task or {}).get("dataset_path")) if (task or {}).get("dataset_path") else (task or {}).get("dataset_path")
+    capability_context = resolve_training_capability_context(vision_task_type)
     data_yaml = resolve_storage_path(artifacts.get("dataset_yaml")) if artifacts.get("dataset_yaml") else artifacts.get("dataset_yaml")
     model_path = require_existing_file_path(artifacts.get("model_path"), "模型文件不存在: {path}")
     return {

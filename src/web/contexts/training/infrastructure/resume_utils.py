@@ -1,5 +1,7 @@
 """提供训练续跑和恢复训练所需的任务与权重解析逻辑。"""
 
+from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
+from contexts.dataset.infrastructure.dataset_versioning import ensure_dataset_version_state
 from contexts.task.domain.task_types import TASK_TYPE_TRAINING
 from contexts.task.infrastructure.task_runtime import list_project_tasks, load_task
 from contexts.training.infrastructure.training_artifacts import resolve_training_resume_weight
@@ -42,8 +44,12 @@ def _resolve_training_starter(training_starter):
 def continue_training(project_path, dataset_name, training_config, training_starter=None):
     """查找最近可恢复的训练任务并启动续训。"""
     training_starter = _resolve_training_starter(training_starter)
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+    dataset_id = ensure_dataset_version_state(project_path, dataset_root, dataset_name=dataset_name).get("dataset_id")
     task = None
-    for item in list_project_tasks(project_path, type_=TASK_TYPE_TRAINING, dataset_name=dataset_name, limit=20):
+    for item in list_project_tasks(project_path, type_=TASK_TYPE_TRAINING, dataset_id=dataset_id, limit=20):
         _resume_weight_name, resume_weight_path = resolve_training_resume_weight(item.get("artifacts") or {})
         if resume_weight_path:
             task = item

@@ -12,7 +12,12 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_split_content_dir,
     get_dataset_unlabeled_dir,
 )
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT
+from protocols.vision_task_type import (
+    VISION_TASK_TYPE_CLASSIFY,
+    VISION_TASK_TYPE_DETECT,
+    VISION_TASK_TYPE_POSE,
+    VISION_TASK_TYPE_SEGMENT,
+)
 
 
 class BaseDatasetScanStrategy:
@@ -118,7 +123,7 @@ class ClassifyDatasetScanStrategy(BaseDatasetScanStrategy):
         """统计分类任务未标注图片区中的图片数量。"""
         if not os.path.isdir(unlabeled_dir):
             return
-        for root, dirs, files in os.walk(unlabeled_dir):
+        for _root, dirs, files in os.walk(unlabeled_dir):
             dirs.sort()
             files.sort()
             for name in files:
@@ -138,9 +143,23 @@ class ClassifyDatasetScanStrategy(BaseDatasetScanStrategy):
             self._scan_unlabeled_split(get_dataset_unlabeled_dir(dataset_path, split), info)
 
 
+class SegmentDatasetScanStrategy(DetectDatasetScanStrategy):
+    """实例分割数据集扫描策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_SEGMENT
+
+
+class PoseDatasetScanStrategy(DetectDatasetScanStrategy):
+    """姿态估计数据集扫描策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_POSE
+
+
 _DATASET_SCAN_STRATEGIES = {
     VISION_TASK_TYPE_DETECT: DetectDatasetScanStrategy(),
     VISION_TASK_TYPE_CLASSIFY: ClassifyDatasetScanStrategy(),
+    VISION_TASK_TYPE_SEGMENT: SegmentDatasetScanStrategy(),
+    VISION_TASK_TYPE_POSE: PoseDatasetScanStrategy(),
 }
 
 

@@ -7,18 +7,24 @@ export const DATASET_ANNOTATION_MODE = Object.freeze({
   UNSUPPORTED: 'unsupported',
   DETECT_BOXES: 'detect_boxes',
   IMAGE_CLASS: 'image_class',
+  SEGMENT_POLYGONS: 'segment_polygons',
+  POSE_KEYPOINTS: 'pose_keypoints',
 });
 
 export const DATASET_TRAINING_MODE = Object.freeze({
   UNSUPPORTED: 'unsupported',
   YOLO_DETECT: 'yolo_detect',
   YOLO_CLASSIFY: 'yolo_classify',
+  YOLO_SEGMENT: 'yolo_segment',
+  YOLO_POSE: 'yolo_pose',
 });
 
 export const DATASET_AUTO_ANNOTATION_MODE = Object.freeze({
   UNSUPPORTED: 'unsupported',
   DETECT_BOXES: 'detect_boxes',
   IMAGE_CLASS: 'image_class',
+  SEGMENT_POLYGONS: 'segment_polygons',
+  POSE_KEYPOINTS: 'pose_keypoints',
 });
 
 export const DATASET_OPERATION = Object.freeze({
@@ -67,6 +73,9 @@ const cloneCapabilities = (capabilities) => ({
   annotation_mode: capabilities?.annotation_mode || DATASET_ANNOTATION_MODE.UNSUPPORTED,
   training_mode: capabilities?.training_mode || DATASET_TRAINING_MODE.UNSUPPORTED,
   auto_annotation_mode: capabilities?.auto_annotation_mode || DATASET_AUTO_ANNOTATION_MODE.UNSUPPORTED,
+  operation_disabled_reasons: {
+    ...(capabilities?.operation_disabled_reasons || {}),
+  },
   training_profile: resolveTrainingConfigProfile({
     capabilities_snapshot: capabilities,
   }),
@@ -94,8 +103,9 @@ export const isDatasetOperationSupported = (dataset, operation) => {
   return !!resolveDatasetCapabilities(dataset).operations?.[operation];
 };
 
-export const getDatasetOperationDisabledReason = (operation) => {
-  return DATASET_OPERATION_DISABLED_REASONS[operation] || '当前任务类型暂不支持该操作';
+export const getDatasetOperationDisabledReason = (operation, dataset = null) => {
+  const snapshotReason = resolveDatasetCapabilities(dataset).operation_disabled_reasons?.[operation];
+  return snapshotReason || DATASET_OPERATION_DISABLED_REASONS[operation] || '当前任务类型暂不支持该操作';
 };
 
 export const resolveDatasetOperationGuard = (dataset, operation, options = {}) => {
@@ -109,7 +119,7 @@ export const resolveDatasetOperationGuard = (dataset, operation, options = {}) =
     return buildCapabilityGuard({
       visible: visibleWhenUnsupported,
       enabled: false,
-      reason: disabledReason || getDatasetOperationDisabledReason(operation),
+      reason: disabledReason || getDatasetOperationDisabledReason(operation, dataset),
     });
   }
   if (!extraEnabled) {

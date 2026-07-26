@@ -7,6 +7,8 @@ import SopLandingPage from '../pages/SopLandingPage.vue';
 import TasksCenterPage from '../pages/TasksCenterPage.vue';
 import NotFoundPage from '../pages/NotFoundPage.vue';
 import { getAuthToken, clearAuth } from '../api';
+import { useMainStore } from '../stores/main';
+import { pinia } from '../stores/pinia';
 
 // 路由设计（项目上下文全部由 URL 路径承载）：
 // - /login                         -> LoginPage (public)
@@ -39,7 +41,14 @@ router.beforeEach((to, _from, next) => {
   if (!token) {
     return next({ name: 'login', query: { redirect: to.fullPath } });
   }
-  return next();
+  const store = useMainStore(pinia);
+  Promise.resolve()
+    .then(async () => {
+      if (store.projects.length === 0) {
+        await store.fetchProjects({ silent: true });
+      }
+    })
+    .finally(() => next());
 });
 
 // 401 事件：后端报未登录就清掉本地 token 并跳登录

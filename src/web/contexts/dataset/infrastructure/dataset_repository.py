@@ -3,7 +3,9 @@
 import os
 
 from contexts.dataset.infrastructure.dataset_scan_strategy import resolve_dataset_scan_strategy
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_versioning import get_current_dataset_version_record
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
@@ -53,7 +55,9 @@ def resolve_project_dataset_root(project_path, dataset_name=None, dataset_path=N
 def analyze_dataset(dataset_path):
     """统计数据集图片、标签和类别分布。"""
     vision_task_type = load_dataset_vision_task_type(dataset_path)
-    capabilities = build_training_capabilities_snapshot(vision_task_type)
+    task_strategy = resolve_dataset_task_strategy(vision_task_type)
+    data_config = load_dataset_yaml(dataset_path, default={})
+    capabilities = build_training_capabilities_snapshot(vision_task_type, dataset_metadata=data_config)
     info = {
         "image_count": 0,
         "label_count": 0,
@@ -70,12 +74,13 @@ def analyze_dataset(dataset_path):
         "tags": [],
         "vision_task_type": vision_task_type,
         "capabilities": capabilities,
+        "task_metadata": {},
     }
     class_counts = {}
-    data_config = load_dataset_yaml(dataset_path, default={})
     class_names = resolve_dataset_names_dict(data_config.get("names"))
     class_name_to_id = {str(name): int(class_id) for class_id, name in class_names.items()}
     info["tags"] = resolve_dataset_tags(data_config)
+    info["task_metadata"] = task_strategy.build_dataset_summary_metadata(dataset_path, data_config) or {}
     info["names"] = load_dataset_names(dataset_path)
     resolve_dataset_scan_strategy(vision_task_type).scan_dataset(
         dataset_path,
@@ -106,11 +111,19 @@ def analyze_dataset(dataset_path):
 
 def build_dataset_summary(dataset_root, analysis, *, name=None):
     """把分析结果组装为统一的数据集摘要结构。"""
+    project_path = os.path.dirname(os.path.dirname(os.path.realpath(dataset_root)))
+    identity = load_dataset_identity_meta(dataset_root)
+    current_version = get_current_dataset_version_record(project_path, dataset_root)
     return {
         "name": name or project_name_from_path(dataset_root),
         "type": "training",
         "vision_task_type": analysis.get("vision_task_type"),
         "path": storage_path_ref(dataset_root),
+        "dataset_id": identity.get("dataset_id"),
+        "current_version_id": identity.get("current_version_id"),
+        "dataset_created_at": identity.get("created_at"),
+        "dataset_updated_at": identity.get("updated_at"),
+        "current_version_created_at": (current_version or {}).get("created_at"),
         "image_count": analysis["image_count"],
         "label_count": analysis["label_count"],
         "annotated_count": analysis["annotated_count"],
@@ -122,6 +135,7 @@ def build_dataset_summary(dataset_root, analysis, *, name=None):
         "has_val": analysis["has_val"],
         "has_test": analysis["has_test"],
         "tags": analysis["tags"],
+        **(analysis.get("task_metadata") or {}),
     }
 
 

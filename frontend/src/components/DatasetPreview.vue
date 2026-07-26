@@ -4,8 +4,10 @@
     :class="isFullScreen ? 'fixed inset-0 z-40 h-screen mb-0' : ''"
   >
     <!-- Row 1: 标题 + 视图操作 -->
-    <div class="flex items-center justify-between gap-3 mb-3">
-      <h2 class="text-base font-semibold text-slate-800">数据集预览：{{ store.selectedDataset?.name || '数据集' }}</h2>
+    <div class="flex items-start justify-between gap-3 mb-3">
+      <div class="min-w-0">
+        <h2 class="text-base font-semibold text-slate-800">数据集预览：{{ store.selectedDataset?.name || '数据集' }}</h2>
+      </div>
       <div class="flex items-center gap-2">
         <button
           class="vt-icon-btn"
@@ -383,6 +385,28 @@
     />
     <ClassificationAnnotator
       v-if="currentImage && store.selectedDataset?.name && annotationMode === DATASET_ANNOTATION_MODE.IMAGE_CLASS"
+      :image="currentImage"
+      :class-list="classList"
+      :dataset-name="store.selectedDataset?.name || ''"
+      :split="filters.split"
+      @close="currentImage = null"
+      @prev="navImage(-1)"
+      @next="navImage(1)"
+      @update="onImageUpdate"
+    />
+    <SegmentAnnotator
+      v-if="currentImage && store.selectedDataset?.name && annotationMode === DATASET_ANNOTATION_MODE.SEGMENT_POLYGONS"
+      :image="currentImage"
+      :class-list="classList"
+      :dataset-name="store.selectedDataset?.name || ''"
+      :split="filters.split"
+      @close="currentImage = null"
+      @prev="navImage(-1)"
+      @next="navImage(1)"
+      @update="onImageUpdate"
+    />
+    <PoseAnnotator
+      v-if="currentImage && store.selectedDataset?.name && annotationMode === DATASET_ANNOTATION_MODE.POSE_KEYPOINTS"
       :image="currentImage"
       :class-list="classList"
       :dataset-name="store.selectedDataset?.name || ''"
@@ -886,6 +910,8 @@ import { assertCapabilityGuard } from '../capabilityGuards';
 import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
 import ClassificationAnnotator from './ClassificationAnnotator.vue';
 import ImageAnnotator from './ImageAnnotator.vue';
+import PoseAnnotator from './PoseAnnotator.vue';
+import SegmentAnnotator from './SegmentAnnotator.vue';
 import UploadDatasetImagesModal from './UploadDatasetImagesModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
@@ -1903,7 +1929,7 @@ const runAutoAnnotate = async () => {
       image_paths: imagePaths,
       model_path: selectedModelPath.value,
       conf: 0.25,
-      iou: 0.7
+      iou_thresh: 0.7
     }), {
       errorMsg: '自动标注启动失败',
       onSuccess: (data) => {

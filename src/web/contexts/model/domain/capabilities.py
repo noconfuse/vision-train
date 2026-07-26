@@ -10,6 +10,8 @@ from protocols.vision_task_type import (
 MODEL_TRAINING_MODE_UNSUPPORTED = "unsupported"
 MODEL_TRAINING_MODE_YOLO_DETECT = "yolo_detect"
 MODEL_TRAINING_MODE_YOLO_CLASSIFY = "yolo_classify"
+MODEL_TRAINING_MODE_YOLO_SEGMENT = "yolo_segment"
+MODEL_TRAINING_MODE_YOLO_POSE = "yolo_pose"
 
 MODEL_OPERATION_TRAIN = "train"
 MODEL_OPERATION_EVALUATE = "evaluate"
@@ -39,12 +41,18 @@ _MODEL_CAPABILITY_MAP = {
         },
     },
     VISION_TASK_TYPE_SEGMENT: {
-        "training_mode": MODEL_TRAINING_MODE_UNSUPPORTED,
-        "operations": {**_BASE_OPERATIONS},
+        "training_mode": MODEL_TRAINING_MODE_YOLO_SEGMENT,
+        "operations": {
+            **_BASE_OPERATIONS,
+            MODEL_OPERATION_TRAIN: True,
+        },
     },
     VISION_TASK_TYPE_POSE: {
-        "training_mode": MODEL_TRAINING_MODE_UNSUPPORTED,
-        "operations": {**_BASE_OPERATIONS},
+        "training_mode": MODEL_TRAINING_MODE_YOLO_POSE,
+        "operations": {
+            **_BASE_OPERATIONS,
+            MODEL_OPERATION_TRAIN: True,
+        },
     },
 }
 

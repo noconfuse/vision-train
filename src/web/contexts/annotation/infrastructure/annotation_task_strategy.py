@@ -5,9 +5,14 @@ import os
 from contexts.annotation.infrastructure.annotation_io import (
     decode_classification_file,
     decode_detect_file,
+    decode_pose_file,
+    decode_segment_file,
     encode_classification_lines,
     encode_detect_lines,
+    encode_pose_lines,
+    encode_segment_lines,
     get_image_size,
+    load_pose_annotation_meta,
     resolve_classification_class_id,
 )
 from constants.media import IMAGE_FILE_EXTENSIONS
@@ -18,7 +23,7 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_labels_dir,
     get_dataset_unlabeled_dir,
 )
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT
+from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT, VISION_TASK_TYPE_POSE, VISION_TASK_TYPE_SEGMENT
 from shared.utils.fs_utils import remove_dir_if_empty, remove_file_silent
 from shared.utils.path_utils import build_file_items, file_api_url, storage_path_ref, slice_items
 from shared.utils.yolo_utils import read_yolo_lines, write_yolo_lines
@@ -26,6 +31,7 @@ from contexts.annotation.infrastructure.batch_helpers import (
     extract_prediction_boxes,
     load_existing_manual_boxes,
 )
+from contexts.annotation.domain.services import filter_duplicate_boxes, filter_duplicate_polygons, polygon_area
 
 
 class BaseAnnotationTaskStrategy:
@@ -89,6 +95,159 @@ def _remove_empty_dirs_up_to(path, stop_dir):
         if parent_dir == current_dir:
             break
         current_dir = parent_dir
+
+
+def _scalar_to_float(value, default=0.0):
+    """把 tensor / numpy scalar / Python 标量统一转成 float。"""
+    try:
+        if hasattr(value, "item"):
+            value = value.item()
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _tolist(value):
+    """把支持 tolist 的容器统一转成 Python list。"""
+    if value is None:
+        return None
+    if hasattr(value, "tolist"):
+        try:
+            return value.tolist()
+        except Exception:
+            return None
+    return value
+
+
+def _normalize_box_xyxy(box):
+    """把单个预测框归一化为 x1/y1/x2/y2 结构。"""
+    xyxy = getattr(box, "xyxy", None)
+    xyxy = _tolist(xyxy)
+    if not xyxy:
+        return None
+    if isinstance(xyxy, list) and xyxy and isinstance(xyxy[0], list):
+        xyxy = xyxy[0]
+    if not isinstance(xyxy, list) or len(xyxy) < 4:
+        return None
+    x1 = _scalar_to_float(xyxy[0])
+    y1 = _scalar_to_float(xyxy[1])
+    x2 = _scalar_to_float(xyxy[2])
+    y2 = _scalar_to_float(xyxy[3])
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return {
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+    }
+
+
+def _normalize_pose_keypoint_rows(keypoints_obj):
+    """从 Ultralytics keypoints 对象中提取逐实例关键点行。"""
+    if keypoints_obj is None:
+        return []
+    data_rows = _tolist(getattr(keypoints_obj, "data", None))
+    if isinstance(data_rows, list):
+        return data_rows
+    xy_rows = _tolist(getattr(keypoints_obj, "xy", None))
+    conf_rows = _tolist(getattr(keypoints_obj, "conf", None))
+    if not isinstance(xy_rows, list):
+        return []
+    rows = []
+    for index, xy_row in enumerate(xy_rows):
+        xy_points = xy_row if isinstance(xy_row, list) else _tolist(xy_row)
+        conf_row = conf_rows[index] if isinstance(conf_rows, list) and index < len(conf_rows) else None
+        conf_points = conf_row if isinstance(conf_row, list) else _tolist(conf_row)
+        merged_points = []
+        for point_index, point in enumerate(xy_points or []):
+            point_values = point if isinstance(point, list) else _tolist(point)
+            if not isinstance(point_values, list) or len(point_values) < 2:
+                continue
+            merged_point = [point_values[0], point_values[1]]
+            if isinstance(conf_points, list) and point_index < len(conf_points):
+                merged_point.append(conf_points[point_index])
+            merged_points.append(merged_point)
+        rows.append(merged_points)
+    return rows
+
+
+def _build_pose_instance_from_prediction(box, keypoint_row):
+    """把单个 pose 预测结果转换成统一实例结构。"""
+    bbox = _normalize_box_xyxy(box)
+    if not bbox:
+        return None
+    class_id = 0
+    if getattr(box, "cls", None) is not None:
+        class_id = int(_scalar_to_float(getattr(box, "cls", None), default=0))
+    keypoints = []
+    for point in keypoint_row or []:
+        values = point if isinstance(point, list) else _tolist(point)
+        if not isinstance(values, list) or len(values) < 2:
+            continue
+        x = _scalar_to_float(values[0])
+        y = _scalar_to_float(values[1])
+        visible = 0
+        if len(values) >= 3:
+            visible = 2 if _scalar_to_float(values[2]) > 0 else 0
+        elif x > 0 or y > 0:
+            visible = 2
+        keypoints.append({"x": x, "y": y, "visible": visible})
+    if not any(int(point.get("visible", 0) or 0) > 0 for point in keypoints):
+        return None
+    return {
+        "class": class_id,
+        **bbox,
+        "keypoints": keypoints,
+    }
+
+
+def _sanitize_pose_instance(instance, width, height, keypoint_count):
+    """按数据集关键点配置清洗 pose 实例并补齐有效 bbox。"""
+    normalized_points = []
+    raw_points = (instance or {}).get("keypoints") or []
+    target_count = max(int(keypoint_count or 0), len(raw_points))
+    for index in range(target_count):
+        point = {}
+        if index < len(raw_points) and isinstance(raw_points[index], dict):
+            point = raw_points[index]
+        visible = int(_scalar_to_float(point.get("visible", 0), default=0))
+        visible = max(0, min(2, visible))
+        if visible > 0:
+            x = max(0.0, min(float(width), _scalar_to_float(point.get("x", 0.0))))
+            y = max(0.0, min(float(height), _scalar_to_float(point.get("y", 0.0))))
+        else:
+            x = 0.0
+            y = 0.0
+        normalized_points.append({"x": x, "y": y, "visible": visible})
+    if not any(point["visible"] > 0 for point in normalized_points):
+        return None
+
+    x1 = max(0.0, min(float(width), _scalar_to_float((instance or {}).get("x1", 0.0))))
+    y1 = max(0.0, min(float(height), _scalar_to_float((instance or {}).get("y1", 0.0))))
+    x2 = max(0.0, min(float(width), _scalar_to_float((instance or {}).get("x2", 0.0))))
+    y2 = max(0.0, min(float(height), _scalar_to_float((instance or {}).get("y2", 0.0))))
+    if x2 <= x1 or y2 <= y1:
+        visible_points = [point for point in normalized_points if point["visible"] > 0]
+        xs = [point["x"] for point in visible_points]
+        ys = [point["y"] for point in visible_points]
+        x1 = min(xs)
+        y1 = min(ys)
+        x2 = max(xs)
+        y2 = max(ys)
+        if x2 <= x1:
+            x2 = min(float(width), x1 + 1.0)
+        if y2 <= y1:
+            y2 = min(float(height), y1 + 1.0)
+
+    return {
+        "class": int(_scalar_to_float((instance or {}).get("class", 0), default=0)),
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "keypoints": normalized_points,
+    }
 
 
 class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
@@ -196,10 +355,8 @@ class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         """分类自动标注仅扫描未标注工作区。"""
         return get_dataset_unlabeled_dir(dataset_root, split)
 
-    def extract_auto_annotation(self, prediction, use_openvino):
+    def extract_auto_annotation(self, prediction):
         """把分类模型输出解析为单个候选 class_id。"""
-        if use_openvino:
-            raise ValueError("当前暂未接入分类 OpenVINO 自动标注")
         probs = getattr(prediction, "probs", None)
         top1 = getattr(probs, "top1", None) if probs is not None else None
         return {"class_id": int(top1)} if top1 is not None else {}
@@ -288,9 +445,9 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         """检测自动标注扫描 split/images。"""
         return get_dataset_images_dir(dataset_root, split)
 
-    def extract_auto_annotation(self, prediction, use_openvino):
-        """把不同推理后端统一成检测框载荷。"""
-        return {"boxes": extract_prediction_boxes(prediction, use_openvino=use_openvino)}
+    def extract_auto_annotation(self, prediction):
+        """把 Ultralytics 检测输出统一成检测框载荷。"""
+        return {"boxes": extract_prediction_boxes(prediction)}
 
     def refine_auto_annotation(self, context, annotation, iou_thresh):
         """检测自动标注需去重已有人工框与待确认框。"""
@@ -301,8 +458,6 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         rel_noext = context["relative_noext"]
         existing_manual = load_existing_manual_boxes(context["dataset_root"], context.get("split"), rel_noext, width, height)
         existing_auto = decode_detect_file(context["auto_label_path"], width, height)
-        from contexts.annotation.domain.services import filter_duplicate_boxes
-
         return {"boxes": filter_duplicate_boxes(boxes, existing_manual, existing_auto, float(iou_thresh))}
 
     def has_auto_annotation_content(self, annotation):
@@ -314,9 +469,298 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         return len((annotation or {}).get("boxes") or [])
 
 
+class SegmentAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
+    """实例分割标注策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_SEGMENT
+    supports_auto_annotation = True
+
+    def get_annotation_payload(self, context):
+        width, height = get_image_size(context["image_path"])
+        return {
+            "vision_task_type": self.vision_task_type,
+            "manual_annotation": {"polygons": decode_segment_file(context["manual_label_path"], width, height)},
+            "auto_annotation": {"polygons": decode_segment_file(context["auto_label_path"], width, height)},
+            "width": width,
+            "height": height,
+        }
+
+    def save_manual_annotation(self, context, annotation):
+        width, height = get_image_size(context["image_path"])
+        labels = (annotation or {}).get("polygons") or []
+        write_yolo_lines(context["manual_label_path"], encode_segment_lines(labels, width, height))
+        remove_file_silent(context["auto_label_path"])
+        return {"label_path": storage_path_ref(context["manual_label_path"])}
+
+    def save_auto_annotation(self, context, annotation):
+        width, height = get_image_size(context["image_path"])
+        labels = (annotation or {}).get("polygons") or []
+        write_yolo_lines(context["auto_label_path"], encode_segment_lines(labels, width, height))
+        return {"label_path": storage_path_ref(context["auto_label_path"])}
+
+    def commit_auto_annotation(self, context):
+        merged = read_yolo_lines(context["manual_label_path"]) + read_yolo_lines(context["auto_label_path"])
+        write_yolo_lines(context["manual_label_path"], merged)
+        remove_file_silent(context["auto_label_path"])
+        return {"label_path": storage_path_ref(context["manual_label_path"])}
+
+    def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
+        img_dir = get_dataset_images_dir(dataset_root, split)
+        lbl_dir = get_dataset_labels_dir(dataset_root, split)
+        missing = []
+        for root, _, files in os.walk(img_dir):
+            for file_name in files:
+                if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                    continue
+                image_path = os.path.join(root, file_name)
+                rel = os.path.relpath(image_path, img_dir)
+                label_path = os.path.join(lbl_dir, build_label_relpath(rel))
+                if not os.path.exists(label_path) or os.path.getsize(label_path) == 0:
+                    missing.append(image_path)
+        return slice_items(build_file_items(missing), offset=offset, limit=limit)
+
+    def list_pending_auto_annotations(self, dataset_root, split, offset=0, limit=50):
+        img_dir = get_dataset_images_dir(dataset_root, split)
+        auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+        items = []
+        for root, _, files in os.walk(img_dir):
+            for file_name in files:
+                if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                    continue
+                image_path = os.path.join(root, file_name)
+                rel = os.path.relpath(image_path, img_dir)
+                auto_label_path = os.path.join(auto_dir, build_label_relpath(rel))
+                if os.path.exists(auto_label_path):
+                    items.append(image_path)
+        return slice_items(build_file_items(items), offset=offset, limit=limit)
+
+    def get_auto_annotation_image_dir(self, dataset_root, split):
+        return get_dataset_images_dir(dataset_root, split)
+
+    def extract_auto_annotation(self, prediction):
+        polygons = []
+        try:
+            segments = list(getattr(getattr(prediction, "masks", None), "xy", []) or [])
+            boxes = list(getattr(prediction, "boxes", []) or [])
+            for index, segment in enumerate(segments):
+                if segment is None:
+                    continue
+                class_id = 0
+                if index < len(boxes) and getattr(boxes[index], "cls", None) is not None:
+                    class_id = int(boxes[index].cls.item())
+                points = []
+                for point in segment.tolist():
+                    if len(point) < 2:
+                        continue
+                    points.append({"x": float(point[0]), "y": float(point[1])})
+                if len(points) >= 3:
+                    polygons.append({"class": class_id, "points": points})
+        except Exception:
+            return {"polygons": []}
+        return {"polygons": polygons}
+
+    def refine_auto_annotation(self, context, annotation, iou_thresh):
+        width, height = get_image_size(context["image_path"])
+        cleaned = []
+        for polygon in (annotation or {}).get("polygons") or []:
+            points = []
+            last = None
+            for point in (polygon.get("points") or []):
+                x = max(0.0, min(float(width), float(point.get("x", 0.0))))
+                y = max(0.0, min(float(height), float(point.get("y", 0.0))))
+                pair = (round(x, 3), round(y, 3))
+                if last == pair:
+                    continue
+                last = pair
+                points.append({"x": x, "y": y})
+            if len(points) >= 3 and points[0] == points[-1]:
+                points = points[:-1]
+            candidate = {"class": int(polygon.get("class", 0)), "points": points}
+            if len(points) < 3:
+                continue
+            if polygon_area(candidate) < 9.0:
+                continue
+            cleaned.append(candidate)
+        existing_manual = decode_segment_file(context["manual_label_path"], width, height)
+        existing_auto = decode_segment_file(context["auto_label_path"], width, height)
+        return {
+            "polygons": filter_duplicate_polygons(
+                cleaned,
+                existing_manual,
+                existing_auto,
+                float(iou_thresh),
+            )
+        }
+
+    def has_auto_annotation_content(self, annotation):
+        return bool((annotation or {}).get("polygons"))
+
+    def count_auto_annotation_items(self, annotation):
+        return len((annotation or {}).get("polygons") or [])
+
+
+class PoseAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
+    """姿态估计标注策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_POSE
+    supports_auto_annotation = True
+
+    def get_annotation_payload(self, context):
+        width, height = get_image_size(context["image_path"])
+        pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
+        return {
+            "vision_task_type": self.vision_task_type,
+            "manual_annotation": {
+                "instances": decode_pose_file(
+                    context["manual_label_path"],
+                    width,
+                    height,
+                    kpt_shape=pose_meta.get("kpt_shape"),
+                )
+            },
+            "auto_annotation": {
+                "instances": decode_pose_file(
+                    context["auto_label_path"],
+                    width,
+                    height,
+                    kpt_shape=pose_meta.get("kpt_shape"),
+                )
+            },
+            "pose_meta": pose_meta,
+            "width": width,
+            "height": height,
+        }
+
+    def save_manual_annotation(self, context, annotation):
+        width, height = get_image_size(context["image_path"])
+        pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
+        labels = (annotation or {}).get("instances") or []
+        write_yolo_lines(
+            context["manual_label_path"],
+            encode_pose_lines(
+                labels,
+                width,
+                height,
+                kpt_shape=pose_meta.get("kpt_shape"),
+            ),
+        )
+        remove_file_silent(context["auto_label_path"])
+        return {"label_path": storage_path_ref(context["manual_label_path"])}
+
+    def save_auto_annotation(self, context, annotation):
+        width, height = get_image_size(context["image_path"])
+        pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
+        labels = (annotation or {}).get("instances") or []
+        write_yolo_lines(
+            context["auto_label_path"],
+            encode_pose_lines(
+                labels,
+                width,
+                height,
+                kpt_shape=pose_meta.get("kpt_shape"),
+            ),
+        )
+        return {"label_path": storage_path_ref(context["auto_label_path"])}
+
+    def commit_auto_annotation(self, context):
+        merged = read_yolo_lines(context["manual_label_path"]) + read_yolo_lines(context["auto_label_path"])
+        write_yolo_lines(context["manual_label_path"], merged)
+        remove_file_silent(context["auto_label_path"])
+        return {"label_path": storage_path_ref(context["manual_label_path"])}
+
+    def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
+        img_dir = get_dataset_images_dir(dataset_root, split)
+        lbl_dir = get_dataset_labels_dir(dataset_root, split)
+        missing = []
+        for root, _, files in os.walk(img_dir):
+            for file_name in files:
+                if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                    continue
+                image_path = os.path.join(root, file_name)
+                rel = os.path.relpath(image_path, img_dir)
+                label_path = os.path.join(lbl_dir, build_label_relpath(rel))
+                if not os.path.exists(label_path) or os.path.getsize(label_path) == 0:
+                    missing.append(image_path)
+        return slice_items(build_file_items(missing), offset=offset, limit=limit)
+
+    def list_pending_auto_annotations(self, dataset_root, split, offset=0, limit=50):
+        img_dir = get_dataset_images_dir(dataset_root, split)
+        auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+        items = []
+        for root, _, files in os.walk(img_dir):
+            for file_name in files:
+                if not file_name.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                    continue
+                image_path = os.path.join(root, file_name)
+                rel = os.path.relpath(image_path, img_dir)
+                auto_label_path = os.path.join(auto_dir, build_label_relpath(rel))
+                if os.path.exists(auto_label_path):
+                    items.append(image_path)
+        return slice_items(build_file_items(items), offset=offset, limit=limit)
+
+    def get_auto_annotation_image_dir(self, dataset_root, split):
+        return get_dataset_images_dir(dataset_root, split)
+
+    def extract_auto_annotation(self, prediction):
+        try:
+            boxes = list(getattr(prediction, "boxes", []) or [])
+            keypoint_rows = _normalize_pose_keypoint_rows(getattr(prediction, "keypoints", None))
+            total = max(len(boxes), len(keypoint_rows))
+            instances = []
+            for index in range(total):
+                box = boxes[index] if index < len(boxes) else None
+                keypoint_row = keypoint_rows[index] if index < len(keypoint_rows) else []
+                if box is None:
+                    continue
+                instance = _build_pose_instance_from_prediction(box, keypoint_row)
+                if instance:
+                    instances.append(instance)
+            return {"instances": instances}
+        except Exception:
+            return {"instances": []}
+
+    def refine_auto_annotation(self, context, annotation, iou_thresh):
+        width, height = get_image_size(context["image_path"])
+        pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
+        keypoint_count = pose_meta.get("keypoint_count") or 0
+        cleaned = []
+        for instance in (annotation or {}).get("instances") or []:
+            sanitized = _sanitize_pose_instance(instance, width, height, keypoint_count)
+            if sanitized:
+                cleaned.append(sanitized)
+        existing_manual = decode_pose_file(
+            context["manual_label_path"],
+            width,
+            height,
+            kpt_shape=pose_meta.get("kpt_shape"),
+        )
+        existing_auto = decode_pose_file(
+            context["auto_label_path"],
+            width,
+            height,
+            kpt_shape=pose_meta.get("kpt_shape"),
+        )
+        return {
+            "instances": filter_duplicate_boxes(
+                cleaned,
+                existing_manual,
+                existing_auto,
+                float(iou_thresh),
+            )
+        }
+
+    def has_auto_annotation_content(self, annotation):
+        return bool((annotation or {}).get("instances"))
+
+    def count_auto_annotation_items(self, annotation):
+        return len((annotation or {}).get("instances") or [])
+
+
 _ANNOTATION_TASK_STRATEGIES = {
     VISION_TASK_TYPE_CLASSIFY: ClassifyAnnotationTaskStrategy(),
     VISION_TASK_TYPE_DETECT: DetectAnnotationTaskStrategy(),
+    VISION_TASK_TYPE_SEGMENT: SegmentAnnotationTaskStrategy(),
+    VISION_TASK_TYPE_POSE: PoseAnnotationTaskStrategy(),
 }
 
 

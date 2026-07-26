@@ -10,7 +10,7 @@ export const useMainStore = defineStore('main', {
     pretrainedOptions: [],       // 全部官方预设（含未下载）
     selectedDataset: null,
     isLoading: false,
-    error: null
+    error: null,
   }),
   
   actions: {
@@ -56,7 +56,7 @@ export const useMainStore = defineStore('main', {
           if (cur) this.currentProject = cur;
         }
       } catch (err) {
-        this.error = err.message;
+        this.error = err && err.message ? err.message : String(err);
       } finally {
         if (!silent) this.isLoading = false;
       }

@@ -53,7 +53,7 @@ def auto_annotate_image(project_path, image_ref, model_path=None, conf=0.25, max
 
     results = model.predict(image_path, conf=float(conf), max_det=int(max_det), verbose=False)
     prediction = results[0] if results else None
-    return strategy.extract_auto_annotation(prediction, use_openvino=False) if prediction is not None else {}
+    return strategy.extract_auto_annotation(prediction) if prediction is not None else {}
 
 
 def get_batch_auto_annotation_status(task_id=None):
@@ -161,7 +161,7 @@ def start_batch_auto_annotation(
                 for batch_index, result in enumerate(results):
                     image_path = batch[batch_index]
                     context = build_dataset_image_context(dataset_root, split, image_path)
-                    annotation = strategy.extract_auto_annotation(result, use_openvino=False)
+                    annotation = strategy.extract_auto_annotation(result)
                     refined_annotation = strategy.refine_auto_annotation(context, annotation, float(iou_thresh))
                     if not strategy.has_auto_annotation_content(refined_annotation):
                         continue

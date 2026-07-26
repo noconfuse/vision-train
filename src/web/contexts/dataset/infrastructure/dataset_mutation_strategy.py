@@ -14,7 +14,12 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_unlabeled_dir,
 )
 from contexts.dataset.infrastructure.dataset_schema import load_dataset_names
-from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT
+from protocols.vision_task_type import (
+    VISION_TASK_TYPE_CLASSIFY,
+    VISION_TASK_TYPE_DETECT,
+    VISION_TASK_TYPE_POSE,
+    VISION_TASK_TYPE_SEGMENT,
+)
 
 
 class BaseDatasetMutationStrategy:
@@ -215,9 +220,23 @@ class ClassifyDatasetMutationStrategy(BaseDatasetMutationStrategy):
         move_path(item["current_img"], dst_img, ensure_parent=True)
 
 
+class SegmentDatasetMutationStrategy(DetectDatasetMutationStrategy):
+    """实例分割数据集变异策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_SEGMENT
+
+
+class PoseDatasetMutationStrategy(DetectDatasetMutationStrategy):
+    """姿态估计数据集变异策略。"""
+
+    vision_task_type = VISION_TASK_TYPE_POSE
+
+
 _DATASET_MUTATION_STRATEGIES = {
     VISION_TASK_TYPE_DETECT: DetectDatasetMutationStrategy(),
     VISION_TASK_TYPE_CLASSIFY: ClassifyDatasetMutationStrategy(),
+    VISION_TASK_TYPE_SEGMENT: SegmentDatasetMutationStrategy(),
+    VISION_TASK_TYPE_POSE: PoseDatasetMutationStrategy(),
 }
 
 

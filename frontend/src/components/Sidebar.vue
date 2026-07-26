@@ -199,7 +199,6 @@ const onDocClick = () => {
 };
 onMounted(() => {
   document.addEventListener('click', onDocClick);
-  store.fetchProjects();
 });
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick);

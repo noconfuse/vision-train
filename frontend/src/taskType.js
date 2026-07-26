@@ -5,6 +5,7 @@ export const TASK_TYPE = Object.freeze({
   AUTO_ANNOTATION: 'auto_annotation',
   EVALUATE: 'evaluate',
   EXPORT: 'export',
+  TEMPLATE: 'template',
   INFERENCE: 'inference',
 });
 
@@ -15,6 +16,7 @@ export const TASK_TYPE_FILTER_OPTIONS = [
   { value: TASK_TYPE.AUTO_ANNOTATION, label: '自动标注' },
   { value: TASK_TYPE.EVALUATE, label: '评估' },
   { value: TASK_TYPE.EXPORT, label: '导出' },
+  { value: TASK_TYPE.TEMPLATE, label: '部署模板' },
   { value: TASK_TYPE.INFERENCE, label: '推理' },
 ];
 
@@ -25,6 +27,7 @@ const TASK_TYPE_LABELS = {
   [TASK_TYPE.AUTO_ANNOTATION]: '自动标注',
   [TASK_TYPE.EVALUATE]: '评估',
   [TASK_TYPE.EXPORT]: '导出',
+  [TASK_TYPE.TEMPLATE]: '部署模板',
   [TASK_TYPE.INFERENCE]: '推理',
 };
 
@@ -35,6 +38,7 @@ const TASK_TYPE_ICONS = {
   [TASK_TYPE.AUTO_ANNOTATION]: '🏷️',
   [TASK_TYPE.EVALUATE]: '📊',
   [TASK_TYPE.EXPORT]: '📦',
+  [TASK_TYPE.TEMPLATE]: '🚀',
   [TASK_TYPE.INFERENCE]: '🔍',
 };
 
@@ -43,6 +47,7 @@ const TASK_TYPES_WITH_DETAIL = new Set([
   TASK_TYPE.BATCH_CALIBRATION,
   TASK_TYPE.EVALUATE,
   TASK_TYPE.EXPORT,
+  TASK_TYPE.TEMPLATE,
   TASK_TYPE.INFERENCE,
 ]);
 

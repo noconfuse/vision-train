@@ -44,7 +44,15 @@ from contexts.dataset.infrastructure.dataset_repository import analyze_dataset a
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
 from contexts.dataset.infrastructure.dataset_repository import scan_project_datasets as scan_project_dataset_records
 from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_versioning import (
+    create_dataset_version_snapshot,
+    delete_dataset_version_store,
+    get_current_dataset_version_record,
+    list_dataset_version_records,
+    restore_dataset_version_snapshot,
+)
+from contexts.training.infrastructure.workflow_repository import delete_dataset_training_state
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
@@ -73,6 +81,30 @@ from shared.utils.path_utils import (
 )
 from shared.utils.value_utils import parse_bool, require_present
 from shared.utils.zip_utils import split_archive_filename
+
+
+def _present_dataset_version(record):
+    """把内部版本记录转换成接口输出结构。"""
+    if not record:
+        return None
+    return {
+        **record,
+        "snapshot_path": storage_path_ref(record["snapshot_path"]) if record.get("snapshot_path") else None,
+        "source_dataset_path": storage_path_ref(record["source_dataset_path"]) if record.get("source_dataset_path") else None,
+    }
+
+
+def _publish_dataset_version(project_path, dataset_root, dataset_name, reason, *, source_version_id=None):
+    """为当前工作数据集发布一个新版本。"""
+    return _present_dataset_version(
+        create_dataset_version_snapshot(
+            project_path,
+            dataset_root,
+            dataset_name=dataset_name,
+            reason=reason,
+            source_version_id=source_version_id,
+        )
+    )
 
 
 def _load_names(source_root):
@@ -105,7 +137,64 @@ def get_dataset_info(project_path, dataset_name):
     info = analyze_dataset_record(dataset_root)
     info["name"] = dataset_name
     info["path"] = dataset_root
+    info.update(load_dataset_identity_meta(dataset_root))
     return info
+
+
+def list_dataset_versions(project_path, dataset_name):
+    """列出数据集的全部历史版本。"""
+    require_present(project_path=project_path, dataset_name=dataset_name)
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+    identity = load_dataset_identity_meta(dataset_root)
+    return {
+        "dataset_name": dataset_name,
+        "dataset_id": identity["dataset_id"],
+        "current_version_id": identity.get("current_version_id"),
+        "versions": [_present_dataset_version(item) for item in list_dataset_version_records(project_path, identity["dataset_id"])],
+    }
+
+
+def publish_dataset_version(project_path, dataset_name, reason="manual_publish"):
+    """把当前工作数据集冻结成一个新的历史版本。"""
+    require_present(project_path=project_path, dataset_name=dataset_name)
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+    return {
+        "dataset_name": dataset_name,
+        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, reason),
+    }
+
+
+def restore_dataset_version(project_path, dataset_name, version_id):
+    """将历史版本恢复为当前工作数据集，并生成新的当前版本。
+
+    若当前版本本身就是上一次“恢复”出来的、且内容来源于待恢复到的目标版本，
+    则拒绝重复恢复，避免版本列表里出现内容相同的恢复记录。
+    """
+    require_present(project_path=project_path, dataset_name=dataset_name, version_id=version_id)
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+
+    current_record = get_current_dataset_version_record(project_path, dataset_root)
+    if (
+        current_record
+        and current_record.get("version_id") != version_id
+        and current_record.get("reason") == "restore"
+        and current_record.get("source_version_id") == version_id
+    ):
+        raise ValueError(
+            "当前版本已是该版本的恢复结果，内容一致；如需重新恢复，请先做一次修改（例如发布当前版本）"
+        )
+
+    result = restore_dataset_version_snapshot(project_path, dataset_root, version_id, dataset_name=dataset_name)
+    return {
+        "dataset_name": dataset_name,
+        **result,
+    }
 
 
 def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
@@ -152,7 +241,12 @@ def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
         val_fallback_split=DATASET_SPLIT_TRAIN,
     )
     save_dataset_vision_task_type(target_root, vision_task_type)
-    return {"dataset_name": new_dataset_name, "image_count": count, "dataset_root": storage_path_ref(target_root)}
+    return {
+        "dataset_name": new_dataset_name,
+        "image_count": count,
+        "dataset_root": storage_path_ref(target_root),
+        "version": _publish_dataset_version(project_path, target_root, new_dataset_name, "create_subset"),
+    }
 
 
 def augment_subset(project_path, source_dataset, new_dataset_name, payload):
@@ -193,6 +287,7 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
     if not result.get("dry_run"):
         result["new_dataset_name"] = new_dataset_name
         result["message"] = f"已创建增强子集 {new_dataset_name}：train样本 {result['output_total']} 张，目标类占比 {result['output_target_ratio']}%"
+        result["version"] = _publish_dataset_version(project_path, target_root, new_dataset_name, "augment_subset")
     return result
 
 
@@ -372,8 +467,20 @@ def delete_dataset_folder(project_path, dataset_name, dataset_path=None):
     require_present(project_path=project_path, dataset_name=dataset_name)
     target_path = dataset_path or get_project_dataset_dir(project_path, dataset_name)
     deleted_path = resolve_allowed_dir_path(target_path, allowed_roots=[project_path])
+    dataset_identity = load_dataset_identity_meta(deleted_path)
+    training_cleanup = delete_dataset_training_state(
+        project_path,
+        dataset_identity["dataset_id"],
+        dataset_name=dataset_name,
+    )
     remove_tree(deleted_path)
-    return {"deleted_path": storage_path_ref(deleted_path)}
+    removed_version_store = delete_dataset_version_store(project_path, dataset_identity["dataset_id"])
+    return {
+        "deleted_path": storage_path_ref(deleted_path),
+        "dataset_id": dataset_identity["dataset_id"],
+        "removed_version_store": storage_path_ref(removed_version_store),
+        **training_cleanup,
+    }
 
 
 def validate_dataset(dataset_path):
@@ -436,6 +543,7 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
         "dataset_b_root": storage_path_ref(dataset_b_root),
         "names": names_a,
         "stats": stats,
+        "version": _publish_dataset_version(project_path, target_root, new_dataset_name, "merge_dataset_pair"),
     }
 
 
@@ -449,7 +557,11 @@ def split_dataset_use_case(project_path, dataset_name, val_ratio=0.1, test_ratio
     if float(val_ratio) + float(test_ratio) >= 1.0:
         raise ValueError("验证集和测试集比例之和必须小于1")
     counts = split_dataset(dataset_root, float(val_ratio), float(test_ratio), rng=random.Random())
-    return {"dataset_name": dataset_name, "counts": counts}
+    return {
+        "dataset_name": dataset_name,
+        "counts": counts,
+        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, "split_dataset"),
+    }
 
 
 def create_import_upload_job(project_path_ref, target_name, uploaded_file, vision_task_type):
@@ -469,7 +581,12 @@ def create_import_upload_job(project_path_ref, target_name, uploaded_file, visio
     dest = os.path.join(training_dir, dataset_name)
     if os.path.exists(dest):
         raise ValueError(f"数据集 {dataset_name} 已存在")
-    return create_dataset_import_job(storage_path_ref(project_path_ref), dataset_name, uploaded_file, vision_task_type)
+    return create_dataset_import_job(
+        storage_path_ref(project_path_ref),
+        dataset_name,
+        uploaded_file,
+        vision_task_type,
+    )
 
 
 def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=None, keep_split=DATASET_SPLIT_TRAIN):
@@ -550,7 +667,7 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
             except Exception as exc:
                 errors.append({"path": label_path, "error": str(exc)})
 
-    return {
+    result = {
         "dataset_root": storage_path_ref(dataset_root),
         "keep_split": keep_split,
         "scanned_images": scanned,
@@ -560,3 +677,6 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
         "deleted_label_files": deleted_labels,
         "errors": errors[:50],
     }
+    if deleted_images or deleted_labels:
+        result["version"] = _publish_dataset_version(project_path, dataset_root, dataset_name or os.path.basename(dataset_root), "deduplicate_dataset")
+    return result

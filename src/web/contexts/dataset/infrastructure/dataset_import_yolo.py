@@ -10,8 +10,15 @@ from contexts.dataset.infrastructure.dataset_layout import (
     build_dataset_yaml_image_ref,
     get_dataset_images_dir,
     get_dataset_labels_dir,
+    get_dataset_root_images_dir,
+    get_dataset_root_labels_dir,
 )
-from contexts.dataset.infrastructure.dataset_schema import find_dataset_config, load_dataset_yaml, resolve_dataset_names_dict, save_dataset_config
+from contexts.dataset.infrastructure.dataset_schema import (
+    find_dataset_config,
+    load_dataset_yaml,
+    resolve_dataset_names_dict,
+    save_dataset_config,
+)
 from shared.utils.fs_utils import move_dir_contents, remove_dir_if_empty, remove_file_silent
 from constants.media import DATASET_SPLITS
 from shared.utils.path_utils import is_within_path, normalize_path_ref
@@ -24,6 +31,16 @@ def _resolve_yolo_base_dir(dataset_root, config):
     if os.path.isabs(base_ref):
         raise ValueError("dataset.yaml 的 path 必须为数据集根目录内的相对路径")
     candidate = os.path.normpath(os.path.join(dataset_root, base_ref))
+    if is_within_path(candidate, dataset_root) and os.path.isdir(candidate):
+        return candidate
+    if os.path.basename(candidate) == os.path.basename(os.path.normpath(dataset_root)):
+        return dataset_root
+    if any(
+        os.path.isdir(os.path.join(dataset_root, normalize_path_ref((config or {}).get(split) or "").split("/")[0]))
+        for split in DATASET_SPLITS
+        if (config or {}).get(split) not in (None, "", [])
+    ):
+        return dataset_root
     if not is_within_path(candidate, dataset_root):
         raise ValueError("dataset.yaml 的 path 超出数据集根目录")
     if not os.path.isdir(candidate):
@@ -74,6 +91,42 @@ def _collect_standard_split_pairs(dataset_root):
     return split_pairs
 
 
+def looks_like_standard_yolo_dataset(dataset_root):
+    """判断目录是否已经符合标准 YOLO 图片/标签布局，即使暂时缺少 dataset.yaml。"""
+    if not os.path.isdir(dataset_root):
+        return False
+    split_pairs = _collect_standard_split_pairs(dataset_root)
+    if not split_pairs:
+        return False
+    for split, _ in split_pairs:
+        if not os.path.isdir(get_dataset_labels_dir(dataset_root, split)):
+            return False
+    return True
+
+
+def _collect_external_split_pairs(dataset_root):
+    """收集外部 YOLO 常见布局 `images/{split}` + `labels/{split}` 的 split 对。"""
+    split_pairs = []
+    root_images_dir = get_dataset_root_images_dir(dataset_root)
+    root_labels_dir = get_dataset_root_labels_dir(dataset_root)
+    for split in DATASET_SPLITS:
+        if os.path.isdir(os.path.join(root_images_dir, split)):
+            split_pairs.append((split, split))
+    if not split_pairs:
+        return []
+    for split, _ in split_pairs:
+        if not os.path.isdir(os.path.join(root_labels_dir, split)):
+            return []
+    return split_pairs
+
+
+def looks_like_external_yolo_source(dataset_root):
+    """判断目录是否符合外部常见 YOLO 源布局。"""
+    if not os.path.isdir(dataset_root):
+        return False
+    return bool(_collect_external_split_pairs(dataset_root))
+
+
 def _resolve_yolo_split_dirs(dataset_root, config):
     """严格按 dataset.yaml 配置解析各 split 源路径。"""
     resolved = {}
@@ -99,6 +152,8 @@ def is_standard_yolo_dataset(dataset_root):
     """判断数据集是否已符合项目标准 YOLO 协议。"""
     if not os.path.isdir(dataset_root):
         return False
+    if not looks_like_standard_yolo_dataset(dataset_root):
+        return False
     if find_dataset_config(dataset_root) is None:
         return False
     config = load_dataset_yaml(dataset_root, default={})
@@ -110,8 +165,6 @@ def is_standard_yolo_dataset(dataset_root):
     except ValueError:
         return False
     split_pairs = _collect_standard_split_pairs(dataset_root)
-    if not split_pairs:
-        return False
     for split, _ in split_pairs:
         if normalize_path_ref(config.get(split)) != build_dataset_yaml_image_ref(split):
             return False
@@ -186,17 +239,120 @@ def _rewrite_label_file_class_ids(file_path, id_map):
             f.writelines(output)
 
 
-def ensure_dataset_yaml(dataset_root, *, force=False):
+def _build_default_pose_keypoint_names(keypoint_count):
+    """生成默认关键点名称。"""
+    return [f"kpt_{index}" for index in range(int(keypoint_count or 0))]
+
+
+def _normalize_pose_skeleton(raw_skeleton, keypoint_count):
+    """把 skeleton 规范为 zero-based 的 [[from, to], ...]。"""
+    if not isinstance(raw_skeleton, list) or keypoint_count <= 0:
+        return []
+    normalized_pairs = []
+    one_based_pairs = []
+    for pair in raw_skeleton:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        try:
+            start = int(pair[0])
+            end = int(pair[1])
+        except (TypeError, ValueError):
+            continue
+        normalized_pairs.append([start, end])
+        one_based_pairs.append([start - 1, end - 1])
+    def _is_valid(pairs):
+        return all(0 <= start < keypoint_count and 0 <= end < keypoint_count and start != end for start, end in pairs)
+    if normalized_pairs and _is_valid(normalized_pairs):
+        return normalized_pairs
+    if one_based_pairs and _is_valid(one_based_pairs):
+        return one_based_pairs
+    return []
+
+
+def _infer_pose_kpt_shape(dataset_root, split_pairs):
+    """从姿态标签中推断 kpt_shape。"""
+    for file_path in _iter_split_label_files(dataset_root, split_pairs):
+        try:
+            with open(file_path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    parts = str(raw_line or "").strip().split()
+                    if len(parts) <= 5:
+                        continue
+                    payload = parts[5:]
+                    if not payload:
+                        continue
+                    if len(payload) % 3 == 0:
+                        try:
+                            visibility_values = [float(payload[index]) for index in range(2, len(payload), 3)]
+                        except (TypeError, ValueError):
+                            visibility_values = []
+                        if visibility_values and all(value in (0.0, 1.0, 2.0) for value in visibility_values):
+                            return [len(payload) // 3, 3]
+                    if len(payload) % 3 == 0 and len(payload) % 2 != 0:
+                        return [len(payload) // 3, 3]
+                    if len(payload) % 2 == 0:
+                        return [len(payload) // 2, 2]
+        except Exception:
+            continue
+    return None
+
+
+def build_pose_dataset_yaml_fields(config, dataset_root, split_pairs, normalized_names):
+    """解析或推断姿态数据集所需的补充 YAML 字段。"""
+    pose_yaml = {}
+    raw_kpt_shape = (config or {}).get("kpt_shape")
+    kpt_shape = None
+    if isinstance(raw_kpt_shape, (list, tuple)) and len(raw_kpt_shape) == 2:
+        try:
+            keypoint_count = int(raw_kpt_shape[0])
+            dims = int(raw_kpt_shape[1])
+            if keypoint_count > 0 and dims in (2, 3):
+                kpt_shape = [keypoint_count, dims]
+        except (TypeError, ValueError):
+            kpt_shape = None
+    if kpt_shape is None:
+        kpt_shape = _infer_pose_kpt_shape(dataset_root, split_pairs)
+    if kpt_shape is None:
+        raise ValueError("姿态数据集缺少 kpt_shape，且无法从标签推断关键点结构")
+
+    pose_yaml["kpt_shape"] = kpt_shape
+    keypoint_count = int(kpt_shape[0])
+
+    flip_idx = (config or {}).get("flip_idx")
+    if isinstance(flip_idx, list) and len(flip_idx) == keypoint_count:
+        pose_yaml["flip_idx"] = [int(value) for value in flip_idx]
+    else:
+        pose_yaml["flip_idx"] = list(range(keypoint_count))
+
+    raw_kpt_names = (config or {}).get("kpt_names")
+    if isinstance(raw_kpt_names, dict) and raw_kpt_names:
+        pose_yaml["kpt_names"] = raw_kpt_names
+    else:
+        default_names = _build_default_pose_keypoint_names(keypoint_count)
+        pose_yaml["kpt_names"] = {
+            int(class_id): list(default_names)
+            for class_id in (normalized_names.keys() if normalized_names else [0])
+        }
+    skeleton = _normalize_pose_skeleton((config or {}).get("skeleton"), keypoint_count)
+    if skeleton:
+        pose_yaml["skeleton"] = skeleton
+    return pose_yaml
+
+
+def ensure_dataset_yaml(dataset_root, *, force=False, extra_yaml_builder=None):
     """补写或修复标准 dataset.yaml，并对齐类别定义。"""
     if not os.path.isdir(dataset_root):
         return
     config_path = find_dataset_config(dataset_root)
+    config_filename = os.path.basename(config_path) if config_path else ""
     if config_path is not None and not force:
         return
 
     other_yaml = None
     config = {}
     source_yaml_path = config_path
+    if source_yaml_path and config_filename != DATASET_CONFIG_FILENAME:
+        other_yaml = source_yaml_path
     if source_yaml_path is None:
         for filename in os.listdir(dataset_root):
             if filename.lower().endswith((".yaml", ".yml")) and filename != DATASET_CONFIG_FILENAME:
@@ -249,6 +405,11 @@ def ensure_dataset_yaml(dataset_root, *, force=False):
         if normalized_names
         else {0: "object"}
     )
+    tags = (config or {}).get("tags")
+    if isinstance(tags, list):
+        yaml_data["tags"] = [str(tag).strip() for tag in tags if str(tag).strip()]
+    if callable(extra_yaml_builder):
+        yaml_data.update(extra_yaml_builder(config, dataset_root, split_pairs, yaml_data["names"]) or {})
     save_dataset_config(dataset_root, yaml_data)
 
     if other_yaml:
@@ -270,3 +431,27 @@ def normalize_yolo_layout(dataset_root):
             move_dir_contents(src_lbl_dir, dst_lbl_dir)
             remove_dir_if_empty(src_lbl_dir)
             remove_dir_if_empty(os.path.dirname(src_lbl_dir))
+
+
+def normalize_external_yolo_source_layout(dataset_root):
+    """把外部常见 YOLO 源布局归一化为项目内部标准布局。"""
+    split_pairs = _collect_external_split_pairs(dataset_root)
+    if not split_pairs:
+        raise ValueError("未识别到外部 YOLO 目录布局")
+    root_images_dir = get_dataset_root_images_dir(dataset_root)
+    root_labels_dir = get_dataset_root_labels_dir(dataset_root)
+    for split, _ in split_pairs:
+        src_img_dir = os.path.join(root_images_dir, split)
+        src_lbl_dir = os.path.join(root_labels_dir, split)
+        dst_img_dir = get_dataset_images_dir(dataset_root, split)
+        dst_lbl_dir = get_dataset_labels_dir(dataset_root, split)
+        move_dir_contents(src_img_dir, dst_img_dir)
+        move_dir_contents(src_lbl_dir, dst_lbl_dir)
+        remove_dir_if_empty(src_img_dir)
+        remove_dir_if_empty(src_lbl_dir)
+    for root, _, files in os.walk(root_labels_dir):
+        for filename in files:
+            if filename.endswith(".cache"):
+                remove_file_silent(os.path.join(root, filename))
+    remove_dir_if_empty(root_images_dir)
+    remove_dir_if_empty(root_labels_dir)

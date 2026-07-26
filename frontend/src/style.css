@@ -434,9 +434,9 @@ html, body, #app {
 }
 .vt-btn-secondary {
   @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  border-color: var(--vt-color-tertiary-border);
-  background: white;
-  color: var(--vt-color-tertiary);
+  border-color: var(--vt-color-neutral-300);
+  background: var(--vt-color-neutral-100);
+  color: var(--vt-color-neutral-700);
 }
 .vt-btn-success {
   @apply inline-flex items-center justify-center gap-1.5 border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
@@ -482,7 +482,7 @@ html, body, #app {
   background: var(--vt-color-primary-hover);
 }
 .vt-btn-secondary:hover {
-  background: var(--vt-color-neutral-100);
+  background: var(--vt-color-neutral-200);
 }
 .vt-btn-success:hover {
   background: var(--vt-color-primary-hover);

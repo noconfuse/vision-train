@@ -10,14 +10,20 @@ from protocols.vision_task_type import (
 DATASET_ANNOTATION_MODE_UNSUPPORTED = "unsupported"
 DATASET_ANNOTATION_MODE_DETECT_BOXES = "detect_boxes"
 DATASET_ANNOTATION_MODE_IMAGE_CLASS = "image_class"
+DATASET_ANNOTATION_MODE_SEGMENT_POLYGONS = "segment_polygons"
+DATASET_ANNOTATION_MODE_POSE_KEYPOINTS = "pose_keypoints"
 
 DATASET_TRAINING_MODE_UNSUPPORTED = "unsupported"
 DATASET_TRAINING_MODE_YOLO_DETECT = "yolo_detect"
 DATASET_TRAINING_MODE_YOLO_CLASSIFY = "yolo_classify"
+DATASET_TRAINING_MODE_YOLO_SEGMENT = "yolo_segment"
+DATASET_TRAINING_MODE_YOLO_POSE = "yolo_pose"
 
 DATASET_AUTO_ANNOTATION_MODE_UNSUPPORTED = "unsupported"
 DATASET_AUTO_ANNOTATION_MODE_DETECT_BOXES = "detect_boxes"
 DATASET_AUTO_ANNOTATION_MODE_IMAGE_CLASS = "image_class"
+DATASET_AUTO_ANNOTATION_MODE_SEGMENT_POLYGONS = "segment_polygons"
+DATASET_AUTO_ANNOTATION_MODE_POSE_KEYPOINTS = "pose_keypoints"
 
 DATASET_OPERATION_UPLOAD_IMAGES = "upload_images"
 DATASET_OPERATION_CREATE_SUBSET = "create_subset"
@@ -96,22 +102,52 @@ _CAPABILITY_MAP = {
         },
     },
     VISION_TASK_TYPE_SEGMENT: {
-        "annotation_mode": DATASET_ANNOTATION_MODE_UNSUPPORTED,
-        "training_mode": DATASET_TRAINING_MODE_UNSUPPORTED,
-        "auto_annotation_mode": DATASET_AUTO_ANNOTATION_MODE_UNSUPPORTED,
-        "operations": {**_BASE_OPERATIONS},
+        "annotation_mode": DATASET_ANNOTATION_MODE_SEGMENT_POLYGONS,
+        "training_mode": DATASET_TRAINING_MODE_YOLO_SEGMENT,
+        "auto_annotation_mode": DATASET_AUTO_ANNOTATION_MODE_SEGMENT_POLYGONS,
+        "operations": {
+            **_BASE_OPERATIONS,
+            DATASET_OPERATION_UPLOAD_IMAGES: True,
+            DATASET_OPERATION_CREATE_SUBSET: True,
+            DATASET_OPERATION_SPLIT_DATASET: True,
+            DATASET_OPERATION_MANUAL_ANNOTATION: True,
+            DATASET_OPERATION_TRAIN: True,
+            DATASET_OPERATION_AUTO_ANNOTATE: True,
+            DATASET_OPERATION_REORDER_LABELS: True,
+            DATASET_OPERATION_DELETE_LABEL: True,
+            DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
+            DATASET_OPERATION_MERGE_DATASETS: True,
+        },
     },
     VISION_TASK_TYPE_POSE: {
-        "annotation_mode": DATASET_ANNOTATION_MODE_UNSUPPORTED,
-        "training_mode": DATASET_TRAINING_MODE_UNSUPPORTED,
-        "auto_annotation_mode": DATASET_AUTO_ANNOTATION_MODE_UNSUPPORTED,
-        "operations": {**_BASE_OPERATIONS},
+        "annotation_mode": DATASET_ANNOTATION_MODE_POSE_KEYPOINTS,
+        "training_mode": DATASET_TRAINING_MODE_YOLO_POSE,
+        "auto_annotation_mode": DATASET_AUTO_ANNOTATION_MODE_POSE_KEYPOINTS,
+        "operations": {
+            **_BASE_OPERATIONS,
+            DATASET_OPERATION_UPLOAD_IMAGES: True,
+            DATASET_OPERATION_CREATE_SUBSET: True,
+            DATASET_OPERATION_SPLIT_DATASET: True,
+            DATASET_OPERATION_MANUAL_ANNOTATION: True,
+            DATASET_OPERATION_TRAIN: True,
+            DATASET_OPERATION_AUTO_ANNOTATE: True,
+            DATASET_OPERATION_REORDER_LABELS: True,
+            DATASET_OPERATION_DELETE_LABEL: True,
+            DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
+            DATASET_OPERATION_MERGE_DATASETS: True,
+        },
     },
 }
 
 
-def build_dataset_capabilities(vision_task_type):
-    """按任务类型构造统一能力表。"""
+def build_dataset_capabilities(vision_task_type, dataset_metadata=None):
+    """按任务类型构造统一能力表，可按数据集元数据附加动态约束。"""
+    del dataset_metadata
+    return _build_dataset_capabilities_base(vision_task_type)
+
+
+def _build_dataset_capabilities_base(vision_task_type):
+    """构造不含数据集实例约束的基础能力表。"""
     capability = _CAPABILITY_MAP.get(vision_task_type)
     if capability:
         return {
@@ -119,23 +155,29 @@ def build_dataset_capabilities(vision_task_type):
             "training_mode": capability["training_mode"],
             "auto_annotation_mode": capability["auto_annotation_mode"],
             "operations": dict(capability["operations"]),
+            "operation_disabled_reasons": {},
         }
     return {
         "annotation_mode": DATASET_ANNOTATION_MODE_UNSUPPORTED,
         "training_mode": DATASET_TRAINING_MODE_UNSUPPORTED,
         "auto_annotation_mode": DATASET_AUTO_ANNOTATION_MODE_UNSUPPORTED,
         "operations": dict(_BASE_OPERATIONS),
+        "operation_disabled_reasons": {},
     }
 
 
-def is_dataset_operation_supported(vision_task_type, operation):
+def is_dataset_operation_supported(vision_task_type, operation, dataset_metadata=None):
     """判断当前任务类型是否支持指定操作。"""
-    return bool(build_dataset_capabilities(vision_task_type)["operations"].get(operation))
+    return bool(build_dataset_capabilities(vision_task_type, dataset_metadata=dataset_metadata)["operations"].get(operation))
 
 
-def require_dataset_operation(vision_task_type, operation):
+def require_dataset_operation(vision_task_type, operation, dataset_metadata=None):
     """要求当前任务类型必须支持指定操作。"""
-    if is_dataset_operation_supported(vision_task_type, operation):
+    capabilities = build_dataset_capabilities(vision_task_type, dataset_metadata=dataset_metadata)
+    if capabilities["operations"].get(operation):
         return
+    reason = capabilities["operation_disabled_reasons"].get(operation)
+    if reason:
+        raise ValueError(reason)
     label = DATASET_OPERATION_LABELS.get(operation) or operation
     raise ValueError(f"当前任务类型暂不支持{label}")

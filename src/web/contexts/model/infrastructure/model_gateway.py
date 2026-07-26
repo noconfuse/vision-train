@@ -5,6 +5,7 @@ import os
 import threading
 import time
 from urllib import request
+from urllib.error import HTTPError
 
 from app.config import PRETRAINED_MODELS_DIR
 from contexts.model.domain.capabilities import build_model_capabilities
@@ -28,6 +29,7 @@ from ultralytics.utils.downloads import GITHUB_ASSETS_NAMES, check_disk_space
 
 logger = logging.getLogger(__name__)
 _MODEL_USAGE_AUTO_ANNOTATE = "auto_annotate"
+_ULTRALYTICS_ASSETS_LATEST_URL = "https://github.com/ultralytics/assets/releases/latest/download"
 
 _download_status = {}
 _download_lock = threading.Lock()
@@ -119,6 +121,14 @@ def _resolve_pretrained_download_url(name):
     raise ValueError(f"不支持的官方预训练模型: {name}")
 
 
+def _iter_pretrained_download_urls(name):
+    url = _resolve_pretrained_download_url(name)
+    latest = f"{_ULTRALYTICS_ASSETS_LATEST_URL}/{name}"
+    if latest == url:
+        return [url]
+    return [url, latest]
+
+
 def _download_pretrained_async(name):
     """异步下载预训练模型并维护下载状态。"""
     local_path = local_path_for_name(name)
@@ -154,45 +164,60 @@ def _download_pretrained_async(name):
         """执行实际下载并在完成后移动到本地缓存目录。"""
         partial_path = f"{local_path}.part"
         try:
-            url = _resolve_pretrained_download_url(name)
             os.makedirs(PRETRAINED_MODELS_DIR, exist_ok=True)
-            if os.path.exists(partial_path):
-                os.remove(partial_path)
-            with request.urlopen(url) as response:
-                total_bytes = int(response.getheader("Content-Length", 0) or 0)
-                if total_bytes > 1048576:
-                    check_disk_space(total_bytes, path=PRETRAINED_MODELS_DIR)
-                chunk_size = max(8192, min(1048576, total_bytes // 1000)) if total_bytes else 8192
-                downloaded_bytes = 0
-                last_progress = -1
-                _append_download_event(
-                    name,
-                    state=_DOWNLOAD_STATE_DOWNLOADING,
-                    progress=0,
-                    bytes_downloaded=0,
-                    total_bytes=total_bytes,
-                    error=None,
-                    message="正在下载模型...",
-                )
-                with open(partial_path, "wb") as downloaded_file:
-                    while True:
-                        chunk = response.read(chunk_size)
-                        if not chunk:
-                            break
-                        downloaded_file.write(chunk)
-                        downloaded_bytes += len(chunk)
-                        progress = int(downloaded_bytes * 100 / total_bytes) if total_bytes else 0
-                        if progress != last_progress:
-                            last_progress = progress
-                            _append_download_event(
-                                name,
-                                state=_DOWNLOAD_STATE_DOWNLOADING,
-                                progress=progress,
-                                bytes_downloaded=downloaded_bytes,
-                                total_bytes=total_bytes,
-                                error=None,
-                                message="正在下载模型...",
-                            )
+            last_exc = None
+            total_bytes = 0
+            for url in _iter_pretrained_download_urls(name):
+                if os.path.exists(partial_path):
+                    os.remove(partial_path)
+                try:
+                    with request.urlopen(url) as response:
+                        total_bytes = int(response.getheader("Content-Length", 0) or 0)
+                        if total_bytes > 1048576:
+                            check_disk_space(total_bytes, path=PRETRAINED_MODELS_DIR)
+                        chunk_size = max(8192, min(1048576, total_bytes // 1000)) if total_bytes else 8192
+                        downloaded_bytes = 0
+                        last_progress = -1
+                        _append_download_event(
+                            name,
+                            state=_DOWNLOAD_STATE_DOWNLOADING,
+                            progress=0,
+                            bytes_downloaded=0,
+                            total_bytes=total_bytes,
+                            error=None,
+                            message="正在下载模型...",
+                        )
+                        with open(partial_path, "wb") as downloaded_file:
+                            while True:
+                                chunk = response.read(chunk_size)
+                                if not chunk:
+                                    break
+                                downloaded_file.write(chunk)
+                                downloaded_bytes += len(chunk)
+                                progress = int(downloaded_bytes * 100 / total_bytes) if total_bytes else 0
+                                if progress != last_progress:
+                                    last_progress = progress
+                                    _append_download_event(
+                                        name,
+                                        state=_DOWNLOAD_STATE_DOWNLOADING,
+                                        progress=progress,
+                                        bytes_downloaded=downloaded_bytes,
+                                        total_bytes=total_bytes,
+                                        error=None,
+                                        message="正在下载模型...",
+                                    )
+                    break
+                except HTTPError as exc:
+                    last_exc = exc
+                    if exc.code == 404:
+                        continue
+                    raise
+
+            if not os.path.exists(partial_path):
+                if isinstance(last_exc, HTTPError) and last_exc.code == 404:
+                    raise RuntimeError(f"官方模型资源不存在: {name}") from last_exc
+                raise RuntimeError(f"模型下载失败: {name}") from last_exc
+
             if total_bytes and safe_size(partial_path) != total_bytes:
                 raise RuntimeError(f"模型下载不完整: {safe_size(partial_path)}/{total_bytes}")
             os.replace(partial_path, local_path)
