@@ -143,3 +143,7 @@ http://localhost:5173
 
 - 仓库的用户文档位于 `docs/`，可以直接作为静态文档站发布（如 Netlify / GitHub Pages）。
 - 本仓库默认运行在单机 / 单项目场景；多用户协同、生产部署、SaaS 化不在当前范围。
+
+## License
+
+本仓库以 [MIT License](LICENSE) 发布，Copyright (c) 2026 baolei。
