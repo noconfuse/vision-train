@@ -504,6 +504,9 @@ const importImages = async () => {
           project: encodeURIComponent(nextProject?.name || store.currentProject?.name || ''),
           name: encodeURIComponent(finalDatasetName),
         },
+        query: {
+          dataset_id: nextDataset?.dataset_id || '',
+        },
       });
     },
     finally: () => { importing.value = false; },

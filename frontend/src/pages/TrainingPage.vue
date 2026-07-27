@@ -87,6 +87,7 @@
           <TrainingEvaluateStep
             v-else-if="workflowStep === WORKFLOW_STEP.EVALUATE && workflowTrainingTask"
             :project-path="project?.path || ''"
+            :dataset-id="dataset?.dataset_id || ''"
             :dataset-name="datasetName"
             :workflow-id="selectedWorkflow?.id || ''"
             :training-task="workflowTrainingTask"
@@ -96,6 +97,7 @@
           <TrainingExportStep
             v-else-if="workflowStep === WORKFLOW_STEP.EXPORT_CONFIG && workflowTrainingTask"
             :project-path="project?.path || ''"
+            :dataset-id="dataset?.dataset_id || ''"
             :dataset-name="datasetName"
             :workflow-id="selectedWorkflow?.id || ''"
             :training-task="workflowTrainingTask"
@@ -377,13 +379,15 @@ const toast = useToast();
 const asyncAction = useAsyncAction();
 
 const projectName = computed(() => decodeURIComponent(route.params.project || ''));
-const datasetName = computed(() => decodeURIComponent(route.params.name || ''));
+const routeDatasetName = computed(() => decodeURIComponent(route.params.name || ''));
+const routeDatasetId = computed(() => String(route.query.dataset_id || '').trim());
 const project = computed(() => store.projects.find(p => p.name === projectName.value) || null);
 const dataset = computed(() => {
   const p = project.value;
-  if (!p) return null;
-  return (p.datasets || []).find(d => d.name === datasetName.value) || null;
+  if (!p || !routeDatasetId.value) return null;
+  return (p.datasets || []).find((item) => item.dataset_id === routeDatasetId.value) || null;
 });
+const datasetName = computed(() => dataset.value?.name || routeDatasetName.value);
 const trainingGuard = computed(() => resolveTrainingDatasetGuard(dataset.value));
 
 const loadError = ref('');
@@ -416,13 +420,15 @@ const backHref = computed(() => {
       project: encodeURIComponent(projectName.value),
       name: encodeURIComponent(datasetName.value),
     },
+    query: {
+      dataset_id: dataset.value?.dataset_id || '',
+    },
   };
 });
 const routeWorkflowId = computed(() => String(route.query.workflow_id || ''));
 const routeDraft = computed(() => String(route.query.draft || '') === '1');
 const workflowListKey = computed(() => workflowStore.getDatasetCacheKey({
   project_path: project.value?.path || '',
-  dataset_name: datasetName.value,
   dataset_id: dataset.value?.dataset_id || '',
   archived_only: showArchivedWorkflows.value,
 }));
@@ -548,7 +554,6 @@ const selectWorkflowById = (workflowId) => {
   const workflow = trainingWorkflows.value.find((item) => item.id === workflowId)
     || workflowStore.getWorkflowFromState({
       project_path: project.value?.path || '',
-      dataset_name: datasetName.value,
       dataset_id: dataset.value?.dataset_id || '',
       workflow_id: workflowId,
       include_archived: true,
@@ -581,6 +586,9 @@ const goBack = () => {
       project: encodeURIComponent(projectName.value),
       name: encodeURIComponent(datasetName.value),
     },
+    query: {
+      dataset_id: dataset.value?.dataset_id || '',
+    },
   });
 };
 
@@ -595,7 +603,8 @@ const syncPageState = async () => {
       await loadTrainingWorkflows().catch(() => {});
     }
   } else if (project.value) {
-    loadError.value = `项目「${projectName.value}」下找不到数据集「${datasetName.value}」`;
+    const target = datasetName.value || routeDatasetId.value || '未知数据集';
+    loadError.value = `项目「${projectName.value}」下找不到数据集「${target}」`;
   } else {
     loadError.value = `项目「${projectName.value}」不存在`;
   }
@@ -603,18 +612,16 @@ const syncPageState = async () => {
 };
 
 const loadTrainingWorkflows = async () => {
-  if (!project.value?.path || !datasetName.value) {
+  if (!project.value?.path || !dataset.value?.dataset_id) {
     workflowStore.invalidateDataset({
       project_path: project.value?.path || '',
-      dataset_name: datasetName.value,
       dataset_id: dataset.value?.dataset_id || '',
     });
     return;
   }
   await workflowStore.fetchWorkflows({
     project_path: project.value.path,
-    dataset_name: datasetName.value,
-    dataset_id: dataset.value?.dataset_id || '',
+    dataset_id: dataset.value.dataset_id,
     archived_only: showArchivedWorkflows.value,
   });
 };
@@ -663,7 +670,6 @@ const loadSelectedWorkflow = async () => {
   }
   const storedWorkflow = workflowStore.getWorkflowFromState({
     project_path: project.value?.path || '',
-    dataset_name: datasetName.value,
     dataset_id: dataset.value?.dataset_id || '',
     workflow_id: routeWorkflowId.value,
     include_archived: true,
@@ -676,7 +682,6 @@ const loadSelectedWorkflow = async () => {
   if (routeWorkflowId.value && project.value?.path) {
     const workflow = await workflowStore.fetchWorkflowDetail({
       project_path: project.value.path,
-      dataset_name: datasetName.value,
       dataset_id: dataset.value?.dataset_id || '',
       workflow_id: routeWorkflowId.value,
       include_archived: true,
@@ -744,7 +749,6 @@ const archiveWorkflow = async (workflow) => {
         project_path: project.value?.path || '',
         workflow_id: workflow.id,
       }, {
-        dataset_name: datasetName.value,
         dataset_id: dataset.value?.dataset_id || '',
       });
       setWorkflowContext(archivedWorkflow, { archived: true });
@@ -776,7 +780,6 @@ const deleteWorkflow = async (workflow) => {
         project_path: project.value?.path || '',
         workflow_id: workflow.id,
       }, {
-        dataset_name: datasetName.value,
         dataset_id: dataset.value?.dataset_id || '',
       });
       if (selectedWorkflow.value?.id === workflow.id) {
@@ -791,9 +794,9 @@ const deleteWorkflow = async (workflow) => {
   });
 };
 
-watch([projectName, datasetName], syncPageState, { immediate: true });
+watch([projectName, routeDatasetId], syncPageState, { immediate: true });
 
-watch([routeWorkflowId, routeDraft, datasetName, workflowsLoading, trainingWorkflows], () => {
+watch([routeWorkflowId, routeDraft, routeDatasetId, workflowsLoading, trainingWorkflows], () => {
   loadSelectedWorkflow().catch(() => {});
 }, { immediate: true });
 

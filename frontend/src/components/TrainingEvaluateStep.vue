@@ -143,6 +143,7 @@ import { resolveTrainingResultProfile } from '../trainingResultProfile';
 
 const props = defineProps({
   projectPath: { type: String, required: true },
+  datasetId: { type: String, required: true },
   datasetName: { type: String, required: true },
   trainingTask: { type: Object, default: null },
   workflowId: { type: String, default: '' },
@@ -185,7 +186,7 @@ const evaluateActionLabel = computed(() => {
   if (isActionPending(EVALUATE_ACTION_KEY) || isEvaluateRunning.value) return '评估中...';
   return evaluateIdleActionLabel.value;
 });
-const evaluateProgressSummary = computed(() => getTaskTerminalSummary(evaluateTask.value, '尚未开始测试集评估'));
+const evaluateProgressSummary = computed(() => getTaskTerminalSummary(evaluateTask.value, '尚未开始测试集评估', { actionLabel: '评估' }));
 const evaluateProgressSummaryClass = computed(() => getTaskTerminalSummaryClass(evaluateTask.value));
 const evaluateSplitLabel = computed(() => {
   const split = String(metrics.value?.split || evaluateTask.value?.payload?.split || '').trim();
@@ -270,12 +271,12 @@ const pollEvaluateTask = async (taskId) => {
 const loadEvaluateTask = async () => {
   stopPolling();
   evaluateTask.value = null;
-  if (!props.projectPath || !props.datasetName || !props.trainingTask?.id || !props.workflowId) return;
+  if (!props.projectPath || !props.datasetId || !props.trainingTask?.id || !props.workflowId) return;
   try {
     const [latestEvaluateTask] = await Promise.all([
       workflowStore.fetchLatestWorkflowTask({
         project_path: props.projectPath,
-        dataset_name: props.datasetName,
+        dataset_id: props.datasetId,
         workflow_id: props.workflowId,
         task_type: 'evaluate',
       }),
@@ -325,7 +326,7 @@ const recommendationClass = (tone) => {
   return 'border-slate-200 bg-slate-50 text-slate-700';
 };
 
-watch(() => [props.trainingTask?.id, props.workflowId], () => {
+watch(() => [props.trainingTask?.id, props.workflowId, props.datasetId], () => {
   trainingMetricsHistory.value = [];
   loadEvaluateTask().catch(() => {});
 }, { immediate: true });

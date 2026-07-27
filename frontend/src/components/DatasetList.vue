@@ -367,6 +367,9 @@ const openDataset = (ds) => {
       project: encodeURIComponent(store.currentProject?.name || ''),
       name: encodeURIComponent(ds.name),
     },
+    query: {
+      dataset_id: ds.dataset_id || '',
+    },
   });
 };
 
@@ -503,6 +506,9 @@ const goToTraining = (ds) => {
     params: {
       project: encodeURIComponent(store.currentProject.name),
       name: encodeURIComponent(ds.name),
+    },
+    query: {
+      dataset_id: ds.dataset_id || '',
     },
   });
 };

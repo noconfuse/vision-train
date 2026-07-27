@@ -1,5 +1,25 @@
 import { defineStore } from 'pinia';
 import api from '../api';
+import { useToast } from '../composables/useToast';
+
+// 供 store action 共用的错误处理：
+//   - 把 error 写入 state.error（向后兼容旧逻辑 / 模板里的状态展示）
+//   - 默认 toast.error；silent=true 或 canceled 时跳过 toast
+//   - 不 throw：让 store action 继续走后续分支（保留原有"出错时不阻断"的语义）
+export const handleStoreError = (err, state, opts = {}) => {
+  const message = (err && err.message) ? err.message : String(err || '未知错误');
+  if (state && 'error' in state) state.error = message;
+  const skip = opts.silent === true || err?.code === 'canceled';
+  if (!skip) {
+    try {
+      const toast = useToast();
+      toast.error(opts.errorMsg || message);
+    } catch (_) {
+      // store 可能没在 setup 上下文里调用，useToast 失败时静默退回 state.error
+    }
+  }
+  return null;
+};
 
 export const useMainStore = defineStore('main', {
   state: () => ({
@@ -56,7 +76,8 @@ export const useMainStore = defineStore('main', {
           if (cur) this.currentProject = cur;
         }
       } catch (err) {
-        this.error = err && err.message ? err.message : String(err);
+        // silent 只控制 isLoading；错误一律提示用户。
+        handleStoreError(err, this);
       } finally {
         if (!silent) this.isLoading = false;
       }
@@ -136,7 +157,7 @@ export const useMainStore = defineStore('main', {
         }
         this.pretrainedModels = models || [];
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         if (usage === 'auto_annotate') {
           this.autoAnnotateModels = [];
           return;
@@ -152,7 +173,7 @@ export const useMainStore = defineStore('main', {
         });
         this.pretrainedOptions = Array.isArray(res) ? res : [];
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         this.pretrainedOptions = [];
       }
     },

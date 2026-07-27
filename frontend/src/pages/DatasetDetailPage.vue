@@ -42,16 +42,18 @@ const route = useRoute();
 const router = useRouter();
 const store = useMainStore();
 
-// URL 是上下文的唯一来源：path 同时携带 project + name
+// URL 中的 dataset_id 是稳定定位键，name 只用于可读展示。
 const projectName = computed(() => decodeURIComponent(route.params.project || ''));
-const datasetName = computed(() => decodeURIComponent(route.params.name || ''));
+const routeDatasetName = computed(() => decodeURIComponent(route.params.name || ''));
+const routeDatasetId = computed(() => String(route.query.dataset_id || '').trim());
 
 const project = computed(() => store.projects.find(p => p.name === projectName.value) || null);
 const dataset = computed(() => {
   const p = project.value;
-  if (!p) return null;
-  return (p.datasets || []).find(d => d.name === datasetName.value) || null;
+  if (!p || !routeDatasetId.value) return null;
+  return (p.datasets || []).find((item) => item.dataset_id === routeDatasetId.value) || null;
 });
+const datasetName = computed(() => dataset.value?.name || routeDatasetName.value);
 
 const loadError = ref('');
 const loading = ref(true);
@@ -78,12 +80,13 @@ const syncPageState = async () => {
   if (dataset.value) {
     syncStore();
   } else if (project.value) {
-    loadError.value = `项目「${projectName.value}」下找不到数据集「${datasetName.value}」`;
+    const target = datasetName.value || routeDatasetId.value || '未知数据集';
+    loadError.value = `项目「${projectName.value}」下找不到数据集「${target}」`;
   } else {
     loadError.value = `项目「${projectName.value}」不存在`;
   }
   loading.value = false;
 };
 
-watch([projectName, datasetName], syncPageState, { immediate: true });
+watch([projectName, routeDatasetId], syncPageState, { immediate: true });
 </script>

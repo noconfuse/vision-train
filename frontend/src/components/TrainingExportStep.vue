@@ -246,6 +246,7 @@ import {
 
 const props = defineProps({
   projectPath: { type: String, required: true },
+  datasetId: { type: String, required: true },
   datasetName: { type: String, required: true },
   trainingTask: { type: Object, default: null },
   workflowId: { type: String, default: '' },
@@ -399,7 +400,7 @@ const loadExports = async () => {
 const loadExportTask = async ({ forceRefreshWorkflow = false } = {}) => {
   stopPolling();
   currentExportTask.value = null;
-  if (!props.projectPath || !props.datasetName || !props.trainingTask?.id) return;
+  if (!props.projectPath || !props.datasetId || !props.trainingTask?.id) return;
   try {
     if (props.exportTaskId) {
       const task = await api.getTask(props.exportTaskId);
@@ -408,18 +409,18 @@ const loadExportTask = async ({ forceRefreshWorkflow = false } = {}) => {
       const workflow = forceRefreshWorkflow
         ? await workflowStore.fetchWorkflowDetail({
             project_path: props.projectPath,
-            dataset_name: props.datasetName,
+            dataset_id: props.datasetId,
             workflow_id: props.workflowId,
             include_archived: true,
           })
         : workflowStore.getWorkflowFromState({
             project_path: props.projectPath,
-            dataset_name: props.datasetName,
+            dataset_id: props.datasetId,
             workflow_id: props.workflowId,
             include_archived: true,
           }) || await workflowStore.fetchWorkflowDetail({
             project_path: props.projectPath,
-            dataset_name: props.datasetName,
+            dataset_id: props.datasetId,
             workflow_id: props.workflowId,
             include_archived: true,
           });
@@ -567,7 +568,7 @@ const getRecordError = (exp) => {
 const getRecordErrorClass = () => 'text-rose-600';
 const isDeleteDisabled = (exp) => isTaskActive(exp);
 
-watch(() => [props.trainingTask?.id, props.workflowId, props.exportTaskId], () => {
+watch(() => [props.trainingTask?.id, props.workflowId, props.exportTaskId, props.datasetId], () => {
   resetExportResultState();
   ensureRuntimeProfile().catch(() => {});
   loadExportTask().catch(() => {});

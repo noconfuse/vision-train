@@ -126,14 +126,17 @@ export const isTaskCompleted = (taskOrStatus) => {
   return status === TASK_STATUS.COMPLETED;
 };
 
-export const getTaskTerminalSummary = (task, fallback = '') => {
-  const status = getTaskStatusValue(task);
+export const getTaskTerminalSummary = (task, fallback = '', opts = {}) => {
+  const actionLabel = opts.actionLabel || '训练';
   const message = task?.message || '';
-  if (status === TASK_STATUS.FAILED) return message || '训练失败';
-  if (status === TASK_STATUS.STOPPING) return message || '训练停止中';
-  if (status === TASK_STATUS.STOPPED) return message || '训练已停止';
-  if (status === TASK_STATUS.INTERRUPTED) return message || '训练已中断';
-  if (status === TASK_STATUS.COMPLETED) return message || '训练已完成';
+  const status = getTaskStatusValue(task);
+  if (status === TASK_STATUS.PENDING) return message || `${actionLabel}等待中`;
+  if (status === TASK_STATUS.RUNNING) return message || `${actionLabel}进行中`;
+  if (status === TASK_STATUS.STOPPING) return message || `${actionLabel}停止中`;
+  if (status === TASK_STATUS.FAILED) return message || `${actionLabel}失败`;
+  if (status === TASK_STATUS.STOPPED) return message || `${actionLabel}已停止`;
+  if (status === TASK_STATUS.INTERRUPTED) return message || `${actionLabel}已中断`;
+  if (status === TASK_STATUS.COMPLETED) return message || `${actionLabel}已完成`;
   return fallback;
 };
 

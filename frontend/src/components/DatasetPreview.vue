@@ -1016,6 +1016,9 @@ const openCreatedDataset = async (datasetName) => {
         project: encodeURIComponent(nextProject?.name || store.currentProject?.name || ''),
         name: encodeURIComponent(nextDataset.name),
       },
+      query: {
+        dataset_id: nextDataset.dataset_id || '',
+      },
     });
   }
   return nextDataset;
@@ -1500,6 +1503,9 @@ const goToTrain = () => {
     params: {
       project: encodeURIComponent(store.currentProject?.name || ''),
       name: encodeURIComponent(store.selectedDataset.name),
+    },
+    query: {
+      dataset_id: store.selectedDataset.dataset_id || '',
     },
   });
 };

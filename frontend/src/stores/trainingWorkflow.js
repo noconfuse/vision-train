@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import api from '../api';
+import { handleStoreError } from './main';
 
 const toKey = (...parts) => parts.map((value) => String(value || '')).join('::');
 const WORKFLOW_LATEST_TASK_FIELD = Object.freeze({
@@ -70,7 +71,7 @@ export const useTrainingWorkflowStore = defineStore('trainingWorkflow', {
         });
         return normalized;
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         this.workflowLists[key] = [];
         return [];
       } finally {
@@ -95,7 +96,7 @@ export const useTrainingWorkflowStore = defineStore('trainingWorkflow', {
         }
         return normalized;
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         return this.workflowDetails[key] || null;
       }
     },

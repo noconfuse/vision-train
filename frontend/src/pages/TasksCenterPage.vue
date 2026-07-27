@@ -371,7 +371,7 @@ const canOpenTrainingWorkflow = (t) => (
   isTrainingWorkflowType(t?.workflow_type) &&
   !!t?.workflow_id &&
   !!t?.project_path &&
-  !!t?.dataset_name
+  !!t?.dataset_id
 );
 const canJumpToEvaluate = (t) => isTrainingTask(t) && t?.status === TASK_STATUS.COMPLETED && canOpenTrainingWorkflow(t);
 const canJumpToExport = (t) => isTrainingTask(t) && t?.status === TASK_STATUS.COMPLETED && canOpenTrainingWorkflow(t);
@@ -387,9 +387,10 @@ const openTrainingWorkflow = async (task, step = '') => {
     name: 'dataset-train',
     params: {
       project: encodeURIComponent(projectName(task.project_path)),
-      name: encodeURIComponent(task.dataset_name),
+      name: encodeURIComponent(task.dataset_name || task.dataset_id || ''),
     },
     query: {
+      dataset_id: task.dataset_id,
       return_to: route.fullPath,
       workflow_id: task.workflow_id,
       step: resolvedStep,

@@ -99,6 +99,53 @@ http.interceptors.request.use(cfg => {
 });
 
 // 自动 unwrap
+const HTTP_STATUS_MESSAGES = {
+  400: '请求参数有误',
+  401: '登录已失效，请重新登录',
+  403: '没有访问权限',
+  404: '请求的资源不存在',
+  405: '请求方法不被允许',
+  408: '请求超时，请稍后重试',
+  409: '资源冲突，请刷新后重试',
+  413: '上传内容过大',
+  415: '不支持的请求格式',
+  422: '请求参数校验失败',
+  429: '请求过于频繁，请稍候再试',
+  500: '服务器内部错误，请稍后重试',
+  502: '网关异常，请稍后重试',
+  503: '服务暂不可用，请稍后重试',
+  504: '网关超时，请稍后重试',
+};
+
+const translateNetworkError = (err) => {
+  // 1) 协议失败（{success:false,...}）—— 沿用后端返回的中文 message
+  // 2) 非协议响应 / 网络错误 —— 用 status code 表兜底成中文
+  // 3) 跨域 / fetch 拦截 —— 单独兜底
+  if (err?.response) {
+    const status = err.response.status;
+    if (!err.message || /^Request failed with status code \d+$/.test(err.message)) {
+      err.message = HTTP_STATUS_MESSAGES[status] || `请求失败（HTTP ${status}）`;
+    }
+    err.status = status;
+    err.code = err.code || 'http_error';
+    return err;
+  }
+  // 没有 response：网络层失败（断网、DNS、跨域拦截等）
+  if (err?.message) {
+    if (/Network Error/i.test(err.message)) {
+      err.message = '网络异常，请检查连接后重试';
+    } else if (/timeout/i.test(err.message)) {
+      err.message = '请求超时，请稍后重试';
+    } else if (/Request aborted|aborted/i.test(err.message)) {
+      // 主动取消的请求不应当作错误提示
+      err.code = 'canceled';
+    }
+  } else {
+    err.message = '网络异常，请检查连接后重试';
+  }
+  return err;
+};
+
 http.interceptors.response.use(
   resp => {
     const body = resp.data;
@@ -129,7 +176,8 @@ http.interceptors.response.use(
       e.data = body;
       return Promise.reject(e);
     }
-    return Promise.reject(err);
+    // 非协议错误（5xx HTML 页、网络层失败、跨域拦截）—— 翻译成中文
+    return Promise.reject(translateNetworkError(err));
   }
 );
 

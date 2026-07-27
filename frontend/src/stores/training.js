@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import api from '../api';
 import { isTaskActive } from '../taskStatus';
+import { handleStoreError } from './main';
 
 let currentTaskPollingTimer = null;
 
@@ -67,7 +68,7 @@ export const useTrainingStore = defineStore('training', {
         this.runtimeProfile = res || null;
         return this.runtimeProfile;
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         this.runtimeProfile = null;
         return null;
       }
@@ -88,7 +89,7 @@ export const useTrainingStore = defineStore('training', {
         this.batchCalibration = task || null;
         return this.batchCalibration;
       } catch (err) {
-        console.error(err);
+        handleStoreError(err, this);
         this.batchCalibration = null;
         return null;
       }
