@@ -31,7 +31,7 @@
                 <AppIcon name="video" class="h-7 w-7 text-slate-500" />
               </div>
               <div>点击选择 / 拖入视频文件</div>
-              <div class="text-xs text-gray-400 mt-1">支持 mp4 / avi / mov / mkv / webm · 最大 2 GB</div>
+              <div class="text-xs text-gray-400 mt-1">支持 {{ VIDEO_FILE_EXTENSIONS.join(' / ') }} · 最大 2 GB</div>
             </div>
             <div v-else class="text-left text-sm">
               <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
@@ -43,9 +43,9 @@
                 </template>
                 {{ file.name }}
               </UiTooltip>
-              <div class="text-xs text-gray-500">{{ formatSize(file.size) }}</div>
+              <div class="text-xs text-gray-500">{{ formatBytes(file.size) }}</div>
             </div>
-            <input ref="fileInput" type="file" class="hidden" accept="video/*,.mp4,.avi,.mov,.mkv,.webm" @change="onPick" />
+            <input ref="fileInput" type="file" class="hidden" :accept="VIDEO_FILE_ACCEPT" @change="onPick" />
           </div>
         </div>
 
@@ -116,6 +116,14 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
+import { usePhaseProgress } from '../composables/usePhaseProgress';
+import { formatBytes, validateResourceName } from '../utils';
+import {
+  UPLOAD_SIZE_LIMIT_BYTES,
+  VIDEO_FILE_ACCEPT,
+  VIDEO_FILE_EXTENSIONS,
+  isSupportedVideoFile,
+} from '../utils/media';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
@@ -131,35 +139,17 @@ const file = ref(null);
 const targetName = ref('');
 const progress = ref(0);
 const phaseMessage = ref('');
-const currentPhase = ref('idle'); // idle | uploading | saving | done | fail
 const uploading = ref(false);
 const success = ref(false);
 const error = ref('');
 
 const dragging = ref(false);
 
-const phaseOrder = ['uploading', 'saving', 'done'];
-const phaseClass = (p) => {
-  const idx = phaseOrder.indexOf(currentPhase.value);
-  const pIdx = phaseOrder.indexOf(p);
-  if (currentPhase.value === 'done') return 'text-emerald-600 font-semibold';
-  if (currentPhase.value === 'fail') {
-    if (pIdx <= idx) return 'text-rose-600 font-semibold';
-    return 'text-gray-400';
-  }
-  if (pIdx < idx) return 'text-emerald-600 font-medium';
-  if (pIdx === idx) return 'vt-text-accent-strong';
-  return 'text-gray-400';
-};
+// 视频上传的三段进度：上传 → 落盘 → 完成。
+const { currentPhase, phaseClass, setPhase, markFail } = usePhaseProgress({
+  phases: ['uploading', 'saving', 'done'],
+});
 
-const formatSize = (b) => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
-  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
-};
-
-const allowedTypes = /\.(mp4|avi|mov|mkv|webm)$/i;
 
 const onPick = (e) => {
   const f = e.target.files?.[0];
@@ -171,11 +161,11 @@ const onDrop = (e) => {
   if (f) setFile(f);
 };
 const setFile = (f) => {
-  if (!allowedTypes.test(f.name)) {
-    error.value = '仅支持 mp4 / avi / mov / mkv / webm 格式';
+  if (!isSupportedVideoFile(f)) {
+    error.value = `仅支持 ${VIDEO_FILE_EXTENSIONS.join(' / ')} 格式`;
     return;
   }
-  if (f.size > 2 * 1024 * 1024 * 1024) {
+  if (f.size > UPLOAD_SIZE_LIMIT_BYTES) {
     error.value = '视频不能超过 2 GB';
     return;
   }
@@ -188,7 +178,7 @@ const reset = () => {
   targetName.value = '';
   progress.value = 0;
   phaseMessage.value = '';
-  currentPhase.value = 'idle';
+  setPhase('idle');
   uploading.value = false;
   success.value = false;
   error.value = '';
@@ -206,12 +196,16 @@ const onClose = () => {
 
 const onSubmit = async () => {
   if (!file.value || !props.project) return;
+  if (targetName.value.trim()) {
+    const nameErr = validateResourceName(targetName.value.trim(), { emptyMessage: '' });
+    if (nameErr) { error.value = nameErr; return; }
+  }
   uploading.value = true;
   success.value = false;
   error.value = '';
   progress.value = 0;
   phaseMessage.value = '准备上传…';
-  currentPhase.value = 'uploading';
+  setPhase('uploading');
 
   const fd = new FormData();
   fd.append('file', file.value);
@@ -226,19 +220,19 @@ const onSubmit = async () => {
         phaseMessage.value = `上传中… ${p}%`;
       },
     });
-    currentPhase.value = 'saving';
+    setPhase('saving');
     progress.value = 95;
     phaseMessage.value = '保存到项目…';
     // 模拟小延迟，让用户看到落盘阶段
     await new Promise(r => setTimeout(r, 200));
     success.value = true;
-    currentPhase.value = 'done';
+    setPhase('done');
     progress.value = 100;
     phaseMessage.value = `上传完成：${file.value.name}`;
     setTimeout(() => { if (success.value) emit('close'); }, 800);
   } catch (e) {
     error.value = e?.message || '上传失败';
-    currentPhase.value = 'fail';
+    markFail(currentPhase.value);
   } finally {
     uploading.value = false;
   }

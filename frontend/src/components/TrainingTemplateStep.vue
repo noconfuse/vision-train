@@ -157,7 +157,7 @@ import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
-import { getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../taskStatus';
+import { getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../domain/task/taskStatus';
 import { formatDateTime, getTemplateBundleDownloadFilename } from '../utils';
 
 const props = defineProps({

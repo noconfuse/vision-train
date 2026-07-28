@@ -287,7 +287,7 @@ import {
   getTaskStatusLabel,
   getTaskStatusTagClass,
   isTaskActive,
-} from '../taskStatus';
+} from '../domain/task/taskStatus';
 import {
   TASK_TYPE_FILTER_OPTIONS,
   canViewTask,
@@ -295,8 +295,8 @@ import {
   getTaskTypeLabel,
   isTrainingTask,
   taskHasArtifactsView,
-} from '../taskType';
-import { isTrainingWorkflowType } from '../workflowType';
+} from '../domain/task/taskType';
+import { isTrainingWorkflowType } from '../domain/task/workflowType';
 import { getResumeFromTaskId, getResumeSourceText, getResumeWeight } from '../utils/trainingTask';
 import { getWorkflowPreferredStepFromTask } from '../utils/trainingWorkflow';
 

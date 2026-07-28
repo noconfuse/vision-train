@@ -36,7 +36,7 @@ import { useMainStore } from '../stores/main';
 import DatasetPreview from '../components/DatasetPreview.vue';
 import PageState from '../components/PageState.vue';
 import AppHeader from '../components/AppHeader.vue';
-import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../datasetType';
+import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../domain/dataset/datasetType';
 
 const route = useRoute();
 const router = useRouter();

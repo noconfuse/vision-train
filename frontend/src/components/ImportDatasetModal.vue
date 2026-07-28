@@ -147,7 +147,7 @@
                 <AppIcon name="download" class="h-7 w-7 text-slate-500" />
               </div>
               <div>点击选择文件 / 拖入压缩包</div>
-              <div class="text-xs text-gray-400 mt-1">支持 .zip / .tar / .tar.gz / .tgz，最大 2 GB</div>
+              <div class="text-xs text-gray-400 mt-1">支持 {{ ARCHIVE_FILE_ACCEPT }}，最大 2 GB</div>
             </div>
             <div v-else class="text-left text-sm">
               <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
@@ -159,9 +159,9 @@
                 </template>
                 {{ file.name }}
               </UiTooltip>
-              <div class="text-xs text-gray-500">{{ formatSize(file.size) }}</div>
+              <div class="text-xs text-gray-500">{{ formatBytes(file.size) }}</div>
             </div>
-            <input ref="fileInput" type="file" accept=".zip,.tar,.tar.gz,.tgz" class="hidden"
+            <input ref="fileInput" type="file" :accept="ARCHIVE_FILE_ACCEPT" class="hidden"
                    @change="onPick" />
           </div>
         </div>
@@ -236,7 +236,10 @@
 <script setup>
 import { ref } from 'vue';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
-import { VISION_TASK_TYPE } from '../visionTaskType';
+import { usePhaseProgress } from '../composables/usePhaseProgress';
+import { formatBytes, validateResourceName } from '../utils';
+import { ARCHIVE_FILE_ACCEPT, isSupportedArchiveFile } from '../utils/media';
+import { VISION_TASK_TYPE } from '../domain/dataset/visionTaskType';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
@@ -252,11 +255,14 @@ const targetName = ref('');
 const visionTaskType = ref(VISION_TASK_TYPE.DETECT);
 const progress = ref(0);
 const phaseMessage = ref('');
-const currentPhase = ref('idle'); // 'idle' | 'uploading' | 'parsing' | 'converting' | 'saving' | 'done'
 const uploading = ref(false);
 const success = ref(false);
 const error = ref('');
 const dragging = ref(false);
+
+const { currentPhase, phaseClass, setPhase, markFail } = usePhaseProgress({
+  phases: ['uploading', 'parsing', 'converting', 'saving'],
+});
 
 const detectDatasetSpecs = [
   {
@@ -378,41 +384,12 @@ label line:
   },
 ];
 
-const ACCEPTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 
-const isAcceptedArchive = (name) => {
-  const lowered = String(name || '').toLowerCase();
-  return ACCEPTED_ARCHIVE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
-};
-
-// 阶段顺序：判断阶段先后
-const phaseOrder = ['uploading', 'parsing', 'converting', 'saving'];
-
-const phaseClass = (p) => {
-  const idx = phaseOrder.indexOf(currentPhase.value);
-  const pIdx = phaseOrder.indexOf(p);
-  if (currentPhase.value === 'done') return 'text-emerald-600 font-semibold';
-  if (currentPhase.value === 'fail') {
-    if (pIdx < idx) return 'text-emerald-600';
-    if (pIdx === idx) return 'text-rose-600 font-semibold';
-    return 'text-gray-400';
-  }
-  if (pIdx < idx) return 'text-emerald-600 font-medium';
-  if (pIdx === idx) return 'vt-text-accent-strong';
-  return 'text-gray-400';
-};
-
-const formatSize = (b) => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
-  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
-};
 
 const onPick = (e) => {
   const f = e.target.files?.[0];
   if (f) {
-    if (!isAcceptedArchive(f.name)) {
+    if (!isSupportedArchiveFile(f.name)) {
       error.value = '仅支持 .zip / .tar / .tar.gz / .tgz 文件';
       return;
     }
@@ -424,7 +401,7 @@ const onDrop = (e) => {
   dragging.value = false;
   const f = e.dataTransfer?.files?.[0];
   if (f) {
-    if (!isAcceptedArchive(f.name)) {
+    if (!isSupportedArchiveFile(f.name)) {
       error.value = '仅支持 .zip / .tar / .tar.gz / .tgz 文件';
       return;
     }
@@ -440,12 +417,16 @@ const onCancel = () => {
 
 const onSubmit = async () => {
   if (!file.value || !props.project) return;
+  if (targetName.value.trim()) {
+    const nameErr = validateResourceName(targetName.value.trim(), { emptyMessage: '' });
+    if (nameErr) { error.value = nameErr; return; }
+  }
   uploading.value = true;
   success.value = false;
   error.value = '';
   progress.value = 0;
   phaseMessage.value = '准备上传…';
-  currentPhase.value = 'uploading';
+  setPhase('uploading');
 
   try {
     await asyncEmit('submit', {
@@ -459,12 +440,12 @@ const onSubmit = async () => {
         } else {
           progress.value = ev.progress ?? progress.value;
           phaseMessage.value = ev.message || phaseMessage.value;
-          if (ev.phase) currentPhase.value = ev.phase;
+          if (ev.phase) setPhase(ev.phase);
         }
       },
     });
     success.value = true;
-    currentPhase.value = 'done';
+    setPhase('done');
     progress.value = 100;
     phaseMessage.value = '导入完成';
     setTimeout(() => {
@@ -472,7 +453,7 @@ const onSubmit = async () => {
     }, 800);
   } catch (e) {
     error.value = e?.message || '导入失败';
-    currentPhase.value = 'fail';
+    markFail(currentPhase.value);
   } finally {
     uploading.value = false;
   }

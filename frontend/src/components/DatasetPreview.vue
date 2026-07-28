@@ -62,7 +62,7 @@
     <!-- Row 4: 筛选条件 + 分页 -->
     <div class="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-2.5">
       <div class="mb-2 flex items-start justify-between gap-3 flex-wrap">
-        <div v-if="datasetInfo?.class_stats?.length" class="flex flex-wrap items-center gap-1.5">
+        <div v-if="datasetInfo" class="flex flex-wrap items-center gap-1.5">
           <div class="mr-1 inline-flex h-7 items-center text-xs text-gray-500">
             类别筛选
           </div>
@@ -70,16 +70,32 @@
             {{ datasetMetricLabel }}
             <span class="ml-1 font-mono font-medium text-slate-700">{{ datasetMetricValue }}</span>
           </div>
-          <button
+          <span
             v-for="s in datasetInfo.class_stats || []"
             :key="s.id"
-            class="vt-chip"
+            class="vt-chip group relative"
             :class="selectedClassIds.includes(s.id) ? 'vt-chip--selected' : ''"
             @click="toggleClass(s.id)"
           >
             <span class="font-medium">{{ s.name }}</span>
             <span class="font-mono text-[10px] opacity-70">{{ s.count }}·{{ s.percentage }}%</span>
-          </button>
+            <button
+              v-if="hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL)"
+              type="button"
+              class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded text-slate-500 opacity-0 transition-opacity hover:bg-rose-100 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100"
+              :disabled="deletingLabelId === s.id"
+              :aria-label="`删除类别 ${s.name}`"
+              @click.stop="onDeleteClassChip(s)"
+            >
+              <AppIcon name="close" class="h-3 w-3" />
+            </button>
+          </span>
+          <span
+            v-if="!(datasetInfo.class_stats && datasetInfo.class_stats.length)"
+            class="inline-flex h-7 items-center text-xs text-gray-400"
+          >
+            暂无类别
+          </span>
           <button
             v-if="selectedClassIds.length > 0"
             class="vt-btn-link h-7 text-xs"
@@ -87,9 +103,51 @@
           >
             清空已选 {{ selectedClassIds.length }}
           </button>
+          <!-- 加号：点击展开输入框，Enter 或点 ✓ 创建类别，失焦仅关闭面板 -->
+          <div class="relative">
+            <button
+              type="button"
+              class="vt-chip inline-flex h-7 items-center justify-center w-7 !px-0 text-slate-500 hover:!border-slate-400"
+              :disabled="!canAddClass"
+              :title="canAddClass ? '添加类别' : '当前数据集暂不支持添加类别'"
+              :aria-label="'添加类别'"
+              @click="toggleAddClassInput"
+            >
+              <AppIcon name="plus" class="h-3.5 w-3.5" />
+            </button>
+            <div
+              v-if="showAddClassInput"
+              class="absolute left-0 top-full z-20 mt-1 flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 shadow-md"
+              @mousedown.prevent
+              @click.stop
+            >
+              <input
+                ref="addClassInput"
+                v-model="newClassName"
+                type="text"
+                class="vt-input !h-7 !w-32 !py-0 !px-2 text-xs"
+                placeholder="新类别名"
+                :disabled="addingClass"
+                @keydown.enter.prevent="commitAddClass"
+                @keydown.esc="cancelAddClass"
+                @blur="cancelAddClass"
+              />
+              <button
+                type="button"
+                class="vt-btn-solid-primary vt-btn-size-sm flex items-center justify-center !h-7 !w-7"
+                :disabled="addingClass || !String(newClassName || '').trim()"
+                :title="'确认添加'"
+                :aria-label="'确认添加类别'"
+                @mousedown.prevent
+                @click="commitAddClass"
+              >
+                <AppIcon name="check" class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div v-if="datasetInfo" class="flex items-center gap-2 shrink-0">
+        <div v-if="datasetInfo" class="flex items-center gap-2 shrink-0 ml-auto">
           <div v-if="hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE)" class="relative" @mouseenter="showAutoAnnotateHelp = true" @mouseleave="showAutoAnnotateHelp = false">
             <button
               @click="showAutoAnnotateModal = true"
@@ -125,16 +183,10 @@
               <button v-if="canReorderLabels" class="w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                       :disabled="!canReorderLabels || reorderingLabels"
                       @click="onAdvanced(openReorderLabels)">
-                调整标签顺序
+                调整类别顺序
                 <span v-if="reorderingLabels" class="text-gray-400 text-[10px]">处理中...</span>
               </button>
-              <button v-if="hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      :disabled="!hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL) || deletingLabel"
-                      @click="onAdvanced(openDeleteLabel)">
-                删除标签
-                <span v-if="deletingLabel" class="text-gray-400 text-[10px]">处理中...</span>
-              </button>
-              <div v-if="hasLabelOperations && hasDatasetOperations" class="border-t border-gray-100 my-1"></div>
+              <div v-if="canReorderLabels && hasDatasetOperations" class="border-t border-gray-100 my-1"></div>
               <button v-if="hasDatasetOperation(DATASET_OPERATION.DEDUPLICATE_IMAGES)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       :disabled="deduplicatingImages"
                       @click="onAdvanced(deduplicateImages)">
@@ -289,11 +341,12 @@
        <span class="text-sm text-gray-500">共 {{ total }} 张图片</span>
        <button
          @click="goToTrain"
-         :disabled="!store.selectedDataset || !hasDatasetOperation(DATASET_OPERATION.TRAIN)"
+         :disabled="!store.selectedDataset || !trainGuard.enabled"
+         :title="trainGuard.reason || ''"
          class="vt-btn-solid-primary vt-btn-size-lg"
        >
          <AppIcon name="train" class="h-4 w-4" />
-         <span>{{ hasDatasetOperation(DATASET_OPERATION.TRAIN) ? '去训练' : '训练待接入' }}</span>
+         <span>{{ trainGuard.enabled ? '去训练' : '暂不可训练' }}</span>
          <AppIcon name="next" class="h-4 w-4" />
        </button>
     </div>
@@ -804,7 +857,7 @@
 
     <div v-if="showReorderLabelsModal" class="vt-modal-backdrop" @click.self="closeReorderLabels">
       <div class="vt-modal-panel vt-modal-panel--lg p-5">
-        <h3 class="text-lg font-bold mb-4">调整标签顺序</h3>
+        <h3 class="text-lg font-bold mb-4">调整类别顺序</h3>
         <div class="mb-3 text-sm text-gray-600">该操作会批量重写当前数据集的标注文件（train/val/test 及 auto_labels）。</div>
 
         <div class="max-h-[420px] overflow-auto border border-gray-200 rounded-lg">
@@ -843,35 +896,6 @@
       </div>
     </div>
 
-    <div v-if="showDeleteLabelModal" class="vt-modal-backdrop" @click.self="closeDeleteLabel">
-      <div class="vt-modal-panel vt-modal-panel--lg p-5">
-        <h3 class="text-lg font-bold mb-4">删除标签</h3>
-        <div class="mb-3 text-sm text-gray-600">将从 dataset.yaml 删除该标签，并批量重写标注文件（不删除图片）。</div>
-
-        <div class="max-h-[420px] overflow-auto border border-gray-200 rounded-lg">
-          <div
-            v-for="it in deleteLabelItems"
-            :key="it.id"
-            class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0"
-          >
-            <div class="w-10 text-right font-mono text-sm text-gray-500">{{ it.id }}</div>
-            <div class="flex-1 text-sm text-gray-800 truncate">{{ it.name }}</div>
-            <div class="text-xs text-gray-500 w-20 text-right font-mono">{{ it.count }}</div>
-            <button
-              class="vt-btn-danger vt-btn-size-sm"
-              :disabled="deletingLabel"
-              @click="confirmDeleteLabel(it)"
-            >
-              删除
-            </button>
-          </div>
-        </div>
-
-        <div class="flex justify-end gap-2 mt-4">
-          <button class="vt-btn-secondary vt-btn-size-md" :disabled="deletingLabel" @click="closeDeleteLabel">关闭</button>
-        </div>
-      </div>
-    </div>
 
     <UploadDatasetImagesModal
       :visible="showUploadImagesModal"
@@ -885,7 +909,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted, onUnmounted, computed } from 'vue';
+import { ref, reactive, watch, onMounted, onUnmounted, computed, nextTick } from 'vue';
 import {
   PopoverContent,
   PopoverPortal,
@@ -905,9 +929,10 @@ import { useAutoFillGrid } from '../composables/useAutoFillGrid';
 import {
   DATASET_ANNOTATION_MODE,
   DATASET_OPERATION,
-} from '../datasetCapabilities';
-import { assertCapabilityGuard } from '../capabilityGuards';
-import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
+} from '../utils/datasetCapabilities';
+import { assertCapabilityGuard } from '../utils/capabilityGuards';
+import { CATEGORY_NAME_PATTERN, validateCategoryName } from '../utils';
+import { resolveTrainingDatasetGuard } from '../utils/trainingActionGuards';
 import ClassificationAnnotator from './ClassificationAnnotator.vue';
 import ImageAnnotator from './ImageAnnotator.vue';
 import PoseAnnotator from './PoseAnnotator.vue';
@@ -942,9 +967,11 @@ const deleting = ref(false);
 const showReorderLabelsModal = ref(false);
 const reorderItems = ref([]);
 const reorderingLabels = ref(false);
-const showDeleteLabelModal = ref(false);
-const deleteLabelItems = ref([]);
-const deletingLabel = ref(false);
+const deletingLabelId = ref(null);
+const showAddClassInput = ref(false);
+const addClassInput = ref(null);
+const newClassName = ref('');
+const addingClass = ref(false);
 const deduplicatingImages = ref(false);
 const clearingAutoLabels = ref(false);
 const showMergeDatasetsModal = ref(false);
@@ -1078,7 +1105,6 @@ const createSubsetGuard = computed(() => getDatasetOperationGuard(DATASET_OPERAT
 const autoAnnotateGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.AUTO_ANNOTATE, {
   visibleWhenUnsupported: true,
 }));
-const deleteLabelGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.DELETE_LABEL));
 const deduplicateGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.DEDUPLICATE_IMAGES));
 const mergeDatasetsGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.MERGE_DATASETS));
 const augmentDatasetGuard = computed(() => getDatasetOperationGuard(DATASET_OPERATION.AUGMENT_DATASET));
@@ -1093,14 +1119,14 @@ const canReorderLabels = computed(() => {
   if (v && typeof v === 'object') return Object.keys(v).length > 0;
   return false;
 });
-const hasLabelOperations = computed(() => canReorderLabels.value || hasDatasetOperation(DATASET_OPERATION.DELETE_LABEL));
 const hasDatasetOperations = computed(() => hasDatasetOperation(DATASET_OPERATION.DEDUPLICATE_IMAGES) || hasDatasetOperation(DATASET_OPERATION.MERGE_DATASETS));
 const hasAdvancedOperations = computed(() => {
-  return hasLabelOperations.value
+  return canReorderLabels.value
     || hasDatasetOperations.value
     || hasDatasetOperation(DATASET_OPERATION.AUTO_ANNOTATE)
     || hasDatasetOperation(DATASET_OPERATION.AUGMENT_DATASET);
 });
+const canAddClass = computed(() => hasDatasetOperation(DATASET_OPERATION.ADD_LABEL));
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (filters.limit || 1))));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor((filters.offset || 0) / (filters.limit || 1)) + 1));
 const mergeCandidates = computed(() => {
@@ -1599,7 +1625,7 @@ const runAugmentSubset = async () => {
   if (!store.currentProject?.path || !store.selectedDataset?.name) return;
   if (!augmentConfig.newDatasetName) return;
   if (!augmentConfig.targetClassConfigs || augmentConfig.targetClassConfigs.length === 0) {
-    toast.warn('请选择至少一个目标分类');
+    toast.warn('请选择至少一个目标类别');
     return;
   }
   const nonTargetKeepRatio = Math.max(0, Math.min(1, Number(augmentConfig.nonTargetKeepRatio || 0)));
@@ -1647,48 +1673,77 @@ const closeReorderLabels = () => {
   reorderItems.value = [];
 };
 
-const openDeleteLabel = () => {
-  if (!deleteLabelGuard.value.enabled) return;
-  const stats = datasetInfo.value?.class_stats || [];
-  deleteLabelItems.value = (stats || [])
-    .map(s => ({ id: Number(s.id), name: String(s.name ?? ''), count: Number(s.count ?? 0) }))
-    .filter(it => Number.isFinite(it.id) && it.name);
-  showDeleteLabelModal.value = true;
-};
-
-const closeDeleteLabel = () => {
-  showDeleteLabelModal.value = false;
-  deleteLabelItems.value = [];
-};
-
-const confirmDeleteLabel = async (it) => {
-  if (!it || deletingLabel.value) return;
+// 顶部 chip 区直接删除类别：复用同一 deleteDatasetLabel 接口，删除前二次确认。
+const onDeleteClassChip = async (s) => {
+  if (!s || deletingLabelId.value !== null) return;
   if (!await showConfirm({
-    message: `确定要删除标签「${it.name}」吗？\n该操作会批量修改标注文件，且不可撤销。`,
-    title: '删除标签',
+    message: `确定要删除类别「${s.name}」吗？\n该操作会批量修改标注文件，且不可撤销。`,
+    title: '删除类别',
     danger: true,
     confirmText: '删除',
   })) return;
-  deletingLabel.value = true;
+  deletingLabelId.value = s.id;
   await apiCall(api.deleteDatasetLabel({
     project_path: store.currentProject.path,
     dataset_name: store.selectedDataset.name,
-    class_id: it.id
+    class_id: s.id,
   }), {
-    errorMsg: '处理失败',
+    errorMsg: '删除类别失败',
     onSuccess: async (data) => {
       const delId = Number(data.deleted_label_id);
       selectedClassIds.value = (selectedClassIds.value || [])
         .filter(x => x !== delId)
         .map(x => (x > delId ? x - 1 : x));
-
-      closeDeleteLabel();
       await fetchDatasetInfo();
       applyFilters();
-      toast.success(`已删除「${data.deleted_label_name}」：重写文件 ${data.updated_files || 0} 个，移除行 ${data.removed_lines || 0} 行，重编号行 ${data.shifted_lines || 0} 行`);
+      toast.success(`已删除「${data.deleted_label_name}」`);
     },
-    finally: () => { deletingLabel.value = false; },
+    finally: () => { deletingLabelId.value = null; },
   });
+};
+
+// 顶部 chip 区加号：点击展开输入；Enter 或点 ✓ 创建类别；Esc / blur 仅关闭面板不调接口。
+const toggleAddClassInput = async () => {
+  if (!canAddClass.value) return;
+  showAddClassInput.value = !showAddClassInput.value;
+  if (showAddClassInput.value) {
+    await nextTick();
+    addClassInput.value && addClassInput.value.focus();
+  }
+};
+const cancelAddClass = () => {
+  if (!showAddClassInput.value) return;
+  showAddClassInput.value = false;
+  newClassName.value = '';
+};
+const commitAddClass = async () => {
+  const raw = String(newClassName.value || '').trim();
+  if (!raw) return;
+  if (addingClass.value) return;
+  if (!CATEGORY_NAME_PATTERN.test(raw)) {
+    toast.warn(`类别名「${raw}」${validateCategoryName(raw)}`);
+    newClassName.value = '';
+    return;
+  }
+  addingClass.value = true;
+  await apiCall(api.addDatasetLabel({
+    project_path: store.currentProject.path,
+    dataset_name: store.selectedDataset.name,
+    label_name: raw,
+  }), {
+    errorMsg: '添加类别失败',
+    onSuccess: async (data) => {
+      newClassName.value = '';
+      await fetchDatasetInfo();
+      toast.success(`已添加类别「${data?.added_label_name || raw}」`);
+    },
+  });
+  addingClass.value = false;
+  // 成功或失败都保持面板打开，便于连续添加；追加 focus 防止 input 因 toast 重排导致焦点丢失。
+  if (showAddClassInput.value) {
+    await nextTick();
+    addClassInput.value && addClassInput.value.focus();
+  }
 };
 
 const deduplicateImages = async () => {
@@ -1809,12 +1864,12 @@ const runMergeDatasets = async () => {
     dataset_b: other,
     new_dataset_name: newName
   }), {
-    successMsg: '合并完成',
     errorMsg: '处理失败',
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await store.fetchProjects({ silent: true });
       await openCreatedDataset(newName);
       closeMergeDatasets();
+      toast.success(data?.message || '合并完成，正在建立初始快照');
     },
     finally: () => { mergingDatasets.value = false; },
   });
@@ -1835,8 +1890,8 @@ const applyReorderLabels = async () => {
   const order = reorderItems.value.map(it => it.oldIndex);
   if (order.length === 0) return;
   if (!await showConfirm({
-    message: '确定要应用当前标签顺序吗？这会批量修改标注文件。',
-    title: '应用标签顺序',
+    message: '确定要应用当前类别顺序吗？这会批量修改标注文件。',
+    title: '应用类别顺序',
     danger: true,
     confirmText: '应用',
   })) return;

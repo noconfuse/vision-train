@@ -4,7 +4,7 @@ import {
   getDatasetTrainingMode,
   resolveDatasetCapabilities,
   resolveDatasetOperationGuard,
-} from '../datasetCapabilities';
+} from '../utils/datasetCapabilities';
 
 export const useDatasetCapabilities = (datasetSource) => {
   const dataset = computed(() => unref(datasetSource) || null);

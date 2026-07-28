@@ -32,6 +32,7 @@ DATASET_OPERATION_MANUAL_ANNOTATION = "manual_annotation"
 DATASET_OPERATION_TRAIN = "train"
 DATASET_OPERATION_AUTO_ANNOTATE = "auto_annotate"
 DATASET_OPERATION_REORDER_LABELS = "reorder_labels"
+DATASET_OPERATION_ADD_LABEL = "add_label"
 DATASET_OPERATION_DELETE_LABEL = "delete_label"
 DATASET_OPERATION_DEDUPLICATE_IMAGES = "deduplicate_images"
 DATASET_OPERATION_MERGE_DATASETS = "merge_datasets"
@@ -44,8 +45,9 @@ DATASET_OPERATION_LABELS = {
     DATASET_OPERATION_MANUAL_ANNOTATION: "标注",
     DATASET_OPERATION_TRAIN: "训练",
     DATASET_OPERATION_AUTO_ANNOTATE: "自动标注",
-    DATASET_OPERATION_REORDER_LABELS: "调整标签顺序",
-    DATASET_OPERATION_DELETE_LABEL: "删除标签",
+    DATASET_OPERATION_REORDER_LABELS: "调整类别顺序",
+    DATASET_OPERATION_ADD_LABEL: "添加类别",
+    DATASET_OPERATION_DELETE_LABEL: "删除类别",
     DATASET_OPERATION_DEDUPLICATE_IMAGES: "图片去重",
     DATASET_OPERATION_MERGE_DATASETS: "合并数据集",
     DATASET_OPERATION_AUGMENT_DATASET: "弱类补偿采样",
@@ -59,6 +61,7 @@ _BASE_OPERATIONS = {
     DATASET_OPERATION_TRAIN: False,
     DATASET_OPERATION_AUTO_ANNOTATE: False,
     DATASET_OPERATION_REORDER_LABELS: False,
+    DATASET_OPERATION_ADD_LABEL: False,
     DATASET_OPERATION_DELETE_LABEL: False,
     DATASET_OPERATION_DEDUPLICATE_IMAGES: False,
     DATASET_OPERATION_MERGE_DATASETS: False,
@@ -79,6 +82,7 @@ _CAPABILITY_MAP = {
             DATASET_OPERATION_TRAIN: True,
             DATASET_OPERATION_AUTO_ANNOTATE: True,
             DATASET_OPERATION_REORDER_LABELS: True,
+            DATASET_OPERATION_ADD_LABEL: True,
             DATASET_OPERATION_DELETE_LABEL: True,
             DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
             DATASET_OPERATION_MERGE_DATASETS: True,
@@ -97,6 +101,7 @@ _CAPABILITY_MAP = {
             DATASET_OPERATION_MANUAL_ANNOTATION: True,
             DATASET_OPERATION_TRAIN: True,
             DATASET_OPERATION_AUTO_ANNOTATE: True,
+            DATASET_OPERATION_ADD_LABEL: True,
             DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
             DATASET_OPERATION_MERGE_DATASETS: True,
         },
@@ -114,6 +119,7 @@ _CAPABILITY_MAP = {
             DATASET_OPERATION_TRAIN: True,
             DATASET_OPERATION_AUTO_ANNOTATE: True,
             DATASET_OPERATION_REORDER_LABELS: True,
+            DATASET_OPERATION_ADD_LABEL: True,
             DATASET_OPERATION_DELETE_LABEL: True,
             DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
             DATASET_OPERATION_MERGE_DATASETS: True,
@@ -132,6 +138,7 @@ _CAPABILITY_MAP = {
             DATASET_OPERATION_TRAIN: True,
             DATASET_OPERATION_AUTO_ANNOTATE: True,
             DATASET_OPERATION_REORDER_LABELS: True,
+            DATASET_OPERATION_ADD_LABEL: True,
             DATASET_OPERATION_DELETE_LABEL: True,
             DATASET_OPERATION_DEDUPLICATE_IMAGES: True,
             DATASET_OPERATION_MERGE_DATASETS: True,
@@ -140,10 +147,45 @@ _CAPABILITY_MAP = {
 }
 
 
+def _resolve_versioning_block_reason(dataset_metadata):
+    """解析版本未就绪时的统一阻断原因。"""
+    if not isinstance(dataset_metadata, dict):
+        return ""
+    if dataset_metadata.get("current_version_id"):
+        return ""
+    status = str(dataset_metadata.get("versioning_status") or "").strip().lower()
+    if status == "pending":
+        return "首个版本入库中，请等待快照完成"
+    if status == "failed":
+        return "首个版本入库失败，请先到任务中心处理"
+    return ""
+
+
+def _apply_versioning_constraints(capabilities, dataset_metadata=None):
+    """对首个版本未就绪的数据集追加动态能力约束。"""
+    reason = _resolve_versioning_block_reason(dataset_metadata)
+    if not reason:
+        return capabilities
+    operations = dict(capabilities["operations"])
+    disabled_reasons = dict(capabilities.get("operation_disabled_reasons") or {})
+    for operation, supported in operations.items():
+        if not supported:
+            continue
+        operations[operation] = False
+        disabled_reasons[operation] = reason
+    return {
+        **capabilities,
+        "operations": operations,
+        "operation_disabled_reasons": disabled_reasons,
+    }
+
+
 def build_dataset_capabilities(vision_task_type, dataset_metadata=None):
     """按任务类型构造统一能力表，可按数据集元数据附加动态约束。"""
-    del dataset_metadata
-    return _build_dataset_capabilities_base(vision_task_type)
+    return _apply_versioning_constraints(
+        _build_dataset_capabilities_base(vision_task_type),
+        dataset_metadata=dataset_metadata,
+    )
 
 
 def _build_dataset_capabilities_base(vision_task_type):

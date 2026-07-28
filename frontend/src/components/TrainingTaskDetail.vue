@@ -417,10 +417,10 @@ import {
   isTaskCompleted,
   isTaskResumable,
   isTaskRetryable,
-} from '../taskStatus';
+} from '../domain/task/taskStatus';
 import { formatDateTime } from '../utils';
 import { getResumeFromTaskId } from '../utils/trainingTask';
-import { resolveTrainingResultProfile } from '../trainingResultProfile';
+import { resolveTrainingResultProfile } from '../utils/trainingResultProfile';
 
 const props = defineProps({
   projectPath: { type: String, required: true },

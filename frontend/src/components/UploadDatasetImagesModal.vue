@@ -33,23 +33,26 @@
             <div class="mb-2 flex justify-center">
               <AppIcon name="upload" class="h-7 w-7 text-slate-500" />
             </div>
-            <div>点击选择 / 拖入图片文件</div>
-            <div class="text-xs text-gray-400 mt-1">支持多选，仅上传图片到当前数据集（{{ IMAGE_FILE_ACCEPT }}）</div>
+            <div>点击选择 / 拖入图片或压缩包</div>
+            <div class="text-xs text-gray-400 mt-1">
+              支持图片 {{ IMAGE_FILE_ACCEPT }} 与压缩包 {{ ARCHIVE_FILE_ACCEPT }}
+            </div>
           </div>
           <div v-else class="text-left text-sm">
-            <div class="font-medium text-slate-800">{{ files.length }} 张图片待上传</div>
+            <div class="font-medium text-slate-800">{{ files.length }} 个文件待上传</div>
             <div class="mt-1 max-h-32 overflow-auto text-xs text-gray-500 space-y-1">
-              <div v-for="file in files.slice(0, 8)" :key="`${file.name}-${file.size}`" class="truncate">
-                {{ file.name }}
+              <div v-for="file in files.slice(0, 8)" :key="`${file.name}-${file.size}`" class="truncate flex items-center gap-1">
+                <AppIcon :name="isSupportedArchiveFile(file.name) ? 'download' : 'image'" class="h-3 w-3 text-slate-400 shrink-0" />
+                <span class="truncate">{{ file.name }}</span>
               </div>
-              <div v-if="files.length > 8" class="text-gray-400">还有 {{ files.length - 8 }} 张</div>
+              <div v-if="files.length > 8" class="text-gray-400">还有 {{ files.length - 8 }} 个</div>
             </div>
           </div>
           <input
             ref="fileInput"
             type="file"
             class="hidden"
-            :accept="IMAGE_FILE_ACCEPT"
+            :accept="UPLOAD_FILE_ACCEPT"
             multiple
             @change="onPick"
           />
@@ -99,7 +102,13 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
-import { IMAGE_FILE_ACCEPT, isSupportedImageFile } from '../media';
+import {
+  ARCHIVE_FILE_ACCEPT,
+  IMAGE_FILE_ACCEPT,
+  UPLOAD_FILE_ACCEPT,
+  isSupportedArchiveFile,
+  isSupportedUploadFile,
+} from '../utils/media';
 import AppIcon from './ui/AppIcon.vue';
 
 const props = defineProps({
@@ -121,7 +130,7 @@ const success = ref(false);
 const error = ref('');
 const dragging = ref(false);
 
-const allowedImage = (file) => isSupportedImageFile(file);
+const isAcceptedFile = isSupportedUploadFile;
 
 const reset = () => {
   files.value = [];
@@ -140,9 +149,9 @@ watch(() => props.visible, (visible) => {
 });
 
 const setFiles = (items) => {
-  const next = Array.from(items || []).filter(allowedImage);
+  const next = Array.from(items || []).filter(isAcceptedFile);
   if (next.length === 0) {
-    error.value = `仅支持以下图片格式：${IMAGE_FILE_ACCEPT}`;
+    error.value = `仅支持图片 (${IMAGE_FILE_ACCEPT}) 与压缩包 (${ARCHIVE_FILE_ACCEPT})`;
     return;
   }
   files.value = next;

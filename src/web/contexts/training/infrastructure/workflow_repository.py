@@ -308,42 +308,47 @@ def delete_training_workflow(project_path, workflow_id):
     }
 
 
-def delete_dataset_training_state(project_path, dataset_id, dataset_name=None):
-    """删除指定数据集关联的训练工作流、任务记录和训练产物。"""
+def _delete_dataset_scoped_state(
+    project_path,
+    dataset_id,
+    dataset_name=None,
+    *,
+    task_types=None,
+    workflow_type=None,
+    active_task_error,
+):
+    """按 dataset_id 清理关联任务、工作流与训练产物。"""
     require_present(project_path=project_path, dataset_id=dataset_id)
-    task_items = list_training_workflow_tasks(
-        project_path=project_path,
-        dataset_id=dataset_id,
-        include_archived=True,
-    )
-    if any(is_active_task_status(task.get("status")) for task in task_items):
-        raise ValueError("数据集存在进行中的训练相关任务，请先停止后再删除")
 
     removed_paths = []
     removed_set = set()
     removed_task_ids = []
     removed_workflow_ids = []
     with session_scope() as session:
-        workflow_rows = session.query(WorkflowRecord).filter(
+        workflow_query = session.query(WorkflowRecord).filter(
             WorkflowRecord.project_path == project_path,
-            WorkflowRecord.type == WORKFLOW_TYPE_TRAINING,
             WorkflowRecord.dataset_id == dataset_id,
-        ).all()
+        )
+        if workflow_type:
+            workflow_query = workflow_query.filter(WorkflowRecord.type == workflow_type)
+        workflow_rows = workflow_query.all()
 
         task_query = session.query(Task).filter(
             Task.project_path == project_path,
-            Task.type.in_(TRAINING_TASK_TYPES),
             Task.dataset_id == dataset_id,
         )
+        if task_types:
+            task_query = task_query.filter(Task.type.in_(task_types))
         task_rows = task_query.all()
         for task in task_rows:
             task_dict = task.to_dict()
             if is_active_task_status(task_dict.get("status")):
-                raise ValueError("数据集存在进行中的训练相关任务，请先停止后再删除")
-            for path in delete_training_task_artifacts(task_dict):
-                if path not in removed_set:
-                    removed_set.add(path)
-                    removed_paths.append(path)
+                raise ValueError(active_task_error)
+            if task_dict.get("type") in TRAINING_TASK_TYPES:
+                for path in delete_training_task_artifacts(task_dict):
+                    if path not in removed_set:
+                        removed_set.add(path)
+                        removed_paths.append(path)
             removed_task_ids.append(task.id)
             session.delete(task)
 
@@ -364,3 +369,25 @@ def delete_dataset_training_state(project_path, dataset_id, dataset_name=None):
         "removed_workflow_ids": removed_workflow_ids,
         "removed_paths": removed_paths,
     }
+
+
+def delete_dataset_training_state(project_path, dataset_id, dataset_name=None):
+    """删除指定数据集关联的训练工作流、任务记录和训练产物。"""
+    return _delete_dataset_scoped_state(
+        project_path,
+        dataset_id,
+        dataset_name=dataset_name,
+        task_types=TRAINING_TASK_TYPES,
+        workflow_type=WORKFLOW_TYPE_TRAINING,
+        active_task_error="数据集存在进行中的训练相关任务，请先停止后再删除",
+    )
+
+
+def delete_dataset_related_state(project_path, dataset_id, dataset_name=None):
+    """删除指定数据集关联的工作流、任务记录和训练产物。"""
+    return _delete_dataset_scoped_state(
+        project_path,
+        dataset_id,
+        dataset_name=dataset_name,
+        active_task_error="数据集存在进行中的关联任务，请先停止后再删除",
+    )

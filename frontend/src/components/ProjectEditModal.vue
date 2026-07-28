@@ -105,6 +105,7 @@
 import { ref, watch } from 'vue';
 import { useMainStore } from '../stores/main';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
+import { validateResourceName } from '../utils';
 import AppIcon from './ui/AppIcon.vue';
 
 const props = defineProps({
@@ -125,13 +126,10 @@ const submitting = ref(false);
 const submitError = ref('');
 const success = ref(false);
 
-const validateSync = (val) => {
-  if (!val) return '项目名不能为空';
-  if (val.length > 64) return '项目名长度不能超过 64 个字符';
-  if (!/^[A-Za-z0-9_-]+$/.test(val)) return '只能包含字母、数字、_、-';
-  if (['.git', '__pycache__', 'pretrained_models', 'config'].includes(val)) return '该名称是保留名';
-  return '';
-};
+const validateSync = (val) => validateResourceName(val, {
+  emptyMessage: '项目名不能为空',
+  reservedNames: ['.git', '__pycache__', 'pretrained_models', 'config'],
+});
 
 let nameTimer = null;
 const onNameInput = () => {

@@ -1,4 +1,4 @@
-"""维护 dataset.yaml 类别定义并重写标签文件中的类 id。"""
+"""维护 dataset.yaml 类别定义并重写标签文件中的类别 id。"""
 
 import os
 
@@ -9,6 +9,7 @@ from contexts.dataset.infrastructure.dataset_layout import (
 )
 from contexts.dataset.infrastructure.dataset_schema import load_dataset_yaml, resolve_dataset_names_list, save_dataset_names
 from shared.utils.fs_utils import remove_file_silent
+from shared.utils.path_utils import storage_path_ref
 from shared.utils.yaml_utils import load_yaml_file
 
 
@@ -28,7 +29,7 @@ def resolve_dataset_label_id(yaml_path, class_id=None, class_name=None):
     try:
         return names.index(target)
     except ValueError as exc:
-        raise ValueError("未找到该标签") from exc
+        raise ValueError("未找到该类别") from exc
 
 
 def _load_names_and_shape(yaml_path):
@@ -36,8 +37,7 @@ def _load_names_and_shape(yaml_path):
     config = load_yaml_file(yaml_path, default={})
     raw_names = config.get("names")
     names = resolve_dataset_names_list(raw_names)
-    if not names:
-        raise ValueError("dataset.yaml 缺少 names 字段")
+    # 空 names 是新建数据集的合法初始状态；具体是否非法由更上层校验。
     return config, names, isinstance(raw_names, dict)
 
 
@@ -220,4 +220,42 @@ def delete_dataset_label(ds_root, yaml_path, delete_id, splits=None, delete_empt
         "removed_lines": removed_lines,
         "skipped_files": skipped_files,
         "splits": normalize_standard_dataset_splits(splits),
+    }
+
+
+def add_dataset_label(ds_root, yaml_path, label_name, *, strategy):
+    """向 dataset.yaml 追加一个类别，调用 ``strategy.ensure_label_dirs`` 处理附属产物。
+
+    名称格式校验（空 / 长度 / 字符）由业务用例层 ``validate_token_name`` 统一执行；
+    本函数只关心 yaml 写入与重名校验（后者是 dataset.yaml 自身的状态约束）。
+    """
+    config, names, original_is_dict = _load_names_and_shape(yaml_path)
+    new_name = str(label_name or "")
+    if new_name in names:
+        raise ValueError(f"类别「{new_name}」已存在")
+    new_names = list(names) + [new_name]
+    _write_names_back(yaml_path, config, new_names, original_is_dict)
+    created_dirs = [storage_path_ref(path) for path in strategy.ensure_label_dirs(ds_root, new_name)]
+    return {
+        "added_label_name": new_name,
+        "label_id": len(new_names) - 1,
+        "nc": len(new_names),
+        "created_dirs": created_dirs,
+    }
+
+
+def ensure_initial_class_dirs(strategy, ds_root, class_names):
+    """在建空数据集时，调用 strategy 为初始分类创建附属产物目录。"""
+    created_dirs = []
+    for name in class_names or []:
+        created_dirs.extend(strategy.ensure_label_dirs(ds_root, name))
+    return [storage_path_ref(path) for path in created_dirs]
+
+
+def delete_label_dirs(strategy, ds_root, class_name):
+    """删除分类时，调用 strategy 清理附属产物目录并返回结果（带存储路径规整）。"""
+    raw_result = strategy.remove_label_dirs(ds_root, class_name) or {}
+    return {
+        "removed_dirs": [storage_path_ref(path) for path in raw_result.get("removed_dirs", [])],
+        "skipped_dirs": [storage_path_ref(path) for path in raw_result.get("skipped_dirs", [])],
     }

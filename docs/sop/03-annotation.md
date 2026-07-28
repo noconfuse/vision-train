@@ -32,7 +32,9 @@
 └── test/{images,labels}
 ```
 
-解压后的根目录落在 `projects/<project>/training/<dataset_name>/`，元数据落在 `<dataset>/.vision-train.meta.json`。首次接收数据时系统会自动发布一个 `current_version_id` 快照。
+解压后的根目录落在 `projects/<project>/training/<dataset_name>/`，元数据落在 `<dataset>/.vision-train.meta.json`。
+
+创建新数据集时，可以预先指定初始类别，类别会写入 `dataset.yaml` 的 `names` 字段。**初始类别在所有视觉任务类型（detect / classify / segment / pose）下均可用**，不限于分类任务。首次接收数据时系统会自动发布一个 `current_version_id` 快照。
 
 ## 3.4 业务动作
 
@@ -66,10 +68,15 @@
 | 合并数据集 | 把其他标准数据集并入当前数据集 | 合并入当前数据集的对应 split |
 | 生成子集 | 从指定图片集合复制出新数据集 | 新建 `training/<new_dataset_name>/` |
 | 弱类补偿采样 | 生成针对弱类的补强数据集 | 新建数据集，原数据集保持不变 |
+| 添加类别 | 在 `dataset.yaml` 中追加新类别 | `dataset.yaml`，创建分类数据集时还会创建对应类别目录 |
 | 标签重排 | 修改 `dataset.yaml` 类别顺序并同步重写所有标签 | `dataset.yaml` + 所有 `labels/*.txt` |
-| 删除类别 | 移除指定类别及其所有标签行 | 同上 |
+| 删除类别 | 移除指定类别及其所有标签行 | 同上；分类数据集还会删除空类别目录 |
 | 清除待复核标注 | 清空 `auto_labels/<split>/` 下所有自动标注草稿 | 仅清草稿，不动正式标签 |
 
+> 添加 / 删除类别也可以从数据集预览顶部的类别筛选芯片区直接操作：点击 "+" 输入类别名后按 Enter 或 ✓ 确认添加；每个芯片悬浮后出现的 × 按钮用于删除，删除前会二次确认。
+>
+> 类别名与数据集 / 项目名共用同一套命名规则：仅允许字母、数字、`_`、`-`，最长 64 个字符。
+>
 > 删除数据集 / 删除图片 / 删除类别 均为不可恢复操作，系统会要求二次确认。
 
 ## 3.5 数据集版本管理
@@ -88,7 +95,7 @@
 
 ### 删除数据集的影响
 
-硬删 `training/<dataset_name>/` 与 `training/.dataset-store/<dataset_id>/`，同时清理与该数据集相关的训练工作流与产物。
+硬删 `training/<dataset_name>/` 与 `training/.dataset-store/<dataset_id>/`，同时清理与该数据集相关的训练工作流与产物。同级的 DVC 指针文件（`<dataset_name>.dvc`）也会一并清除。
 
 ## 3.6 视觉任务类型与标注协议
 
@@ -109,6 +116,7 @@
 | `dataset_id` | 数据集稳定标识 | 写入 `.vision-train.meta.json`，与目录名解耦 |
 | `current_version_id` | 当前工作数据集绑定的版本 | 缺失时自动 bootstrap |
 | `vision_task_type` | 数据集所属任务类型 | 决定支持的标注器与训练模式 |
+| `names` | 类别 ID → 类别名映射 | 写入 `dataset.yaml`；所有任务类型共享此字段 |
 | `tags` | 数据集标签 | 写入 `dataset.yaml`，仅作展示与检索 |
 
 ## 3.8 失败排查

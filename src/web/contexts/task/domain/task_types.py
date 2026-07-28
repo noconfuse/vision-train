@@ -7,6 +7,7 @@ TASK_TYPE_INFERENCE = "inference"
 TASK_TYPE_EXPORT = "export"
 TASK_TYPE_TEMPLATE = "template"
 TASK_TYPE_FRAME_EXTRACTION = "frame_extraction"
+TASK_TYPE_DATASET_SNAPSHOT = "dataset_snapshot"
 
 TRAINING_TASK_TYPES = frozenset(
     (

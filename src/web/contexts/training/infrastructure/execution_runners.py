@@ -101,6 +101,29 @@ def execute_training_task(task_id):
         model = YOLO(model_path)
         update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=max(task.get("progress") or 0, 1), message="训练环境已准备，正在进入首轮 epoch...")
 
+        _last_batch_progress = -1
+
+        def on_train_batch_end(trainer):
+            """每批训练后更新平滑进度（epoch 级回调负责写指标，本回调只刷新进度条）。"""
+            nonlocal _last_batch_progress
+            try:
+                batches_per_epoch = len(trainer.train_loader)
+                total_batches = batches_per_epoch * max(trainer.epochs, 1)
+                if total_batches <= 0:
+                    return
+                # trainer.ni 是所有 epoch 累计的全局 batch 计数器
+                pct = min(int(trainer.ni / total_batches * 99), 99)
+                if pct == _last_batch_progress:
+                    return
+                _last_batch_progress = pct
+                update_worker_task_progress(
+                    task_id,
+                    progress=pct,
+                    message=f"训练中（{trainer.ni}/{total_batches} 批）...",
+                )
+            except Exception:
+                pass  # 进度上报异常不打断训练
+
         def on_train_epoch_end(trainer):
             """在每轮训练结束后回写指标并响应停止请求。"""
             if is_stop_requested(stop_signal_path):
@@ -113,6 +136,7 @@ def execute_training_task(task_id):
             update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=progress, message=epoch_update["message"])
             write_task_history(task_id, **epoch_update["history"])
 
+        model.add_callback("on_train_batch_end", on_train_batch_end)
         model.add_callback("on_train_epoch_end", on_train_epoch_end)
         args = build_training_args(training_config, training_context, save_dir)
         update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=max(task.get("progress") or 0, 1), message="训练已开始，等待首轮 epoch 完成...")

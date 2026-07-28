@@ -31,8 +31,10 @@
 ```text
 projects/<project_name>/
 ├── training/                  # 数据集根目录
-│   └── <dataset_name>/
+│   ├── <dataset_name>/
+│   └── <dataset_name>.dvc     # DVC 指针文件（数据集被跟踪时生成）
 ├── training_outputs/          # 训练 / 评估 / 导出 / 部署模板产物
+├── training_calibrations/     # 批次校准产物
 ├── videos/                    # 视频原文件
 └── .description               # 项目描述（仅 UI 展示）
 ```
@@ -41,7 +43,7 @@ projects/<project_name>/
 
 | 字段 | 含义 | 备注 |
 | --- | --- | --- |
-| `name` | 项目名 | 字母 / 数字 / `_` / `-`；禁止 `.` 开头与保留名 |
+| `name` | 项目名 | 字母 / 数字 / `_` / `-`；1–64 字符；禁止 `.` 开头与保留名 |
 | `description` | 项目描述 | 仅 UI 展示，不影响训练逻辑 |
 | `path` | 项目绝对路径 | 仅内部使用，对外 DTO 输出存储引用协议 |
 | `created_at` / `updated_at` | 时间戳 | 基于文件系统时间 |

@@ -3,7 +3,7 @@ import {
   getModelTrainingMode,
   resolveModelCapabilities,
   resolveModelOperationGuard,
-} from '../modelCapabilities';
+} from '../utils/modelCapabilities';
 
 export const useModelCapabilities = (modelSource) => {
   const model = computed(() => unref(modelSource) || null);

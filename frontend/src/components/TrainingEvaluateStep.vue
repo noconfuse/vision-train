@@ -126,8 +126,8 @@ import api from '../api';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
-import { assertCapabilityGuard } from '../capabilityGuards';
-import { resolveEvaluateStartGuard } from '../trainingActionGuards';
+import { assertCapabilityGuard } from '../utils/capabilityGuards';
+import { resolveEvaluateStartGuard } from '../utils/trainingActionGuards';
 import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
@@ -138,8 +138,8 @@ import {
   getTaskStatusLabel,
   getTaskStatusTagClass,
   isTaskActive,
-} from '../taskStatus';
-import { resolveTrainingResultProfile } from '../trainingResultProfile';
+} from '../domain/task/taskStatus';
+import { resolveTrainingResultProfile } from '../utils/trainingResultProfile';
 
 const props = defineProps({
   projectPath: { type: String, required: true },

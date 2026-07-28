@@ -4,6 +4,7 @@ import os
 import random
 
 from contexts.dataset.domain.capabilities import (
+    DATASET_OPERATION_ADD_LABEL,
     DATASET_OPERATION_AUGMENT_DATASET,
     DATASET_OPERATION_AUTO_ANNOTATE,
     DATASET_OPERATION_CREATE_SUBSET,
@@ -19,6 +20,7 @@ from contexts.dataset.infrastructure.dataset_layout import (
     DATASET_SPLIT_TRAIN,
     STANDARD_DATASET_SPLITS,
     get_dataset_auto_labels_dir,
+    get_dataset_images_dir,
     get_dataset_split_content_dir,
 )
 from contexts.project.infrastructure.project_paths import (
@@ -32,7 +34,10 @@ from contexts.dataset.infrastructure.dataset_import_runtime import (
     has_import_job,
 )
 from contexts.dataset.infrastructure.dataset_labels import (
+    add_dataset_label as add_label,
+    delete_label_dirs,
     delete_dataset_label as delete_label,
+    ensure_initial_class_dirs,
     reorder_dataset_labels as reorder_labels,
     resolve_dataset_label_id as resolve_label_id,
 )
@@ -44,15 +49,16 @@ from contexts.dataset.infrastructure.dataset_repository import analyze_dataset a
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
 from contexts.dataset.infrastructure.dataset_repository import scan_project_datasets as scan_project_dataset_records
 from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type
+from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type, require_dataset_vision_task_type
 from contexts.dataset.infrastructure.dataset_versioning import (
     create_dataset_version_snapshot,
     delete_dataset_version_store,
     get_current_dataset_version_record,
     list_dataset_version_records,
     restore_dataset_version_snapshot,
+    start_snapshot_job,
 )
-from contexts.training.infrastructure.workflow_repository import delete_dataset_training_state
+from contexts.training.infrastructure.workflow_repository import delete_dataset_related_state
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
@@ -79,6 +85,7 @@ from shared.utils.path_utils import (
     slice_items,
     storage_path_ref,
 )
+from shared.utils.name_utils import validate_token_name
 from shared.utils.value_utils import parse_bool, require_present
 from shared.utils.zip_utils import split_archive_filename
 
@@ -94,8 +101,17 @@ def _present_dataset_version(record):
     }
 
 
-def _publish_dataset_version(project_path, dataset_root, dataset_name, reason, *, source_version_id=None):
-    """为当前工作数据集发布一个新版本。"""
+def _is_visible_dataset_version(record):
+    """仅暴露具备可恢复 DVC 指纹的版本。"""
+    return bool(record and str(record.get("dvc_rev") or "").strip())
+
+
+def _publish_dataset_version(project_path, dataset_root, dataset_name, reason, *, source_version_id=None, mode="add"):
+    """为当前工作数据集发布一个新版本。
+
+    Args:
+        mode: ``add`` 表示首次入库（全新数据集），``commit`` 表示增量入库（修改后保存）。
+    """
     return _present_dataset_version(
         create_dataset_version_snapshot(
             project_path,
@@ -103,8 +119,27 @@ def _publish_dataset_version(project_path, dataset_root, dataset_name, reason, *
             dataset_name=dataset_name,
             reason=reason,
             source_version_id=source_version_id,
+            mode=mode,
         )
     )
+
+
+def _enqueue_initial_dataset_snapshot(project_path, dataset_root, dataset_name, reason):
+    """为新建数据集异步建立首个版本快照。"""
+    task_id = start_snapshot_job(
+        project_path,
+        dataset_root,
+        dataset_name=dataset_name,
+        mode="add",
+        reason=reason,
+    )
+    identity = load_dataset_identity_meta(dataset_root)
+    return {
+        "dataset_id": identity["dataset_id"],
+        "current_version_id": identity.get("current_version_id"),
+        "versioning_status": identity.get("versioning_status"),
+        "snapshot_task_id": task_id,
+    }
 
 
 def _load_names(source_root):
@@ -116,6 +151,11 @@ def _load_names(source_root):
         if isinstance(raw, list):
             names = [str(x) for x in raw]
     return names
+
+
+def _load_dataset_capability_metadata(dataset_root):
+    """读取数据集动态能力约束所需的元数据。"""
+    return load_dataset_identity_meta(dataset_root)
 
 
 def list_project_datasets(project_path):
@@ -148,11 +188,17 @@ def list_dataset_versions(project_path, dataset_name):
     if not dataset_root:
         raise ValueError("数据集不存在")
     identity = load_dataset_identity_meta(dataset_root)
+    visible_versions = [
+        item
+        for item in list_dataset_version_records(project_path, identity["dataset_id"])
+        if _is_visible_dataset_version(item)
+    ]
     return {
         "dataset_name": dataset_name,
         "dataset_id": identity["dataset_id"],
         "current_version_id": identity.get("current_version_id"),
-        "versions": [_present_dataset_version(item) for item in list_dataset_version_records(project_path, identity["dataset_id"])],
+        "versioning_status": identity.get("versioning_status"),
+        "versions": [_present_dataset_version(item) for item in visible_versions],
     }
 
 
@@ -164,7 +210,7 @@ def publish_dataset_version(project_path, dataset_name, reason="manual_publish")
         raise ValueError("数据集不存在")
     return {
         "dataset_name": dataset_name,
-        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, reason),
+        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, reason, mode="commit"),
     }
 
 
@@ -217,7 +263,11 @@ def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
     if not source_root:
         raise ValueError("源数据集不存在")
     vision_task_type = load_dataset_vision_task_type(source_root)
-    require_dataset_operation(vision_task_type, DATASET_OPERATION_CREATE_SUBSET)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_CREATE_SUBSET,
+        dataset_metadata=_load_dataset_capability_metadata(source_root),
+    )
     names = {}
     source_yaml = find_dataset_config(source_root)
     if source_yaml:
@@ -245,8 +295,71 @@ def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
         "dataset_name": new_dataset_name,
         "image_count": count,
         "dataset_root": storage_path_ref(target_root),
-        "version": _publish_dataset_version(project_path, target_root, new_dataset_name, "create_subset"),
+        "message": f"已创建子集 {new_dataset_name}，正在建立初始快照",
+        **_enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "create_subset"),
     }
+
+
+def create_empty_dataset(project_path, dataset_name, vision_task_type, initial_classes=None):
+    """创建一个空的训练数据集目录与最小元数据，不触发初始快照。
+
+    上传图片完成后由前端调用 ``/api/dataset/snapshot/start`` 触发 ``mode=add``
+    的初始快照，与 ``create_subset`` 的尾段流程一致。
+    可通过 ``initial_classes`` 传入初始类别名列表（蓝图层已 strip + 去空，业务层去重 +
+    按 ``TOKEN_NAME_PATTERN`` 校验），strategy 钩子会按任务类型决定是否需要顺带创建附属产物目录。
+    """
+    require_present(project_path=project_path, dataset_name=dataset_name, vision_task_type=vision_task_type)
+    err = validate_name(dataset_name)
+    if err:
+        raise ValueError(err)
+    target_root = get_project_dataset_dir(project_path, dataset_name)
+    if os.path.exists(target_root):
+        raise ValueError(f"数据集 {dataset_name} 已存在")
+    vision_task_type = require_dataset_vision_task_type(vision_task_type)
+    normalized_classes = _normalize_initial_class_names(initial_classes)
+    # 按系统约定的目录骨架创建 splits，确保后续 upload / snapshot 能识别。
+    for split in STANDARD_DATASET_SPLITS:
+        os.makedirs(get_dataset_images_dir(target_root, split), exist_ok=True)
+    # 写最小 dataset.yaml，并把初始分类写入 names（带分类则用 dict 形式）。
+    names_value = {idx: name for idx, name in enumerate(normalized_classes)} if normalized_classes else {}
+    save_standard_dataset_yaml(
+        target_root,
+        names=names_value,
+        vision_task_type=vision_task_type,
+        include_val=True,
+        include_test=False,
+        val_fallback_split=DATASET_SPLIT_TRAIN,
+    )
+    save_dataset_vision_task_type(target_root, vision_task_type)
+    # 通过 strategy 为初始类别创建附属产物目录（分类任务下是 split 子目录）。
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    created_class_dirs = ensure_initial_class_dirs(strategy, target_root, normalized_classes) if normalized_classes else []
+    return {
+        "dataset_name": dataset_name,
+        "dataset_root": storage_path_ref(target_root),
+        "initial_classes": normalized_classes,
+        "created_class_dirs": created_class_dirs,
+    }
+
+
+def _normalize_initial_class_names(initial_classes):
+    """对初始类别名做去重 + TOKEN_NAME_PATTERN 校验，返回保持顺序的列表。"""
+    seen = set()
+    normalized = []
+    for raw in initial_classes or []:
+        name = str(raw or "").strip()
+        if not name or name in seen:
+            continue
+        err = validate_token_name(
+            name,
+            empty_message="类别名不能为空",
+            invalid_message="类别名只能包含字母 / 数字 / _ / -，长度不能超过 64 字符",
+        )
+        if err:
+            raise ValueError(f"类别「{name}」{err}")
+        seen.add(name)
+        normalized.append(name)
+    return normalized
 
 
 def augment_subset(project_path, source_dataset, new_dataset_name, payload):
@@ -260,7 +373,11 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
     source_root = resolve_project_dataset_root(project_path, dataset_name=source_dataset)
     if not source_root:
         raise ValueError("源数据集不存在")
-    require_dataset_operation(load_dataset_vision_task_type(source_root), DATASET_OPERATION_AUGMENT_DATASET)
+    require_dataset_operation(
+        load_dataset_vision_task_type(source_root),
+        DATASET_OPERATION_AUGMENT_DATASET,
+        dataset_metadata=_load_dataset_capability_metadata(source_root),
+    )
     target_root = ""
     if not dry_run:
         target_root = get_project_dataset_dir(project_path, new_dataset_name)
@@ -286,8 +403,13 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
     )
     if not result.get("dry_run"):
         result["new_dataset_name"] = new_dataset_name
-        result["message"] = f"已创建增强子集 {new_dataset_name}：train样本 {result['output_total']} 张，目标类占比 {result['output_target_ratio']}%"
-        result["version"] = _publish_dataset_version(project_path, target_root, new_dataset_name, "augment_subset")
+        result["message"] = (
+            f"已创建增强子集 {new_dataset_name}：train样本 {result['output_total']} 张，"
+            f"目标类占比 {result['output_target_ratio']}%，正在建立初始快照"
+        )
+        result.update(
+            _enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "augment_subset")
+        )
     return result
 
 
@@ -352,7 +474,11 @@ def upload_dataset_images(project_path, dataset_name, split, files):
     require_present(project_path=project_path, dataset_name=dataset_name, files=files)
     dataset_root = get_project_dataset_dir(project_path, dataset_name)
     vision_task_type = load_dataset_vision_task_type(dataset_root)
-    require_dataset_operation(vision_task_type, DATASET_OPERATION_UPLOAD_IMAGES)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_UPLOAD_IMAGES,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
     strategy = resolve_dataset_task_strategy(vision_task_type)
     saved = strategy.upload_images(dataset_root, split, files)
     if not saved and files:
@@ -401,24 +527,67 @@ def reorder_dataset_labels_use_case(project_path, dataset_name, order, splits=No
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
-    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_REORDER_LABELS)
+    require_dataset_operation(
+        load_dataset_vision_task_type(dataset_root),
+        DATASET_OPERATION_REORDER_LABELS,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
     yaml_path = require_dataset_config_path(dataset_root)
     result = reorder_labels(dataset_root, yaml_path, order, splits=splits)
     return {"dataset_root": storage_path_ref(dataset_root), "yaml_path": storage_path_ref(yaml_path), **result}
 
 
 def delete_dataset_label_use_case(project_path, dataset_name, class_id=None, class_name=None, splits=None):
-    """解析待删类别后调用标签删除逻辑。"""
+    """解析待删类别后调用标签删除逻辑；分类任务下额外清理附属目录。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
     if class_id is None and (class_name is None or str(class_name).strip() == ""):
         raise ValueError("缺少 class_id 或 class_name")
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
-    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_DELETE_LABEL)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_DELETE_LABEL,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
     yaml_path = require_dataset_config_path(dataset_root)
     delete_id = resolve_label_id(yaml_path, class_id=class_id, class_name=class_name)
-    return delete_label(dataset_root, yaml_path, delete_id, splits=splits, delete_empty_files=True)
+    delete_result = delete_label(dataset_root, yaml_path, delete_id, splits=splits, delete_empty_files=True)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    target_name = str(class_name or "").strip() if class_name else ""
+    if target_name:
+        try:
+            dir_result = delete_label_dirs(strategy, dataset_root, target_name)
+            delete_result["class_dirs"] = dir_result
+        except ValueError:
+            # yaml 已删，但分类目录有图片，按主流程的删除结果返回即可
+            pass
+    return delete_result
+
+
+def add_dataset_label_use_case(project_path, dataset_name, label_name):
+    """向数据集中追加一个类别，并调用 strategy 处理附属产物目录。"""
+    require_present(project_path=project_path, dataset_name=dataset_name, label_name=label_name)
+    err = validate_token_name(
+        label_name,
+        empty_message="类别名不能为空",
+        invalid_message="类别名只能包含字母 / 数字 / _ / -，长度不能超过 64 字符",
+    )
+    if err:
+        raise ValueError(err)
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_ADD_LABEL,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
+    yaml_path = require_dataset_config_path(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    return add_label(dataset_root, yaml_path, label_name, strategy=strategy)
 
 
 def update_dataset_tags(project_path, dataset_name, tags):
@@ -437,7 +606,11 @@ def clear_dataset_auto_labels(project_path, dataset_name):
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
-    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_AUTO_ANNOTATE)
+    require_dataset_operation(
+        load_dataset_vision_task_type(dataset_root),
+        DATASET_OPERATION_AUTO_ANNOTATE,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
 
     deleted_files = 0
     cleared_splits = []
@@ -468,18 +641,20 @@ def delete_dataset_folder(project_path, dataset_name, dataset_path=None):
     target_path = dataset_path or get_project_dataset_dir(project_path, dataset_name)
     deleted_path = resolve_allowed_dir_path(target_path, allowed_roots=[project_path])
     dataset_identity = load_dataset_identity_meta(deleted_path)
-    training_cleanup = delete_dataset_training_state(
+    related_state_cleanup = delete_dataset_related_state(
         project_path,
         dataset_identity["dataset_id"],
         dataset_name=dataset_name,
     )
     remove_tree(deleted_path)
+    # 清理同级的 DVC 指针文件（<dataset_name>.dvc）
+    remove_file_silent(f"{deleted_path.rstrip(os.sep)}.dvc")
     removed_version_store = delete_dataset_version_store(project_path, dataset_identity["dataset_id"])
     return {
         "deleted_path": storage_path_ref(deleted_path),
         "dataset_id": dataset_identity["dataset_id"],
         "removed_version_store": storage_path_ref(removed_version_store),
-        **training_cleanup,
+        **related_state_cleanup,
     }
 
 
@@ -535,7 +710,16 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
         raise ValueError("两个数据集类别不一致，无法合并")
     if vision_task_type_a != vision_task_type_b:
         raise ValueError("两个数据集任务类型不一致，无法合并")
-    require_dataset_operation(vision_task_type_a, DATASET_OPERATION_MERGE_DATASETS)
+    require_dataset_operation(
+        vision_task_type_a,
+        DATASET_OPERATION_MERGE_DATASETS,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_a_root),
+    )
+    require_dataset_operation(
+        vision_task_type_b,
+        DATASET_OPERATION_MERGE_DATASETS,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_b_root),
+    )
     stats = merge_datasets(dataset_a_root, dataset_b_root, target_root, names_a, vision_task_type=vision_task_type_a)
     return {
         "dataset_root": storage_path_ref(target_root),
@@ -543,7 +727,8 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
         "dataset_b_root": storage_path_ref(dataset_b_root),
         "names": names_a,
         "stats": stats,
-        "version": _publish_dataset_version(project_path, target_root, new_dataset_name, "merge_dataset_pair"),
+        "message": f"已创建合并数据集 {new_dataset_name}，正在建立初始快照",
+        **_enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "merge_dataset_pair"),
     }
 
 
@@ -553,14 +738,18 @@ def split_dataset_use_case(project_path, dataset_name, val_ratio=0.1, test_ratio
     dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
     if not dataset_root:
         raise ValueError("数据集不存在")
-    require_dataset_operation(load_dataset_vision_task_type(dataset_root), DATASET_OPERATION_SPLIT_DATASET)
+    require_dataset_operation(
+        load_dataset_vision_task_type(dataset_root),
+        DATASET_OPERATION_SPLIT_DATASET,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
     if float(val_ratio) + float(test_ratio) >= 1.0:
         raise ValueError("验证集和测试集比例之和必须小于1")
     counts = split_dataset(dataset_root, float(val_ratio), float(test_ratio), rng=random.Random())
     return {
         "dataset_name": dataset_name,
         "counts": counts,
-        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, "split_dataset"),
+        "version": _publish_dataset_version(project_path, dataset_root, dataset_name, "split_dataset", mode="add"),
     }
 
 
@@ -599,7 +788,11 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
     if not dataset_root:
         raise ValueError("数据集不存在")
     vision_task_type = load_dataset_vision_task_type(dataset_root)
-    require_dataset_operation(vision_task_type, DATASET_OPERATION_DEDUPLICATE_IMAGES)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_DEDUPLICATE_IMAGES,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
 
     splits = list(STANDARD_DATASET_SPLITS)
     keep_split = str(keep_split or DATASET_SPLIT_TRAIN).strip().lower()
@@ -678,5 +871,5 @@ def deduplicate_dataset_images(project_path, dataset_name=None, dataset_path=Non
         "errors": errors[:50],
     }
     if deleted_images or deleted_labels:
-        result["version"] = _publish_dataset_version(project_path, dataset_root, dataset_name or os.path.basename(dataset_root), "deduplicate_dataset")
+        result["version"] = _publish_dataset_version(project_path, dataset_root, dataset_name or os.path.basename(dataset_root), "deduplicate_dataset", mode="commit")
     return result

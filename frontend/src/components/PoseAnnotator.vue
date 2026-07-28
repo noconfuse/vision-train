@@ -169,13 +169,13 @@
             {{ image.path }}
           </UiTooltip>
           <div class="mt-2 text-xs text-gray-500">
-            先选实例和关键点，再点击图片落点；默认保持当前关键点不跳转，按 `Tab` 切下一个。
+            先选标注对象和关键点，再点击图片落点；默认保持当前关键点不跳转，按 `Tab` 切下一个。
           </div>
           <div
             v-if="autoInstanceCount > 0"
             class="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-700"
           >
-            当前有 {{ autoInstanceCount }} 个自动标注实例，画面中会以青色虚线、青色外圈和 `AUTO` 标识显示，保存前请确认。
+            当前有 {{ autoInstanceCount }} 个自动标注对象，画面中会以青色虚线、青色外圈和 `AUTO` 标识显示，保存前请确认。
           </div>
         </div>
 
@@ -313,7 +313,7 @@
             class="vt-btn-danger vt-btn-size-lg w-full justify-center"
           >
             <AppIcon name="delete" class="h-4 w-4" />
-            删除当前实例 (Shift+Delete)
+            删除当前标注对象 (Shift+Delete)
           </button>
 
           <AsyncButton
@@ -659,7 +659,7 @@ const getKeypointByIndex = (index = selectedKeypointIdx.value) => {
 
 const getInstanceTitle = (instance, index) => {
   if (!hasMultipleClasses.value) {
-    return `实例 #${index + 1}`;
+    return `对象 #${index + 1}`;
   }
   return `${getClassName(instance?.class)} #${index + 1}`;
 };
