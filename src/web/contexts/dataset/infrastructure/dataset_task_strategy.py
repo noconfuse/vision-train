@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import tempfile
 
 from constants.media import IMAGE_FILE_EXTENSIONS
 from contexts.dataset.infrastructure.dataset_layout import (
@@ -23,14 +24,66 @@ from protocols.vision_task_type import (
     VISION_TASK_TYPE_POSE,
     VISION_TASK_TYPE_SEGMENT,
 )
-from shared.utils.fs_utils import allocate_nonconflicting_path, is_within_path, remove_dir_if_empty, remove_file_silent, resolve_safe_child_path
+from shared.utils.fs_utils import allocate_nonconflicting_path, is_system_hidden_file, is_within_path, remove_dir_if_empty, remove_file_silent, resolve_safe_child_path
 from shared.utils.path_utils import resolve_relative_child_path, resolve_storage_path, validate_filename
+from shared.utils.zip_utils import split_archive_filename, safe_extract_archive
 
 
 class BaseDatasetTaskStrategy:
     """定义数据集任务类型策略基类。"""
 
     vision_task_type = ""
+
+    def _save_upload_payload(self, target_dir, files):
+        """把上传的图片 / 压缩包保存到 ``target_dir``，返回已保存文件路径列表。
+
+        单张图片：直接保存。压缩包（zip/tar/tar.gz/tgz）：安全解压后递归
+        抽取所有支持后缀的图片复制到 ``target_dir``。
+
+        跳过 macOS 资源分叉 ``._*`` 与常见的系统隐藏文件（``Thumbs.db`` 等），
+        避免它们被当成普通图片入库、后续在前端展示时呈现为坏图。
+        """
+        os.makedirs(target_dir, exist_ok=True)
+        saved = []
+        for file in files:
+            try:
+                split_archive_filename(file.filename)
+            except ValueError:
+                if is_system_hidden_file(file.filename):
+                    continue
+                try:
+                    filename = validate_filename(
+                        file.filename,
+                        allowed_extensions=IMAGE_FILE_EXTENSIONS,
+                        field_name="图片名",
+                    )
+                except ValueError:
+                    continue
+                dst = allocate_nonconflicting_path(os.path.join(target_dir, filename))
+                file.save(dst)
+                saved.append(dst)
+                continue
+
+            with tempfile.TemporaryDirectory() as staging:
+                staging_zip = os.path.join(staging, "_archive")
+                file.save(staging_zip)
+                extract_dir = os.path.join(staging, "extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+                try:
+                    safe_extract_archive(staging_zip, extract_dir, original_name=file.filename)
+                except Exception:
+                    continue
+                for sub_root, _dirs, sub_files in os.walk(extract_dir):
+                    for name in sub_files:
+                        if is_system_hidden_file(name):
+                            continue
+                        if not name.lower().endswith(IMAGE_FILE_EXTENSIONS):
+                            continue
+                        src = os.path.join(sub_root, name)
+                        dst = allocate_nonconflicting_path(os.path.join(target_dir, name))
+                        shutil.copyfile(src, dst)
+                        saved.append(dst)
+        return saved
 
     def copy_subset_sample(self, *_args, **_kwargs):
         """把一张样本复制到新子集，返回是否复制成功。"""
@@ -63,6 +116,25 @@ class BaseDatasetTaskStrategy:
     def resolve_deduplicate_label_paths(self, dataset_root, split, rel_noext):
         """返回去重时需要一并清理的关联标签文件列表。"""
         return [os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel_noext))]
+
+    def ensure_label_dirs(self, _dataset_root, _label_name):
+        """新增分类时按需创建附属产物目录（如分类任务的 split 类别子目录）。
+
+        默认实现为 no-op：检测/分割/姿态任务仅在 ``dataset.yaml`` 中维护 ``names``，
+        不会因新增分类在文件系统里产生额外产物。
+        """
+        return []
+
+    def remove_label_dirs(self, _dataset_root, _label_name):
+        """删除分类时按需清理附属产物目录。
+
+        返回 ``{"removed_dirs": [...], "skipped_dirs": [...]}``：
+        ``removed_dirs`` 是实际删除的目录；``skipped_dirs`` 记录因仍有内容等原因
+        被跳过的目录（如分类任务下该类还有未迁移图片，删除会被拒绝）。
+
+        默认 no-op。
+        """
+        return {"removed_dirs": [], "skipped_dirs": []}
 
     def build_dataset_summary_metadata(self, _dataset_root, _data_config):
         """返回任务专属的数据集摘要元信息。"""
@@ -165,22 +237,7 @@ class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
 
     def upload_images(self, dataset_root, split, files):
         """把上传图片保存到检测数据集的 images 目录。"""
-        target_dir = get_dataset_images_dir(dataset_root, split)
-        os.makedirs(target_dir, exist_ok=True)
-        saved = []
-        for file in files:
-            try:
-                filename = validate_filename(
-                    file.filename,
-                    allowed_extensions=IMAGE_FILE_EXTENSIONS,
-                    field_name="图片名",
-                )
-            except ValueError:
-                continue
-            dst = allocate_nonconflicting_path(os.path.join(target_dir, filename))
-            file.save(dst)
-            saved.append(dst)
-        return saved
+        return self._save_upload_payload(get_dataset_images_dir(dataset_root, split), files)
 
     def iter_list_image_paths(self, dataset_root, split, unannotated=False, has_auto_label=False):
         """检测列表总是从 split/images 目录读取。"""
@@ -324,22 +381,7 @@ class ClassifyDatasetTaskStrategy(BaseDatasetTaskStrategy):
 
     def upload_images(self, dataset_root, split, files):
         """把分类图片上传到按 split 分层的未标注工作区。"""
-        target_dir = get_dataset_unlabeled_dir(dataset_root, split)
-        os.makedirs(target_dir, exist_ok=True)
-        saved = []
-        for file in files:
-            try:
-                filename = validate_filename(
-                    file.filename,
-                    allowed_extensions=IMAGE_FILE_EXTENSIONS,
-                    field_name="图片名",
-                )
-            except ValueError:
-                continue
-            dst = allocate_nonconflicting_path(os.path.join(target_dir, filename))
-            file.save(dst)
-            saved.append(dst)
-        return saved
+        return self._save_upload_payload(get_dataset_unlabeled_dir(dataset_root, split), files)
 
     def iter_list_image_paths(self, dataset_root, split, unannotated=False, has_auto_label=False):
         """分类列表默认同时展示已标注与未标注图片，筛选时优先收窄到未标注工作区。"""
@@ -405,6 +447,43 @@ class ClassifyDatasetTaskStrategy(BaseDatasetTaskStrategy):
                 break
             current_dir = parent_dir
         return True
+
+    def ensure_label_dirs(self, dataset_root, label_name):
+        """分类任务下，为新类别在 train/val split 中创建同名空子目录。"""
+        safe_name = validate_leaf_name(label_name, field_name="类别名")
+        created_dirs = []
+        for split in (DATASET_SPLIT_TRAIN, DATASET_SPLIT_VAL):
+            split_dir = os.path.join(get_dataset_split_dir(dataset_root, split), safe_name)
+            if not os.path.isdir(split_dir):
+                os.makedirs(split_dir, exist_ok=True)
+                created_dirs.append(split_dir)
+        return created_dirs
+
+    def remove_label_dirs(self, dataset_root, label_name):
+        """分类任务下，尝试删除该类别在 train/val 中的子目录；非空则跳过并汇总。"""
+        safe_name = validate_leaf_name(label_name, field_name="类别名")
+        removed_dirs = []
+        skipped_dirs = []
+        for split in (DATASET_SPLIT_TRAIN, DATASET_SPLIT_VAL):
+            split_dir = os.path.join(get_dataset_split_dir(dataset_root, split), safe_name)
+            if not os.path.isdir(split_dir):
+                continue
+            try:
+                entries = os.listdir(split_dir)
+            except Exception:
+                skipped_dirs.append(split_dir)
+                continue
+            if entries:
+                skipped_dirs.append(split_dir)
+                continue
+            try:
+                os.rmdir(split_dir)
+                removed_dirs.append(split_dir)
+            except Exception:
+                skipped_dirs.append(split_dir)
+        if not removed_dirs and skipped_dirs:
+            raise ValueError(f"类别「{label_name}」下仍有图片或文件，请先清理后再删除")
+        return {"removed_dirs": removed_dirs, "skipped_dirs": skipped_dirs}
 
 
 class SegmentDatasetTaskStrategy(DetectDatasetTaskStrategy):

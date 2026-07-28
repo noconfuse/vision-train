@@ -177,9 +177,7 @@
                   {{ isCreatingWorkflow ? '已进入配置' : '开始训练流程' }}
                 </span>
               </button>
-              <div class="mt-1 px-0.5 text-[11px] text-slate-400">
-                新流程从训练配置开始，不影响已有记录。
-              </div>
+              
             </div>
             <div v-if="workflowsLoading" class="text-xs text-gray-400 py-4 text-center">加载中...</div>
             <div v-else class="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
@@ -285,7 +283,7 @@
                 </UiTooltip>
                 <div class="mt-2">
                   <span class="text-xs text-gray-500">当前版本</span>
-                  <div class="font-mono text-[11px] text-slate-700 break-all mt-0.5">{{ dataset.current_version_id || '-' }}</div>
+                  <div class="font-mono text-[11px] text-slate-700 break-all mt-0.5">{{ currentVersionDisplay }}</div>
                 </div>
               </div>
             </div>
@@ -361,13 +359,13 @@ import AppHeader from '../components/AppHeader.vue';
 import AppIcon from '../components/ui/AppIcon.vue';
 import AsyncButton from '../components/ui/AsyncButton.vue';
 import UiTooltip from '../components/ui/Tooltip.vue';
-import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../datasetType';
-import { TASK_STATUS, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted, isTaskTerminal } from '../taskStatus';
-import { isTrainingTask } from '../taskType';
+import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../domain/dataset/datasetType';
+import { TASK_STATUS, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted, isTaskTerminal } from '../domain/task/taskStatus';
+import { isTrainingTask } from '../domain/task/taskType';
 import { formatDateTime } from '../utils';
 import { WORKFLOW_STEP, normalizeWorkflowStep } from '../utils/trainingWorkflow';
 import { useAsyncAction } from '../composables/useAsyncAction';
-import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
+import { resolveTrainingDatasetGuard } from '../utils/trainingActionGuards';
 
 const route = useRoute();
 const router = useRouter();
@@ -389,6 +387,12 @@ const dataset = computed(() => {
 });
 const datasetName = computed(() => dataset.value?.name || routeDatasetName.value);
 const trainingGuard = computed(() => resolveTrainingDatasetGuard(dataset.value));
+const currentVersionDisplay = computed(() => {
+  if (dataset.value?.current_version_id) return dataset.value.current_version_id;
+  if (dataset.value?.versioning_status === 'pending') return '首版快照中';
+  if (dataset.value?.versioning_status === 'failed') return '首版快照失败';
+  return '-';
+});
 
 const loadError = ref('');
 const loading = ref(true);
@@ -843,7 +847,12 @@ trainingStore.fetchCurrentTask().then(() => {
   }
 });
 
+// 立即刷新项目 + 绑定版本状态轮询，确保 versioning_status 等快照状态是最新的
+store.refreshKeepSelection();
+store.ensureVersioningPoll();
+
 onBeforeUnmount(() => {
   trainingStore.stopCurrentTaskPolling();
+  store.stopVersioningPoll();
 });
 </script>

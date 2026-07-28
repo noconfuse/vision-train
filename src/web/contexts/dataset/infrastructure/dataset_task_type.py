@@ -8,6 +8,9 @@ from shared.utils.time_utils import now_iso
 from protocols.vision_task_type import VISION_TASK_TYPE_SET
 
 DATASET_TASK_META_FILENAME = ".vision-train.meta.json"
+DATASET_VERSIONING_STATUS_PENDING = "pending"
+DATASET_VERSIONING_STATUS_READY = "ready"
+DATASET_VERSIONING_STATUS_FAILED = "failed"
 
 
 def get_dataset_task_meta_path(dataset_root):
@@ -82,9 +85,14 @@ def load_dataset_identity_meta(dataset_root):
     dataset_id = str(meta.get("dataset_id") or "").strip()
     if not dataset_id:
         raise ValueError("数据集缺少稳定 dataset_id")
+    current_version_id = str(meta.get("current_version_id") or "").strip() or None
+    versioning_status = str(meta.get("versioning_status") or "").strip() or None
+    if current_version_id:
+        versioning_status = DATASET_VERSIONING_STATUS_READY
     return {
         "dataset_id": dataset_id,
-        "current_version_id": str(meta.get("current_version_id") or "").strip() or None,
+        "current_version_id": current_version_id,
+        "versioning_status": versioning_status,
         "created_at": meta.get("created_at"),
         "updated_at": meta.get("updated_at"),
         "vision_task_type": meta.get("vision_task_type"),

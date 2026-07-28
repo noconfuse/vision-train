@@ -598,6 +598,7 @@ html, body, #app {
   border-color: var(--vt-color-tertiary-border);
   background: white;
   color: var(--vt-color-tertiary);
+  cursor: pointer;
 }
 .vt-chip:hover {
   border-color: var(--vt-color-primary-border);

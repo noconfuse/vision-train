@@ -5,6 +5,24 @@ import os
 import shutil
 
 
+_SYSTEM_HIDDEN_BASENAMES = frozenset({".ds_store", "thumbs.db", "desktop.ini"})
+
+
+def is_system_hidden_file(name):
+    """判断文件名是否属于系统隐藏文件（macOS AppleDouble / Windows 元数据等）。
+
+    典型场景：用户在 macOS 上传的 zip 压缩包内会包含 ``._xxx.jpg`` 资源分叉
+    文件（每个真图伴随一个 212 B 的元数据），如果不识别并跳过，这些文件会被
+    当成普通图片入库、最终在前端展示为坏图。
+    """
+    if not name:
+        return False
+    base = os.path.basename(name)
+    if base.startswith("._"):
+        return True
+    return base.lower() in _SYSTEM_HIDDEN_BASENAMES
+
+
 def is_within_path(path, root):
     """判断路径是否位于指定根目录内部。"""
     if not path or not root:

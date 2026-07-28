@@ -6,6 +6,7 @@ import traceback
 
 from contexts.task.domain.task_types import (
     TASK_TYPE_BATCH_CALIBRATION,
+    TASK_TYPE_DATASET_SNAPSHOT,
     TASK_TYPE_EVALUATE,
     TASK_TYPE_EXPORT,
     TASK_TYPE_FRAME_EXTRACTION,
@@ -23,6 +24,7 @@ from contexts.training.infrastructure.execution_runners import (
 )
 from contexts.training.infrastructure.template_task_gateway import execute_template_task
 from contexts.video.infrastructure.video_execution_gateway import execute_extraction_task
+from contexts.dataset.infrastructure.dataset_snapshot_worker import execute_dataset_snapshot_task
 
 
 def _stderr(message):
@@ -56,6 +58,7 @@ def main():
         TASK_TYPE_INFERENCE: execute_inference_task,
         TASK_TYPE_FRAME_EXTRACTION: execute_extraction_task,
         TASK_TYPE_TEMPLATE: execute_template_task,
+        TASK_TYPE_DATASET_SNAPSHOT: execute_dataset_snapshot_task,
     }
     handler = dispatch.get(task_type)
     if not handler:

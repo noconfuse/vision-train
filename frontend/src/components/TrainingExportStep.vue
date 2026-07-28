@@ -218,17 +218,17 @@ import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { useConfirm } from '../composables/useConfirm';
 import { useToast } from '../composables/useToast';
-import { assertCapabilityGuard } from '../capabilityGuards';
+import { assertCapabilityGuard } from '../utils/capabilityGuards';
 import AsyncButton from './ui/AsyncButton.vue';
 import AppIcon from './ui/AppIcon.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { useTrainingStore } from '../stores/training';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
-import { resolveTrainingExportProfile } from '../trainingExportProfile';
+import { resolveTrainingExportProfile } from '../utils/trainingExportProfile';
 import {
   resolveExportDeleteGuard,
   resolveExportStartGuard,
-} from '../trainingActionGuards';
+} from '../utils/trainingActionGuards';
 import {
   formatBytes,
   formatDateTime,
@@ -242,7 +242,7 @@ import {
   getTaskStatusLabel,
   getTaskStatusTagClass,
   isTaskActive,
-} from '../taskStatus';
+} from '../domain/task/taskStatus';
 
 const props = defineProps({
   projectPath: { type: String, required: true },

@@ -14,7 +14,7 @@ import VideoUploadModal from './VideoUploadModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
-import { TASK_STATUS, getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../taskStatus';
+import { TASK_STATUS, getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../domain/task/taskStatus';
 
 const store = useMainStore();
 const router = useRouter();

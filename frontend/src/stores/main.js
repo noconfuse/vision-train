@@ -21,6 +21,11 @@ export const handleStoreError = (err, state, opts = {}) => {
   return null;
 };
 
+// 版本状态轮询：全局仅一个 timer，引用计数管理启停
+let _versionPollTimer = null;
+let _versionPollCount = 0;
+const VERSION_POLL_INTERVAL_MS = 8000;
+
 export const useMainStore = defineStore('main', {
   state: () => ({
     projects: [],
@@ -194,6 +199,41 @@ export const useMainStore = defineStore('main', {
 
     selectDataset(dataset) {
       this.selectedDataset = dataset;
+    },
+
+    /** 拉取项目列表 + 保持 currentProject / selectedDataset 引用最新 */
+    async refreshKeepSelection() {
+      const selectedPath = this.selectedDataset?.path;
+      await this.fetchProjects({ silent: true });
+      if (this.currentProject && selectedPath) {
+        this.selectedDataset = (this.currentProject.datasets || []).find(d => d.path === selectedPath) || null;
+      } else {
+        this.selectedDataset = null;
+      }
+    },
+
+    /** 启动版本状态轮询（引用计数，幂等） */
+    ensureVersioningPoll() {
+      _versionPollCount++;
+      if (_versionPollTimer) return;
+      _versionPollTimer = setInterval(async () => {
+        if (!this.currentProject) return;
+        const hasPending = (this.currentProject.datasets || []).some(
+          (ds) => ds.versioning_status === 'pending'
+        );
+        if (!hasPending) return;
+        await this.refreshKeepSelection();
+      }, VERSION_POLL_INTERVAL_MS);
+    },
+
+    /** 停止版本状态轮询（引用计数归零才停） */
+    stopVersioningPoll() {
+      _versionPollCount = Math.max(0, _versionPollCount - 1);
+      if (_versionPollCount > 0) return;
+      if (_versionPollTimer) {
+        clearInterval(_versionPollTimer);
+        _versionPollTimer = null;
+      }
     },
   }
 });

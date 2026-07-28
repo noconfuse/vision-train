@@ -3,6 +3,7 @@
 from app.file_blueprint import bp as file_bp
 from contexts.auth.api.blueprint import bp as auth_bp
 from contexts.dataset.api.blueprint import bp as dataset_bp
+from contexts.dataset.api.snapshot_blueprint import bp as dataset_snapshot_bp
 from contexts.model.api.blueprint import bp as model_bp
 from contexts.project.api.blueprint import bp as project_bp
 from contexts.task.api.blueprint import bp as task_bp
@@ -16,6 +17,7 @@ def register_blueprints(app):
     app.register_blueprint(file_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dataset_bp)
+    app.register_blueprint(dataset_snapshot_bp)
     app.register_blueprint(model_bp)
     app.register_blueprint(project_bp)
     app.register_blueprint(annotation_bp)

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import api from '../api';
-import { isTaskActive } from '../taskStatus';
+import { isTaskActive } from '../domain/task/taskStatus';
 import { handleStoreError } from './main';
 
 let currentTaskPollingTimer = null;

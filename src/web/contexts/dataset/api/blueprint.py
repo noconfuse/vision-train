@@ -4,9 +4,11 @@ from flask import Blueprint, Response, stream_with_context
 
 from app.http import form_body_endpoint, json_body_endpoint, json_error_response, param, query_params, query_params_endpoint
 from contexts.dataset.application.use_cases import (
+    add_dataset_label_use_case,
     augment_subset,
     batch_delete_dataset_images,
     clear_dataset_auto_labels,
+    create_empty_dataset,
     create_import_upload_job,
     create_subset,
     deduplicate_dataset_images,
@@ -55,6 +57,29 @@ bp.add_url_rule(
         source_dataset=param("source_dataset", required=True),
         new_dataset_name=param("new_dataset_name", required=True),
         image_paths=param("image_paths", default=list),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/create_empty",
+    view_func=json_body_endpoint(
+        create_empty_dataset,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True, transform=lambda value: str(value).strip()),
+        vision_task_type=param(
+            "vision_task_type",
+            required=True,
+            transform=lambda value: require_allowed_text(
+                value,
+                allowed_values=VISION_TASK_TYPE_SET,
+                field_name="vision_task_type",
+            ),
+        ),
+        initial_classes=param(
+            "initial_classes",
+            default=list,
+            transform=lambda value: [str(item).strip() for item in (value or []) if str(item or "").strip()],
+        ),
     ),
     methods=["POST"],
 )
@@ -177,6 +202,16 @@ bp.add_url_rule(
         class_id=param("class_id"),
         class_name=param("class_name"),
         splits=param("splits"),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/add_label",
+    view_func=json_body_endpoint(
+        add_dataset_label_use_case,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True, transform=lambda value: str(value).strip()),
+        label_name=param("label_name", required=True, transform=lambda value: str(value).strip()),
     ),
     methods=["POST"],
 )

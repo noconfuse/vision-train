@@ -356,9 +356,9 @@ import { useDatasetCapabilities } from '../composables/useDatasetCapabilities';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
-import { getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted } from '../taskStatus';
+import { getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted } from '../domain/task/taskStatus';
 import { formatBytes } from '../utils';
-import { resolveBatchCalibrationGuard, resolveTrainingModelGuard, resolveTrainingStartGuard } from '../trainingActionGuards';
+import { resolveBatchCalibrationGuard, resolveTrainingModelGuard, resolveTrainingStartGuard } from '../utils/trainingActionGuards';
 
 const props = defineProps({
   workflowId: { type: String, default: '' },

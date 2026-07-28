@@ -15,7 +15,9 @@ from contexts.dataset.infrastructure.dataset_import_runtime import (
     get_import_job,
 )
 from contexts.dataset.infrastructure.dataset_task_type import save_dataset_vision_task_type
-from contexts.dataset.infrastructure.dataset_versioning import create_dataset_version_snapshot
+from contexts.dataset.infrastructure.dataset_versioning import (
+    start_snapshot_job,
+)
 from contexts.project.infrastructure.project_paths import (
     get_project_dataset_dir,
 )
@@ -69,8 +71,8 @@ def run_import_job(job_id, progress_lock):
             import_strategy.import_detected_format(source_format, dataset_root, dest, job, progress_lock)
 
             save_dataset_vision_task_type(dest, vision_task_type)
-            create_dataset_version_snapshot(abs_project, dest, dataset_name=dataset_name, reason="import")
-            emit_import_event(job_id, phase="saving", progress=95, message="完成落盘")
+            emit_import_event(job_id, phase="saving", progress=95, message="落盘完成，准备初始快照入库")
+            start_snapshot_job(abs_project, dest, dataset_name=dataset_name, mode="add", reason="import")
 
             new_dataset = get_project_dataset_summary(project_path, dataset_name)
 

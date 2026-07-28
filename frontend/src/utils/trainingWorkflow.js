@@ -1,4 +1,4 @@
-import { TASK_TYPE } from '../taskType';
+import { TASK_TYPE } from '../domain/task/taskType';
 
 export const WORKFLOW_STEP = Object.freeze({
   CONFIG: 'config',

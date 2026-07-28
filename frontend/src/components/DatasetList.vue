@@ -5,14 +5,30 @@
       <h2 class="text-sm font-semibold text-slate-800">
         数据集列表 <span class="text-xs text-gray-400 font-normal">({{ allDatasets.length }})</span>
       </h2>
-      <button
-        @click="openImportDatasetModal"
-        class="vt-btn-solid-primary vt-btn-size-md"
-      >
-        <AppIcon name="download" class="h-4 w-4" />
-        <span>导入数据集</span>
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="openCreateDatasetModal"
+          class="vt-btn-solid-primary vt-btn-size-md"
+        >
+          <AppIcon name="plus" class="h-4 w-4" />
+          <span>新建数据集</span>
+        </button>
+        <button
+          @click="openImportDatasetModal"
+          class="vt-btn-secondary vt-btn-size-md"
+        >
+          <AppIcon name="download" class="h-4 w-4" />
+          <span>导入数据集</span>
+        </button>
+      </div>
     </div>
+
+    <CreateDatasetModal
+      v-if="showCreateModal"
+      :project="store.currentProject"
+      @close="closeCreateModal"
+      @submit="handleCreateDataset"
+    />
 
     <ImportDatasetModal
       v-if="showImportModal"
@@ -53,12 +69,22 @@
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 min-w-0">
                     <span class="truncate text-sm font-medium text-slate-800">{{ ds.name }}</span>
+                    <span
+                      v-if="getDatasetVersioningTagLabel(ds)"
+                      class="vt-tag vt-tag--sm"
+                      :class="getDatasetVersioningTagClass(ds)"
+                    >
+                      {{ getDatasetVersioningTagLabel(ds) }}
+                    </span>
                     <span v-if="ds.tags && ds.tags.length > 0" class="truncate text-[11px] text-gray-500">
                       <span v-for="(tag, i) in ds.tags.slice(0, 3)" :key="tag">
                         <span v-if="i > 0" class="mx-0.5 text-gray-300">·</span>#{{ tag }}
                       </span>
                       <span v-if="ds.tags.length > 3" class="text-gray-400">+{{ ds.tags.length - 3 }}</span>
                     </span>
+                  </div>
+                  <div v-if="getDatasetVersioningHint(ds)" class="mt-1 text-[11px] text-slate-500">
+                    {{ getDatasetVersioningHint(ds) }}
                   </div>
                 </div>
               </td>
@@ -232,19 +258,43 @@
             <div class="mt-1 font-mono text-[11px] text-gray-400 break-all">
               <span>ID {{ versionsDataset.dataset_id || '-' }}</span>
               <span class="mx-1 text-gray-300">·</span>
-              <span>当前 {{ versionsDataset.current_version_id || '-' }}</span>
+              <span>当前 {{ getCurrentVersionDisplay(versionsDataset) }}</span>
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <button
+              v-if="snapshotTask"
+              class="vt-btn-link"
+              type="button"
+              @click="goToSnapshotTask"
+            >
+              查看任务中心
+            </button>
             <AsyncButton
               class="vt-btn-solid-primary vt-btn-size-md"
               :pending="isActionPending(PUBLISH_VERSION_ACTION_KEY)"
+              :disabled="isSnapshotInFlight"
               loading-text="发布中..."
               @click="publishVersion"
             >
               发布当前版本
             </AsyncButton>
-            <button class="vt-btn-link" @click="closeVersions">关闭</button>
+            <button class="vt-modal-close" aria-label="关闭版本管理弹窗" @click="closeVersions">
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div v-if="snapshotTask" class="mb-4 vt-note" :class="snapshotBannerClass">
+          <div class="flex items-center gap-2">
+            <span class="vt-tag vt-tag--sm" :class="getTaskStatusTagClass(snapshotTask)">{{ getTaskStatusLabel(snapshotTask) }}</span>
+            <span class="text-xs">{{ snapshotTask.message || '快照进行中...' }}</span>
+          </div>
+          <div v-if="snapshotProgressTotal > 0" class="mt-2 vt-meter h-2 border border-gray-200">
+            <div class="vt-meter__bar" :class="getTaskProgressBarClass(snapshotTask)" :style="{ width: `${snapshotProgress}%` }"></div>
+          </div>
+          <div v-if="snapshotProgressTotal > 0" class="mt-1 text-[11px] text-slate-500">
+            {{ snapshotProgress }}% · 已处理 {{ snapshotTask.artifacts?.snapshot_processed || 0 }} / {{ snapshotProgressTotal }}
           </div>
         </div>
 
@@ -271,13 +321,13 @@
                   来源 {{ version.source_version_id }}
                 </div>
               </div>
-              <div class="shrink-0">
+              <div class="shrink-0 flex items-center gap-2">
                 <UiTooltip v-if="version.version_id !== versionsDataset.current_version_id" side="top" align="end">
                   <template #trigger>
-                    <span class="inline-block" :class="isRestoreRedundant(version) ? 'cursor-not-allowed' : ''">
+                    <span class="inline-block" :class="isRestoreRedundant(version) || isSnapshotInFlight ? 'cursor-not-allowed' : ''">
                       <AsyncButton
                         class="vt-btn-secondary vt-btn-size-sm"
-                        :disabled="isRestoreRedundant(version)"
+                        :disabled="isRestoreRedundant(version) || isSnapshotInFlight"
                         :pending="isActionPending(restoreVersionActionKey(version.version_id))"
                         loading-text="恢复中..."
                         @click="restoreVersion(version)"
@@ -287,6 +337,8 @@
                     </span>
                   </template>
                   <template v-if="isRestoreRedundant(version)">当前已是该版本的恢复结果</template>
+                  <template v-else-if="isSnapshotInFlight">请等待当前快照任务完成</template>
+                  <template v-else>将该版本恢复为当前工作数据集</template>
                 </UiTooltip>
               </div>
             </div>
@@ -320,8 +372,8 @@
 
 <script setup>
 import { useMainStore } from '../stores/main';
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import api from '../api';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { useToast } from '../composables/useToast';
@@ -329,7 +381,9 @@ import { useApiCall } from '../composables/useApiCall';
 import { useConfirm } from '../composables/useConfirm';
 import { useDatasets } from '../composables/useDatasets';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
+import { useDatasetSnapshotStore } from '../stores/datasetSnapshot';
 import ImportDatasetModal from './ImportDatasetModal.vue';
+import CreateDatasetModal from './CreateDatasetModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
@@ -337,15 +391,18 @@ import {
   getDatasetTypeLabel,
   getDatasetTypeProgressClass,
   getDatasetTypeTagClass,
-} from '../datasetType';
-import { DATASET_OPERATION, resolveDatasetOperationGuard } from '../datasetCapabilities';
-import { assertCapabilityGuard } from '../capabilityGuards';
-import { resolveTrainingDatasetGuard } from '../trainingActionGuards';
+} from '../domain/dataset/datasetType';
+import { DATASET_OPERATION, resolveDatasetOperationGuard } from '../utils/datasetCapabilities';
+import { assertCapabilityGuard } from '../utils/capabilityGuards';
+import { resolveTrainingDatasetGuard } from '../utils/trainingActionGuards';
 import { buildDatasetZipFilename, formatDateTime, triggerBlobDownload } from '../utils';
+import { getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, getTaskTerminalSummaryClass, isTaskActive } from '../domain/task/taskStatus';
 
 const store = useMainStore();
 const workflowStore = useTrainingWorkflowStore();
+const snapshotStore = useDatasetSnapshotStore();
 const router = useRouter();
+const route = useRoute();
 const toast = useToast();
 const { confirm: showConfirm } = useConfirm();
 const apiCall = useApiCall();
@@ -370,6 +427,103 @@ const openDataset = (ds) => {
     query: {
       dataset_id: ds.dataset_id || '',
     },
+  });
+};
+
+// 新建数据集弹窗
+const showCreateModal = ref(false);
+const openCreateDatasetModal = () => { showCreateModal.value = true; };
+const closeCreateModal = () => { showCreateModal.value = false; };
+
+const handleCreateDataset = async ({ datasetName, visionTaskType, initialClasses, files, projectPath, onProgress, onDone }) => {
+  try {
+    // 1) 建空目录（分类任务下传 initial_classes 一次性创建空分类目录）
+    onProgress && onProgress({ phase: 'creating', progress: 5, message: '正在创建数据集目录…' });
+    const created = await api.createEmptyDataset({
+      project_path: projectPath,
+      dataset_name: datasetName,
+      vision_task_type: visionTaskType,
+      initial_classes: Array.isArray(initialClasses) ? initialClasses : [],
+    });
+    onProgress && onProgress({ phase: 'creating', progress: 15, message: '目录已创建' });
+
+    // 2) 上传图片（如有）
+    if (Array.isArray(files) && files.length > 0) {
+      const fd = new FormData();
+      fd.append('project_path', projectPath);
+      fd.append('dataset_name', datasetName);
+      fd.append('split', 'train');
+      for (const f of files) fd.append('files', f, f.name);
+      onProgress && onProgress({ phase: 'uploading', progress: 20, message: '正在上传图片…' });
+      await api.uploadDatasetImages(fd, (pct) => {
+        // 整个上传阶段占 20~80 进度区间。
+        const mapped = 20 + Math.round(pct * 0.6);
+        onProgress && onProgress({ phase: 'uploading', progress: mapped, message: `上传中 ${pct}%` });
+      });
+      onProgress && onProgress({ phase: 'uploading', progress: 80, message: '上传完成' });
+    } else {
+      onProgress && onProgress({ phase: 'uploading', progress: 80, message: '跳过上传' });
+    }
+
+    // 3) 触发初始快照入库
+    onProgress && onProgress({ phase: 'snapshot', progress: 85, message: '正在建立初始快照…' });
+    const datasetRoot = created?.dataset_root || `${projectPath}/training/${datasetName}`;
+    const snap = await api.startDatasetSnapshot({
+      project_path: projectPath,
+      dataset_root: datasetRoot,
+      dataset_name: datasetName,
+      mode: 'add',
+      reason: 'create_empty',
+    });
+    const taskId = snap?.task_id;
+    if (taskId) {
+      await waitForSnapshot(taskId, datasetName, (state) => {
+        if (state.status === 'completed') {
+          onProgress && onProgress({ phase: 'snapshot', progress: 100, message: '快照完成' });
+        } else if (state.status === 'failed' || state.status === 'stopped') {
+          throw new Error(state.message || '快照任务失败');
+        } else if (state.message) {
+          onProgress && onProgress({ phase: 'snapshot', message: state.message });
+        }
+      });
+    }
+    toast.success(`数据集「${datasetName}」已创建`);
+    await store.refreshKeepSelection();
+    onDone && onDone();
+  } catch (e) {
+    toast.error(`创建失败: ${e?.message || e}`);
+    onDone && onDone(e);
+  }
+};
+
+const waitForSnapshot = (taskId, datasetName, onState) => {
+  // 简单轮询：等到 completed/failed/stopped 才 resolve；其他异常走 reject。
+  return new Promise((resolve, reject) => {
+    let stopped = false;
+    const poll = async () => {
+      if (stopped) return;
+      try {
+        const task = await api.getTask(taskId);
+        if (!task) {
+          setTimeout(poll, 2000);
+          return;
+        }
+        onState && onState(task);
+        if (task.status === 'completed') {
+          stopped = true;
+          resolve(task);
+        } else if (task.status === 'failed' || task.status === 'stopped' || task.status === 'interrupted') {
+          stopped = true;
+          resolve(task);
+        } else {
+          setTimeout(poll, 2000);
+        }
+      } catch (e) {
+        stopped = true;
+        reject(e);
+      }
+    };
+    poll();
   });
 };
 
@@ -402,6 +556,7 @@ const newTag = ref('');
 const versionsDataset = ref(null);
 const versionsLoading = ref(false);
 const versionRecords = ref([]);
+const snapshotRefreshPending = ref(false);
 
 const deleteDataset = ref(null);
 
@@ -414,6 +569,15 @@ const isTrainingSupported = (dataset) => getTrainingGuard(dataset).enabled;
 const isSplitSupported = (dataset) => getSplitGuard(dataset).enabled;
 const formatVersionTime = (value) => formatDateTime(value, { dateStyle: 'compact', timeStyle: 'short' });
 const restoreVersionActionKey = (versionId) => `dataset-list:restore-version:${String(versionId || '')}`;
+
+// 数据集版本就绪状态：写在与 ``.vision-train.meta.json`` 同文件里的衍生字段，
+// 用于判断数据集是否已经产生过至少一个可用快照。和任务状态（TASK_STATUS_*）无关。
+const DATASET_VERSIONING_STATUS = Object.freeze({
+  PENDING: 'pending', // 首个快照入库中
+  READY:   'ready',   // 有 current_version_id 可用
+  FAILED:  'failed',  // 首个快照失败
+});
+
 const VERSION_REASON_LABELS = Object.freeze({
   bootstrap: '初始化',
   import: '导入',
@@ -424,8 +588,42 @@ const VERSION_REASON_LABELS = Object.freeze({
   merge_dataset_pair: '合并数据集',
   split_dataset: '重切分',
   deduplicate_dataset: '图片去重',
+  create_empty: '新建数据集',
 });
+
 const getVersionReasonLabel = (reason) => VERSION_REASON_LABELS[String(reason || '').trim()] || String(reason || '未知变更');
+
+// 根据数据集的就绪状态汇总出 UI 展示文案 / tag class / hint，
+// 统一避免分散的 if-chain；数据集已有 current_version_id 时按 ready 处理。
+const VERSIONING_PRESENTATION = Object.freeze({
+  pending: {
+    tag:        '快照中',
+    tagClass:   'vt-tag-info',
+    hint:       '建立初始快照中，版本任务可在任务中心查看',
+    fallback:   '首版快照中',
+  },
+  failed: {
+    tag:        '快照失败',
+    tagClass:   'vt-tag-danger',
+    hint:       '初始快照失败，请到任务中心处理',
+    fallback:   '首版快照失败',
+  },
+});
+
+const presentVersioning = (dataset) => {
+  const status = dataset?.current_version_id
+    ? DATASET_VERSIONING_STATUS.READY
+    : dataset?.versioning_status;
+  return VERSIONING_PRESENTATION[status] || null;
+};
+
+const getDatasetVersioningTagLabel = (dataset) => presentVersioning(dataset)?.tag || '';
+const getDatasetVersioningTagClass = (dataset) => presentVersioning(dataset)?.tagClass || '';
+const getDatasetVersioningHint     = (dataset) => presentVersioning(dataset)?.hint || '';
+const getCurrentVersionDisplay     = (dataset) => {
+  if (dataset?.current_version_id) return dataset.current_version_id;
+  return presentVersioning(dataset)?.fallback || '-';
+};
 
 const isRestoreRedundant = (version) => {
   if (!version || !versionsDataset.value?.current_version_id) return false;
@@ -435,21 +633,48 @@ const isRestoreRedundant = (version) => {
   return current.reason === 'restore' && current.source_version_id === version.version_id;
 };
 
-const refreshProjectsKeepSelection = async () => {
-  const cur = store.currentProject;
-  const selectedPath = store.selectedDataset?.path;
-  // silent 刷新：不触发 Sidebar 的 loading
-  await store.fetchProjects({ silent: true });
-  if (cur) {
-    const next = store.projects.find(p => p.id === cur.id) || store.projects.find(p => p.path === cur.path);
-    store.currentProject = next || null;
-    if (store.currentProject && selectedPath) {
-      store.selectedDataset = allDatasets.value.find(d => d.path === selectedPath) || null;
-    } else {
-      store.selectedDataset = null;
-    }
-  }
+// 快照任务相关（统一走 taskStatus.js 的状态语义，不另造一份标签表）
+const snapshotTask = computed(() => {
+  const ds = versionsDataset.value;
+  if (!ds || !ds.dataset_id) return null;
+  return snapshotStore.activeTaskFor(ds.dataset_id);
+});
+const snapshotProgress = computed(() => {
+  const t = snapshotTask.value;
+  if (!t) return 0;
+  const processed = t.artifacts?.snapshot_processed || 0;
+  const total = t.artifacts?.snapshot_total || 0;
+  if (!total) return 0;
+  return Math.min(100, Math.round((processed * 100) / total));
+});
+const snapshotProgressTotal = computed(() => {
+  const t = snapshotTask.value;
+  return t?.artifacts?.snapshot_total || 0;
+});
+const isSnapshotInFlight = computed(() => isTaskActive(snapshotTask.value));
+const snapshotBannerClass = computed(() => getTaskTerminalSummaryClass(snapshotTask.value));
+const goToSnapshotTask = () => {
+  const t = snapshotTask.value;
+  if (!t || !t.id) return;
+  router.push({
+    name: 'tasks-center',
+    query: {
+      task_id: t.id,
+      return_to: route.fullPath,
+    },
+  });
 };
+
+onMounted(() => {
+  store.refreshKeepSelection();
+  store.ensureVersioningPoll();
+});
+
+onBeforeUnmount(() => {
+  store.stopVersioningPoll();
+  // 组件卸载时清理所有 dataset 的轮询，避免泄漏 setInterval
+  Object.keys(snapshotStore.pollTimers || {}).forEach((id) => snapshotStore.stopPolling(id));
+});
 
 const findDatasetAfterRefresh = (source) => {
   if (!source) return null;
@@ -467,11 +692,14 @@ const loadVersions = async (dataset = versionsDataset.value) => {
       project_path: store.currentProject.path,
       dataset_name: dataset.name,
     });
+    const hasCurrentVersionId = Object.prototype.hasOwnProperty.call(result || {}, 'current_version_id');
+    const hasVersioningStatus = Object.prototype.hasOwnProperty.call(result || {}, 'versioning_status');
     versionRecords.value = Array.isArray(result?.versions) ? result.versions : [];
     versionsDataset.value = {
       ...dataset,
       dataset_id: result?.dataset_id || dataset.dataset_id,
-      current_version_id: result?.current_version_id || dataset.current_version_id,
+      versioning_status: hasVersioningStatus ? result.versioning_status : dataset.versioning_status,
+      current_version_id: hasCurrentVersionId ? result.current_version_id : dataset.current_version_id,
     };
   } finally {
     versionsLoading.value = false;
@@ -538,7 +766,7 @@ const runSplit = async () => {
       test_ratio: testRatio.value
     }), {
       onSuccess: async (data) => {
-        await refreshProjectsKeepSelection();
+        await store.refreshKeepSelection();
         closeSplit();
         const c = data.counts || {};
         toast.success(`重切分完成：train=${c.train ?? '-'} val=${c.val ?? '-'} test=${c.test ?? '-'}`);
@@ -564,6 +792,12 @@ const openVersions = async (ds) => {
   versionRecords.value = [];
   try {
     await loadVersions(ds);
+    const dsId = versionsDataset.value?.dataset_id;
+    if (dsId) {
+      snapshotStore.startPolling(dsId, {
+        projectPath: store.currentProject?.path,
+      });
+    }
   } catch (e) {
     versionsDataset.value = null;
     toast.error(e?.message || '加载版本失败');
@@ -571,9 +805,31 @@ const openVersions = async (ds) => {
 };
 
 const closeVersions = () => {
+  const dsId = versionsDataset.value?.dataset_id;
+  if (dsId) snapshotStore.stopPolling(dsId);
   versionsDataset.value = null;
   versionRecords.value = [];
   versionsLoading.value = false;
+};
+
+const refreshVersionsAfterSnapshot = async (datasetId) => {
+  if (!datasetId || snapshotRefreshPending.value) return;
+  const currentDataset = versionsDataset.value;
+  if (!currentDataset || currentDataset.dataset_id !== datasetId) return;
+  snapshotRefreshPending.value = true;
+  try {
+    await store.refreshKeepSelection();
+    const refreshedDataset = findDatasetAfterRefresh(currentDataset) || currentDataset;
+    versionsDataset.value = refreshedDataset;
+    workflowStore.invalidateDataset({
+      project_path: store.currentProject?.path,
+      dataset_name: refreshedDataset.name,
+      dataset_id: refreshedDataset.dataset_id,
+    });
+    await loadVersions(refreshedDataset);
+  } finally {
+    snapshotRefreshPending.value = false;
+  }
 };
 
 const addTag = () => {
@@ -598,7 +854,7 @@ const saveTags = async () => {
       tags: editTags.value
     }), {
       onSuccess: async () => {
-        await refreshProjectsKeepSelection();
+        await store.refreshKeepSelection();
         closeTags();
         toast.success('标签已保存');
       },
@@ -608,25 +864,44 @@ const saveTags = async () => {
 
 const publishVersion = async () => {
   if (!versionsDataset.value || !store.currentProject?.path) return;
+  if (isSnapshotInFlight.value) {
+    toast.warn('请等待当前快照任务完成');
+    return;
+  }
+  const ds = versionsDataset.value;
+  const payload = {
+    project_path: store.currentProject.path,
+    dataset_root: ds.path,
+    dataset_name: ds.name,
+    mode: 'commit',
+    reason: 'manual_publish',
+  };
   await asyncAction.run(PUBLISH_VERSION_ACTION_KEY, async () => {
-    await apiCall(api.publishDatasetVersion({
-      project_path: store.currentProject.path,
-      dataset_name: versionsDataset.value.name,
-      reason: 'manual_publish',
-    }), {
-      onSuccess: async () => {
-        await refreshProjectsKeepSelection();
-        const refreshedDataset = findDatasetAfterRefresh(versionsDataset.value) || versionsDataset.value;
-        versionsDataset.value = refreshedDataset;
-        workflowStore.invalidateDataset({
-          project_path: store.currentProject.path,
-          dataset_name: refreshedDataset.name,
-          dataset_id: refreshedDataset.dataset_id,
-        });
-        await loadVersions(refreshedDataset);
-        toast.success('已发布新版本');
-      },
+    const result = await apiCall(api.startDatasetSnapshot(payload), {
+      successMsg: '快照任务已启动，版本将在完成后生成',
     });
+    if (!result || !result.task_id) return;
+    // 立即拉一次任务详情作为种子，避免首屏白屏；拉失败时降级为本地占位
+    const seed = await apiCall(api.getTask(result.task_id), { silent: true }) || {
+      id: result.task_id,
+      type: 'dataset_snapshot',
+      status: 'pending',
+      progress: 0,
+      message: '快照任务排队中',
+      artifacts: { snapshot_processed: 0, snapshot_total: 0 },
+    };
+    if (ds.dataset_id) {
+      snapshotStore.startPolling(ds.dataset_id, {
+        projectPath: store.currentProject.path,
+        taskId: result.task_id,
+        seed,
+        onTerminal: async (task) => {
+          if (task?.status === 'completed') {
+            await refreshVersionsAfterSnapshot(ds.dataset_id);
+          }
+        },
+      });
+    }
   });
 };
 
@@ -645,7 +920,7 @@ const restoreVersion = async (version) => {
       version_id: version.version_id,
     }), {
       onSuccess: async () => {
-        await refreshProjectsKeepSelection();
+        await store.refreshKeepSelection();
         const refreshedDataset = findDatasetAfterRefresh(versionsDataset.value) || versionsDataset.value;
         versionsDataset.value = refreshedDataset;
         workflowStore.invalidateDataset({
@@ -682,7 +957,7 @@ const runDelete = async () => {
           dataset_name: deleteDataset.value.name,
           dataset_id: deleteDataset.value.dataset_id,
         });
-        await refreshProjectsKeepSelection();
+        await store.refreshKeepSelection();
         closeDelete();
         toast.success('数据集已删除');
       },

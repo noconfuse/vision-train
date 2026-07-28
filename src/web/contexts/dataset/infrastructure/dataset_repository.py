@@ -57,7 +57,14 @@ def analyze_dataset(dataset_path):
     vision_task_type = load_dataset_vision_task_type(dataset_path)
     task_strategy = resolve_dataset_task_strategy(vision_task_type)
     data_config = load_dataset_yaml(dataset_path, default={})
-    capabilities = build_training_capabilities_snapshot(vision_task_type, dataset_metadata=data_config)
+    identity = load_dataset_identity_meta(dataset_path)
+    capabilities = build_training_capabilities_snapshot(
+        vision_task_type,
+        dataset_metadata={
+            **(data_config or {}),
+            **(identity or {}),
+        },
+    )
     info = {
         "image_count": 0,
         "label_count": 0,
@@ -94,11 +101,14 @@ def analyze_dataset(dataset_path):
     info["annotated_count"] = int(info["label_count"] or 0)
     info["unannotated_count"] = max(0, int(info["image_count"] or 0) - int(info["annotated_count"] or 0))
 
-    for cls_id in sorted(class_counts.keys()):
-        count = class_counts[cls_id]
+    # 把「dataset.yaml.names 里已经有但本次扫描从没出现过的类别」也补回 class_stats，
+    # 避免新建的类别或还没贴标签的类别在前端不可见（外层无法展示）。
+    seen_ids = set(class_counts.keys())
+    for cls_id in sorted(set(class_names.keys()) | seen_ids):
+        count = class_counts.get(cls_id, 0)
         percentage = round((count / info["total_objects"] * 100), 1) if info["total_objects"] > 0 else 0
         stats = {
-            "id": cls_id,
+            "id": int(cls_id),
             "name": class_names.get(cls_id, f"class_{cls_id}"),
             "count": count,
             "percentage": percentage,
@@ -121,6 +131,7 @@ def build_dataset_summary(dataset_root, analysis, *, name=None):
         "path": storage_path_ref(dataset_root),
         "dataset_id": identity.get("dataset_id"),
         "current_version_id": identity.get("current_version_id"),
+        "versioning_status": identity.get("versioning_status"),
         "dataset_created_at": identity.get("created_at"),
         "dataset_updated_at": identity.get("updated_at"),
         "current_version_created_at": (current_version or {}).get("created_at"),

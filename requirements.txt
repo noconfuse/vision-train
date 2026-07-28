@@ -9,3 +9,4 @@ openvino
 nncf
 opencv-python-headless
 SQLAlchemy>=2.0
+dvc>=3.0

@@ -1,0 +1,27 @@
+{
+  "release-type": "python",
+  "package-name": "vision-train",
+  "version": "0.1.0",
+  "bump-minor-pre-major": false,
+  "bump-patch-for-minor-pre-major": false,
+  "initial-version": "0.1.0",
+  "include-component-in-tag": false,
+  "changelog-path": "CHANGELOG.md",
+  "changelog-sections": [
+    { "type": "feat",     "section": "Features",       "hidden": false },
+    { "type": "feature",  "section": "Features",       "hidden": false },
+    { "type": "fix",      "section": "Bug Fixes",      "hidden": false },
+    { "type": "perf",     "section": "Performance",    "hidden": false },
+    { "type": "revert",   "section": "Reverts",        "hidden": false },
+    { "type": "docs",     "section": "Documentation",  "hidden": false },
+    { "type": "style",    "section": "Styles",         "hidden": true  },
+    { "type": "chore",    "section": "Miscellaneous",  "hidden": false },
+    { "type": "refactor", "section": "Code Refactoring","hidden": false },
+    { "type": "test",     "section": "Tests",          "hidden": false },
+    { "type": "build",    "section": "Build System",   "hidden": false },
+    { "type": "ci",       "section": "Continuous Integration", "hidden": false }
+  ],
+  "extra-files": [
+    "requirements.txt"
+  ]
+}
