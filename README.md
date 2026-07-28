@@ -37,6 +37,14 @@ Vision Train 是一个面向视觉模型的本地一体化工作台，把数据�
 - 前端应用：`frontend/`
 - 后端启动脚本：`scripts/start_backend.sh`
 
+## 发布与 Changelog
+
+本仓库使用 [release-please](https://github.com/googleapis/release-please) 自动生成 CHANGELOG 并打 tag，约定：
+
+- 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：`feat:` `fix:` `docs:` `refactor:` `perf:` `test:` `build:` `ci:` `chore:` `revert:`，破坏性变更在类型后加 `!` 或在 footer 写 `BREAKING CHANGE:`
+- 推送到 `master` 后，GitHub Actions 会自动开（或更新）一个名为 `chore(main): release X.Y.Z` 的 PR
+- 该 PR 合并后，自动创建 Git Tag、GitHub Release，并刷新 `CHANGELOG.md`
+
 ## 本地启动
 
 ### 1. 准备环境变量
