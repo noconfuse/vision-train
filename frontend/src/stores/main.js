@@ -34,11 +34,15 @@ export const useMainStore = defineStore('main', {
     autoAnnotateModels: [],      // 自动标注候选模型列表
     pretrainedOptions: [],       // 全部官方预设（含未下载）
     selectedDataset: null,
+    authEnabled: null,           // null = 未加载；true / false 来自 /api/auth/status
     isLoading: false,
     error: null,
   }),
   
   actions: {
+    setAuthEnabled(enabled) {
+      this.authEnabled = !!enabled;
+    },
     mergePretrainedStatus(status) {
       if (!status?.name) return;
       const index = this.pretrainedOptions.findIndex((item) => item.name === status.name);

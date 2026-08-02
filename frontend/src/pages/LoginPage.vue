@@ -143,11 +143,13 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { authApi } from '../api/auth';
-import { setAuthToken, setStoredUser } from '../api';
+import { setAuthToken, setStoredUser, getAuthToken } from '../api';
+import { useMainStore } from '../stores/main';
 import AppIcon from '../components/ui/AppIcon.vue';
 
 const router = useRouter();
 const route = useRoute();
+const store = useMainStore();
 
 const username = ref('');
 const password = ref('');
@@ -165,7 +167,16 @@ onMounted(async () => {
     const data = await authApi.status();
     if (data && 'enabled' in data) {
       authEnabled.value = !!data.enabled;
+      store.setAuthEnabled(data.enabled);
       if (!data.enabled) {
+        // 后端未启用认证：用 sentinel token 让路由守卫放行
+        if (!getAuthToken()) setAuthToken('auth-disabled');
+        // 已有 token 直接跳走，避免 3 秒等待
+        if (getAuthToken() === 'auth-disabled') {
+          const target = (route.query.redirect && String(route.query.redirect)) || '/';
+          router.replace(target);
+          return;
+        }
         redirectTimer = setTimeout(() => {
           const target = (route.query.redirect && String(route.query.redirect)) || '/';
           router.replace(target);

@@ -86,7 +86,7 @@
       </div>
     </div>
 
-    <div class="relative shrink-0 border-t border-gray-100">
+    <div v-if="authEnabled === true" class="relative shrink-0 border-t border-gray-100">
       <div
         v-if="showUserPanel"
         class="absolute inset-x-2 bottom-full mb-2 z-40 rounded-sm border border-slate-200 bg-white p-1.5 shadow-sm"
@@ -153,6 +153,7 @@
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMainStore } from '../stores/main';
+import { storeToRefs } from 'pinia';
 import { useToast } from '../composables/useToast';
 import { useConfirm } from '../composables/useConfirm';
 import { useAsyncAction } from '../composables/useAsyncAction';
@@ -164,6 +165,7 @@ import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 
 const store = useMainStore();
+const { authEnabled } = storeToRefs(store);
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
@@ -235,6 +237,8 @@ const askLogout = async () => {
 };
 
 const handleLogout = async () => {
+  // 后端未启用认证时不应触发；按钮已用 v-if 隐藏，这里再兜底一次
+  if (authEnabled.value !== true) return;
   await asyncAction.run(LOGOUT_ACTION_KEY, async () => {
     try {
       await authApi.logout();
