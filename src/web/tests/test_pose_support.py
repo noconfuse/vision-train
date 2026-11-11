@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from contexts.annotation.infrastructure.annotation_io import decode_pose_file
 from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
-from contexts.dataset.domain.capabilities import build_dataset_capabilities
+from protocols.capabilities.dataset_capabilities import build_dataset_capabilities
 from protocols.vision_task_type import VISION_TASK_TYPE_POSE
 
 
@@ -54,6 +54,8 @@ class PoseSupportTests(unittest.TestCase):
                     ]
                 )
             )
+        with open(os.path.join(self.temp_dir, ".vision-train.meta.json"), "w", encoding="utf-8") as handle:
+            handle.write('{"vision_task_type": "pose", "dataset_id": "pose_support"}')
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -97,7 +99,7 @@ class PoseSupportTests(unittest.TestCase):
         self.assertEqual((instance["x1"], instance["y1"], instance["x2"], instance["y2"]), (10.0, 20.0, 50.0, 80.0))
         self.assertEqual([point["visible"] for point in instance["keypoints"]], [2, 2, 0])
 
-    def test_pose_strategy_saves_commits_and_filters_auto_instances(self):
+    def test_pose_strategy_saves_refines_and_keeps_the_chosen_instances(self):
         strategy = resolve_annotation_task_strategy(VISION_TASK_TYPE_POSE)
         image_path = os.path.join(self.image_dir, "sample.jpg")
         manual_label_path = os.path.join(self.manual_dir, "sample.txt")
@@ -110,6 +112,7 @@ class PoseSupportTests(unittest.TestCase):
             "manual_label_path": manual_label_path,
             "auto_label_path": auto_label_path,
             "dataset_root": self.temp_dir,
+            "project_path": self.temp_dir,
             "split": "train",
             "relative_noext": "sample",
             "class_names": ["person"],
@@ -159,10 +162,10 @@ class PoseSupportTests(unittest.TestCase):
             self.assertEqual(len(payload["manual_annotation"]["instances"]), 1)
             self.assertEqual(len(payload["auto_annotation"]["instances"]), 1)
 
-            strategy.commit_auto_annotation(context)
+            # 保存即审核：人留下的候选跟着人工框一起被写回标签
+            strategy.save_manual_annotation(context, {"instances": [manual_instance, refined["instances"][0]]})
             merged = decode_pose_file(manual_label_path, 100, 100, kpt_shape=[3, 3])
             self.assertEqual(len(merged), 2)
-            self.assertFalse(os.path.exists(auto_label_path))
 
 
 if __name__ == "__main__":

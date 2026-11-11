@@ -22,7 +22,7 @@ from contexts.dataset.infrastructure.dataset_task_type import (
     load_dataset_identity_meta,
     update_dataset_identity_meta,
 )
-from contexts.project.infrastructure.project_paths import get_project_training_dir
+from contexts.project.application.project_service import get_project_training_dir
 from shared.utils.fs_utils import remove_tree
 from shared.utils.fs_utils import remove_path_silent
 from shared.utils.json_utils import load_json_file, save_json_file

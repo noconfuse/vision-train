@@ -5,17 +5,17 @@ import logging
 from app.config import AUTH
 from app.http import auth_error_response
 from contexts.auth.infrastructure.auth_gateway import ensure_bootstrap_admin, get_current_user, populate_current_user
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_STOP_SIGNAL_PATH,
     ARTIFACT_WORKER_EXITED_AT,
     ARTIFACT_WORKER_PID,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     list_task_records,
     mark_orphan_tasks_interrupted as reconcile_orphan_tasks,
+    request_stop,
     update_task,
 )
-from contexts.task.infrastructure.worker_task_ops import request_stop
 from db import init_db
 from shared.infra.worker_process import terminate_process_group
 from shared.utils.time_utils import now_iso
@@ -26,6 +26,7 @@ _runtime_shutdown_done = False
 
 AUTH_WHITELIST = (
     "/api/auth/login",
+    "/api/auth/register",
     "/api/auth/status",
     "/api/health",
 )
@@ -104,14 +105,10 @@ def attach_request_hooks(app):
         """拦截未登录请求并放行鉴权白名单路径。"""
         if not AUTH.get("enabled", False):
             return None
-        path = getattr(app, "request_class", None)
-        del path
         from flask import request
 
-        current_path = request.path
-        for prefix in AUTH_WHITELIST:
-            if current_path == prefix or current_path.startswith(prefix):
-                return None
+        if request.path in AUTH_WHITELIST:
+            return None
         if get_current_user() is None:
             return auth_error_response("未登录或登录已过期", code="auth_required", status_code=401)
         return None

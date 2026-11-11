@@ -11,7 +11,7 @@ from contexts.training.infrastructure.export_gateway import (
     delete_export_task as delete_export_task_record,
     start_export_task,
 )
-from contexts.training.infrastructure.resume_utils import continue_training, resume_training
+from contexts.training.infrastructure.resume_utils import resume_training
 from contexts.training.infrastructure.template_task_gateway import (
     delete_template_task as delete_template_task_record,
     start_template_task as start_template_task_record,
@@ -25,7 +25,6 @@ from contexts.training.infrastructure.workflow_repository import (
 
 __all__ = [
     "archive_training_workflow_record",
-    "continue_training",
     "create_training_workflow_record",
     "delete_export_task_record",
     "delete_template_task_record",

@@ -21,11 +21,11 @@ from contexts.dataset.infrastructure.dataset_versioning import (
     new_dataset_version_id,
     update_dataset_identity_meta,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     get_task_record,
     update_task as update_task_status,
+    is_stop_requested,
 )
-from contexts.task.infrastructure.worker_task_ops import is_stop_requested
 from shared.utils.time_utils import now_iso
 
 logger = logging.getLogger(__name__)

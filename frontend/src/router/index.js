@@ -45,7 +45,7 @@ router.beforeEach((to, _from, next) => {
   Promise.resolve()
     .then(async () => {
       if (store.projects.length === 0) {
-        await store.fetchProjects({ silent: true });
+        await store.fetchProjects();
       }
     })
     .finally(() => next());

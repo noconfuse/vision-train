@@ -98,3 +98,9 @@ export const validateCategoryName = (value) =>
 export const CATEGORY_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export * from './resource';
+
+/** 自动标注的逐框置信度：历史批次没有记置信度时留空，不伪装成 0。*/
+export const formatConf = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? `${Math.round(num * 100)}%` : '';
+};

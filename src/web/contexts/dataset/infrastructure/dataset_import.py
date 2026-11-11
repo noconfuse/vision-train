@@ -18,7 +18,7 @@ from contexts.dataset.infrastructure.dataset_task_type import save_dataset_visio
 from contexts.dataset.infrastructure.dataset_versioning import (
     start_snapshot_job,
 )
-from contexts.project.infrastructure.project_paths import (
+from contexts.project.application.project_service import (
     get_project_dataset_dir,
 )
 from shared.utils.fs_utils import remove_path_silent

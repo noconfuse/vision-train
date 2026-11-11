@@ -3,7 +3,7 @@
 import os
 from urllib.parse import urlencode
 
-from contexts.project.infrastructure.project_paths import get_project_task_images_dir
+from contexts.project.application.project_service import get_project_task_images_dir
 from shared.utils.path_utils import build_file_items, project_path_ref
 
 

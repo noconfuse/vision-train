@@ -41,7 +41,12 @@ def main():
 
     input_path = sys.argv[1]
     output_path = sys.argv[2]
-    payload = load_json_file(input_path, default={}) or {}
+    payload = load_json_file(input_path)
+    if not payload:
+        error = f'探测输入文件不存在或为空: {input_path}'
+        _stderr(f'batch_probe: {error}')
+        save_json_file(output_path, {'ok': False, 'exit_code': 2, 'failure_kind': 'fatal', 'error': error})
+        return 2
 
     save_dir = payload['save_dir']
     os.makedirs(save_dir, exist_ok=True)

@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 
-from contexts.task.domain.task_artifact_keys import ARTIFACT_DATASET_YAML
+from protocols.task_artifact_keys import ARTIFACT_DATASET_YAML
 from contexts.training.infrastructure.inference_template_gateway import (
     DEPLOYMENT_MANIFEST_FILENAME,
     generate_inference_template_bundle,

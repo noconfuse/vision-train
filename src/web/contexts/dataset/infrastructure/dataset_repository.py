@@ -1,5 +1,6 @@
 """负责项目内数据集根目录解析、统计分析与扫描。"""
 
+import logging
 import os
 
 from contexts.dataset.infrastructure.dataset_scan_strategy import resolve_dataset_scan_strategy
@@ -13,12 +14,14 @@ from contexts.dataset.infrastructure.dataset_schema import (
     resolve_dataset_names_dict,
     resolve_dataset_tags,
 )
-from contexts.training.domain.capability_snapshot import build_training_capabilities_snapshot
-from contexts.project.infrastructure.project_paths import (
+from protocols.capabilities.snapshot import build_training_capabilities_snapshot
+from contexts.project.application.project_service import (
     get_project_dataset_dir,
     get_project_training_dir,
 )
 from shared.utils.path_utils import is_within_path, project_name_from_path, resolve_project_path, resolve_storage_path, storage_path_ref
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_project_dataset_root(project_path, dataset_name=None, dataset_path=None):
@@ -150,8 +153,8 @@ def build_dataset_summary(dataset_root, analysis, *, name=None):
     }
 
 
-def scan_project_datasets(project_path):
-    """遍历项目训练目录并收集受协议管理的数据集摘要。"""
+def scan_project_dataset_inventory(project_path):
+    """遍历项目训练目录，只返回合法数据集；解析失败的目录跳过。"""
     project_path = resolve_project_path(project_path)
     if not project_path:
         raise ValueError("缺少项目路径")
@@ -166,7 +169,11 @@ def scan_project_datasets(project_path):
             continue
         if not find_dataset_config(dataset_root):
             continue
-        analysis = analyze_dataset(dataset_root)
+        try:
+            analysis = analyze_dataset(dataset_root)
+        except Exception as exc:
+            logger.warning("跳过无法解析的数据集目录 %s: %s", dataset_root, exc)
+            continue
         datasets.append(build_dataset_summary(dataset_root, analysis, name=item))
     return datasets
 

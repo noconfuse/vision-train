@@ -244,6 +244,42 @@ def add_dataset_label(ds_root, yaml_path, label_name, *, strategy):
     }
 
 
+def append_dataset_labels(ds_root, yaml_path, label_names, *, strategy):
+    """按给定顺序批量追加类别：同名跳过、只写一次 dataset.yaml。
+
+    用于把另一个数据集的类别表搬过来。已有类别的 id 保持不动，新增类别接在末尾，
+    因此不会让既有标注文件里的 id 改含义。
+    """
+    config, current_names, original_is_dict = _load_names_and_shape(yaml_path)
+    added = []
+    skipped = []
+    for raw_name in label_names or []:
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        if name in current_names or name in added:
+            skipped.append(name)
+            continue
+        added.append(name)
+
+    if added:
+        _write_names_back(yaml_path, config, current_names + added, original_is_dict)
+        created_dirs = [
+            storage_path_ref(path)
+            for name in added
+            for path in strategy.ensure_label_dirs(ds_root, name)
+        ]
+    else:
+        created_dirs = []
+
+    return {
+        "added_labels": added,
+        "skipped_labels": skipped,
+        "nc": len(current_names) + len(added),
+        "created_dirs": created_dirs,
+    }
+
+
 def ensure_initial_class_dirs(strategy, ds_root, class_names):
     """在建空数据集时，调用 strategy 为初始分类创建附属产物目录。"""
     created_dirs = []

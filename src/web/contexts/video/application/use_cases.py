@@ -2,9 +2,9 @@
 
 import os
 
-from contexts.project.infrastructure.project_paths import get_project_task_images_dir, get_project_videos_dir
-from contexts.task.domain.task_types import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.infrastructure.task_runtime import list_project_tasks
+from contexts.project.application.project_service import get_project_task_images_dir, get_project_videos_dir
+from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION
+from contexts.task.application.task_service import list_project_tasks
 from contexts.video.infrastructure.video_access import append_video_urls, build_task_image_items
 from contexts.video.infrastructure.video_file_gateway import remove_video_file, save_uploaded_video
 from contexts.video.infrastructure.video_task_gateway import (

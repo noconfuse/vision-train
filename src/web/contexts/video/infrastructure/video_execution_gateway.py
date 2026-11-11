@@ -3,18 +3,21 @@
 import logging
 import os
 
-from contexts.project.infrastructure.project_paths import get_project_task_images_dir, get_project_videos_dir
-from contexts.task.domain.task_types import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.domain.task_artifact_keys import (
+from contexts.project.application.project_service import get_project_task_images_dir, get_project_videos_dir
+from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION
+from protocols.task_artifact_keys import (
     ARTIFACT_IMAGES_DIR,
     ARTIFACT_STOP_SIGNAL_PATH,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     merge_task_artifacts as merge_artifacts,
     update_task as update_task_status,
+    load_task,
+    finish_worker_task,
+    is_stop_requested,
+    mark_worker_exited,
+    mark_worker_started,
 )
-from contexts.task.infrastructure.task_runtime import load_task
-from contexts.task.infrastructure.worker_task_ops import finish_worker_task, is_stop_requested, mark_worker_exited, mark_worker_started
 from contexts.video.infrastructure.video_runtime import (
     extract_frames_with_ffmpeg,
     get_video_frame_count_ffprobe,

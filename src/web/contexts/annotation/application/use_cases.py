@@ -1,18 +1,32 @@
 """编排标注读写与标注列表查询的应用层用例。"""
 
+import os
+
+from contexts.annotation.application.annotation_service import SAME_OBJECT_IOU_THRESH
 from contexts.annotation.infrastructure.auto_annotation_runner import (
     auto_annotate_image as run_auto_annotate_image,
     get_batch_auto_annotation_status as read_batch_auto_annotation_status,
     start_batch_auto_annotation as run_batch_auto_annotation,
 )
 from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
-from contexts.annotation.infrastructure.annotation_io import get_dataset_root, resolve_dataset_image_context
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.annotation.infrastructure.similarity_probe_runner import (
+    get_similarity_probe_status as read_similarity_probe_status,
+    start_similarity_probe as run_similarity_probe,
+)
+from contexts.annotation.infrastructure.annotation_io import (
+    get_dataset_root,
+    resolve_dataset_image_context,
+)
+from contexts.annotation.infrastructure.auto_annotation_store import (
+    clear_auto_annotation,
+    drop_auto_annotation,
+)
 from contexts.annotation.infrastructure.segment_refine import (
     refine_polygon_with_grabcut,
     refine_polygon_boundary_patch,
     erase_polygon_with_stroke,
 )
+from contexts.dataset.application.dataset_service import load_dataset_vision_task_type
 from protocols.vision_task_type import VISION_TASK_TYPE_SEGMENT
 
 
@@ -30,7 +44,6 @@ def _resolve_annotation_dataset_strategy(project_path, dataset_name):
     return dataset_root, strategy
 
 
-
 def get_annotation_payload(project_path, dataset_name, split, image_ref):
     """组合单张图片的尺寸、人工框和自动框。"""
     context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
@@ -38,21 +51,67 @@ def get_annotation_payload(project_path, dataset_name, split, image_ref):
 
 
 def save_manual_annotation(project_path, dataset_name, split, image_ref, annotation):
-    """保存人工标注并清除对应自动标注。"""
+    """保存人工标注，同时把这张图的自动候选一次判完：留下的已写进标签，删掉的随候选文件一起清掉。
+
+    拒掉的框不做记录，下一轮重跑还会再提；判错了就再画一次，不设第二个撤销入口。
+    """
     context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
-    return strategy.save_manual_annotation(context, annotation)
+    result = strategy.save_manual_annotation(context, annotation)
+    drop_auto_annotation(context)
+    return result or {}
 
 
-def save_auto_annotation(project_path, dataset_name, split, image_ref, annotation):
-    """保存自动标注结果到待确认目录。"""
-    context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
-    return strategy.save_auto_annotation(context, annotation)
+def commit_pending_annotations(project_path, dataset_name, images=None):
+    """批量判定：把名单里每张图剩下的候选当成这个人收下的一切，落进人工标签。
+
+    走的就是逐张保存那条路（策略层同一次写入），只是把 N 次点按收成一次。
+    名单里没有候选的图跳过——它要么已经判过，要么本来就没人提过框；
+    名单本身由调用方按当前筛选给全，跨页漏一张就少写一张。
+    """
+    entries = [entry for entry in (images or []) if isinstance(entry, dict) and str(entry.get("path") or "").strip()]
+    if not entries:
+        raise ValueError("批量写入必须给出图片名单")
+    _, strategy = _resolve_annotation_dataset_strategy(project_path, dataset_name)
+    committed = written = skipped = 0
+    for entry in entries:
+        context = resolve_dataset_image_context(
+            project_path, dataset_name, entry.get("split"), entry["path"]
+        )
+        label_path = context.get("auto_label_path") or ""
+        if not label_path or not os.path.exists(label_path):
+            skipped += 1
+            continue
+        result = strategy.commit_auto_annotation(context) or {}
+        committed += 1
+        written += int(result.get("written_items") or 0)
+    return {
+        "committed_images": committed,
+        "written_items": written,
+        "skipped_images": skipped,
+        "requested": len(entries),
+    }
 
 
-def commit_auto_annotation(project_path, dataset_name, split, image_ref):
-    """把自动标注框并入人工标注文件。"""
-    context, strategy = _resolve_annotation_image_strategy(project_path, dataset_name, split, image_ref)
-    return strategy.commit_auto_annotation(context)
+def clear_pending_annotations(project_path, dataset_name, images=None, classes=None):
+    """删掉名单里这些图上还没审的候选，人工标签不碰——这一轮跑废了，推倒重来。
+
+    名单由调用方按当前筛选给全，跟「批量写入」同一份：跨页漏一张就少清一张，
+    而确认框上写的张数必须是真正动刀的那批。给了 classes 只删那几个类别的行。
+    被删掉的候选不需要台账：同样的模型和置信度再跑一轮就会再生成。
+    """
+    entries = [entry for entry in (images or []) if isinstance(entry, dict) and str(entry.get("path") or "").strip()]
+    if not entries:
+        raise ValueError("清空候选必须给出图片名单")
+    class_ids = {int(class_id) for class_id in (classes or []) if str(class_id).strip() != ""}
+    stats = {"cleared_images": 0, "dropped_items": 0, "kept_items": 0}
+    for entry in entries:
+        context = resolve_dataset_image_context(
+            project_path, dataset_name, entry.get("split"), entry["path"]
+        )
+        result = clear_auto_annotation(context, class_ids or None)
+        for key in stats:
+            stats[key] += int(result.get(key) or 0)
+    return {**stats, "requested": len(entries), "classes": sorted(class_ids) or None}
 
 
 def list_missing_annotations(project_path, dataset_name, split, offset=0, limit=50):
@@ -72,7 +131,7 @@ def auto_annotate_image(project_path, image_ref, model_path=None, conf=0.25, max
     return run_auto_annotate_image(project_path, image_ref, model_path=model_path, conf=conf, max_det=max_det)
 
 
-def start_batch_auto_annotation(project_path, dataset_name, split="train", model_path=None, image_paths=None, conf=0.25, max_det=200, batch_size=1, iou_thresh=0.5):
+def start_batch_auto_annotation(project_path, dataset_name, split="train", model_path=None, image_paths=None, conf=0.25, max_det=200, batch_size=1, iou_thresh=SAME_OBJECT_IOU_THRESH, classes=None):
     """启动批量自动标注任务，作为 annotation 上下文公开入口。"""
     return run_batch_auto_annotation(
         project_path,
@@ -84,12 +143,33 @@ def start_batch_auto_annotation(project_path, dataset_name, split="train", model
         max_det=max_det,
         batch_size=batch_size,
         iou_thresh=iou_thresh,
+        classes=classes,
     )
 
 
 def get_batch_auto_annotation_status(task_id=None):
     """查询批量自动标注任务状态，作为 annotation 上下文公开入口。"""
     return read_batch_auto_annotation_status(task_id=task_id)
+
+
+def start_similarity_probe(project_path, dataset_name, split, image_ref, class_id, sample_box,
+                           score_thresh=0.45, max_per_image=3):
+    """以样本框为种子在本 split 检索相似目标，命中当候选启动探测任务。"""
+    return run_similarity_probe(
+        project_path,
+        dataset_name,
+        split=split,
+        image_ref=image_ref,
+        class_id=class_id,
+        sample_box=sample_box,
+        score_thresh=score_thresh,
+        max_per_image=max_per_image,
+    )
+
+
+def get_similarity_probe_status(task_id=None):
+    """查询相似探测任务状态，作为 annotation 上下文公开入口。"""
+    return read_similarity_probe_status(task_id=task_id)
 
 
 def refine_segment_annotation(project_path, dataset_name, split, image_ref, stroke, class_id=0, spacing_px=10):

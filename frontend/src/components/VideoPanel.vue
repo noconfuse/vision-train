@@ -13,8 +13,10 @@ import { parseOptionalNumber } from '../utils';
 import VideoUploadModal from './VideoUploadModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
+import ModalShell from './ui/ModalShell.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import { TASK_STATUS, getTaskProgressBarClass, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive } from '../domain/task/taskStatus';
+import { VISION_TASK_TYPE, getVisionTaskTypeLabel } from '../domain/dataset/visionTaskType';
 
 const store = useMainStore();
 const router = useRouter();
@@ -100,6 +102,7 @@ const selectedImages = ref(new Set());
 const importForm = ref({
   targetType: 'new', // new | existing
   newDatasetName: '',
+  newDatasetType: VISION_TASK_TYPE.DETECT,
   existingDataset: ''
 });
 const importing = ref(false);
@@ -460,10 +463,16 @@ const deleteTask = async (task) => {
 
 const importImages = async () => {
   let datasetName = '';
+  let visionTaskType = '';
   if (importForm.value.targetType === 'new') {
     datasetName = importForm.value.newDatasetName.trim();
     if (!datasetName) {
       toast.warn('请输入新数据集名称');
+      return;
+    }
+    visionTaskType = importForm.value.newDatasetType;
+    if (!visionTaskType) {
+      toast.warn('请选择新数据集的任务类型');
       return;
     }
   } else {
@@ -485,28 +494,30 @@ const importImages = async () => {
     project_path: store.currentProject.path,
     task_id: currentTask.value.id,
     dataset_name: datasetName,
-    selected_images: selectedList
+    selected_images: selectedList,
+    ...(visionTaskType ? { vision_task_type: visionTaskType } : {})
   }), {
     onSuccess: async (data) => {
+      const importedCount = Number(data?.imported_count);
       const finalDatasetName = String(data?.dataset_name || datasetName || '').trim();
-      toast.success(`成功导入 ${data.imported_count} 张图片到数据集 ${finalDatasetName}`);
+      const datasetId = String(data?.dataset_id || '').trim();
+      toast.success(Number.isFinite(importedCount)
+        ? `已导入 ${importedCount} 张图片到数据集 ${finalDatasetName}${data?.snapshot_task_id ? '，已开始建立初始快照' : ''}`
+        : `已导入到数据集 ${finalDatasetName}`);
+      if (!datasetId) {
+        // 服务端没给出稳定身份，就不跳；数据集已存在，重开项目列表就能看到。
+        toast.error('导入已完成，但服务端没有返回数据集身份（dataset_id），无法跳转，请刷新项目后打开该数据集');
+        return;
+      }
       showReview.value = false;
-      await store.fetchProjects({ silent: true });
-      const nextProject = store.projects.find(p => p.id === store.currentProject?.id)
-        || store.projects.find(p => p.path === store.currentProject?.path)
-        || store.currentProject;
-      const nextDataset = (nextProject?.datasets || []).find(d => d.name === finalDatasetName) || null;
-      if (nextProject) store.selectProject(nextProject);
-      if (nextDataset) store.selectDataset(nextDataset);
+      // 项目列表由详情页负责跟上：跳转不等待全量重扫，避免关闭弹窗后原地空等。
       await router.push({
         name: 'dataset-detail',
         params: {
-          project: encodeURIComponent(nextProject?.name || store.currentProject?.name || ''),
+          project: encodeURIComponent(store.currentProject?.name || ''),
           name: encodeURIComponent(finalDatasetName),
         },
-        query: {
-          dataset_id: nextDataset?.dataset_id || '',
-        },
+        query: { dataset_id: datasetId },
       });
     },
     finally: () => { importing.value = false; },
@@ -525,6 +536,11 @@ const getTaskExtractedCount = (task) => {
 };
 
 // Computed
+const datasetTypeOptions = computed(() => Object.values(VISION_TASK_TYPE).map(value => ({
+  value,
+  label: getVisionTaskTypeLabel(value),
+})));
+
 const existingDatasets = computed(() => {
   const byName = new Map();
   for (const d of allDatasets.value) {
@@ -549,10 +565,10 @@ const boxStyle = computed(() => {
   };
 });
 
-const { gridClass: reviewGridClass, gridStyle: reviewGridStyle } = useAutoFillGrid(reviewMaximized, {
-  compactTile: 112,
-  regularTile: 132,
-  gapClass: 'gap-3',
+const reviewGridColumns = computed(() => (reviewMaximized.value ? 12 : 8));
+
+const { gridClass: reviewGridClass, gridStyle: reviewGridStyle } = useAutoFillGrid(reviewGridColumns, {
+  gapPx: 12,
 });
 
 const previewImage = computed(() => taskImages.value[previewIndex.value] || null);
@@ -784,44 +800,48 @@ onUnmounted(() => {
     <!-- Modals -->
 
     <!-- Extraction Config Modal -->
-    <div v-if="showModal" class="vt-modal-backdrop">
-      <div class="vt-modal-panel vt-modal-panel--md p-5">
-        <h3 class="text-base font-semibold text-slate-800 mb-4">抽帧配置</h3>
-        <p class="text-sm text-gray-600 mb-4">
-          源视频: <span class="font-medium">{{ currentVideo?.name }}</span>
-        </p>
+    <ModalShell
+      v-if="showModal"
+      title="抽帧配置"
+      size="md"
+      body-class="p-5"
+      :dismissible="!isActionPending(EXTRACT_ACTION_KEY)"
+      @close="showModal = false"
+    >
+      <p class="text-sm text-gray-600 mb-4">
+        源视频: <span class="font-medium">{{ currentVideo?.name }}</span>
+      </p>
 
-        <div class="space-y-4">
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">抽帧策略</label>
-            <select v-model="form.strategy" class="vt-select">
-              <option value="interval">按时间间隔 (秒)</option>
-              <option value="count">按总帧数 (均匀抽取)</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">
-              {{ form.strategy === 'interval' ? '间隔时间 (秒)' : '抽取总张数' }}
-            </label>
-            <input v-model="form.value" type="number" :step="form.strategy === 'interval' ? 0.1 : 1" class="vt-input">
-          </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">抽帧策略</label>
+          <select v-model="form.strategy" class="vt-select">
+            <option value="interval">按时间间隔 (秒)</option>
+            <option value="count">按总帧数 (均匀抽取)</option>
+          </select>
         </div>
 
-        <div class="mt-6 flex justify-end gap-3">
-          <button @click="showModal = false" class="vt-btn-secondary vt-btn-size-md" :disabled="isActionPending(EXTRACT_ACTION_KEY)">取消</button>
-          <AsyncButton
-            @click="startExtraction"
-            class="vt-btn-solid-primary vt-btn-size-md"
-            :pending="isActionPending(EXTRACT_ACTION_KEY)"
-            loading-text="启动中..."
-          >
-            <AppIcon name="split" class="h-4 w-4" />
-            开始抽帧
-          </AsyncButton>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            {{ form.strategy === 'interval' ? '间隔时间 (秒)' : '抽取总张数' }}
+          </label>
+          <input v-model="form.value" type="number" :step="form.strategy === 'interval' ? 0.1 : 1" class="vt-input">
         </div>
       </div>
-    </div>
+
+      <template #footer>
+        <button @click="showModal = false" class="vt-btn-secondary vt-btn-size-md" :disabled="isActionPending(EXTRACT_ACTION_KEY)">取消</button>
+        <AsyncButton
+          @click="startExtraction"
+          class="vt-btn-solid-primary vt-btn-size-md"
+          :pending="isActionPending(EXTRACT_ACTION_KEY)"
+          loading-text="启动中..."
+        >
+          <AppIcon name="split" class="h-4 w-4" />
+          开始抽帧
+        </AsyncButton>
+      </template>
+    </ModalShell>
 
     <!-- Video Player Modal -->
     <div v-if="showPlayer" class="vt-media-backdrop" @click.self="closePlayer">
@@ -961,6 +981,14 @@ onUnmounted(() => {
                   placeholder="输入数据集名称"
                   class="vt-input"
                 >
+                <div v-if="importForm.targetType === 'new'" class="mt-3">
+                  <label class="block text-xs text-slate-500 mb-1">任务类型</label>
+                  <select v-model="importForm.newDatasetType" class="vt-select">
+                    <option v-for="opt in datasetTypeOptions" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -986,7 +1014,7 @@ onUnmounted(() => {
               <button
                 @click="importImages"
                 class="w-full vt-btn-solid-primary vt-btn-size-md justify-center"
-                :disabled="importing || taskImages.length === 0 || selectedImages.size === 0 || (importForm.targetType === 'new' && !importForm.newDatasetName.trim()) || (importForm.targetType === 'existing' && !importForm.existingDataset)"
+                :disabled="importing || taskImages.length === 0 || selectedImages.size === 0 || (importForm.targetType === 'new' && (!importForm.newDatasetName.trim() || !importForm.newDatasetType)) || (importForm.targetType === 'existing' && !importForm.existingDataset)"
               >
                 <AppIcon name="download" class="h-4 w-4" />
                 {{ importing ? '导入中...' : '确认导入' }}
@@ -997,7 +1025,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="showImagePreview" class="vt-media-backdrop z-[60]" @click.self="closePreview">
+    <div v-if="showImagePreview" class="vt-media-backdrop vt-overlay--top" @click.self="closePreview">
       <div class="vt-media-viewer">
         <div class="vt-media-header">
           <div class="vt-media-meta">
@@ -1010,7 +1038,9 @@ onUnmounted(() => {
             <button class="vt-btn-inverse" @click="setPreviewScale(previewScale * 1.1)">+</button>
             <button class="vt-btn-inverse" :disabled="previewIndex <= 0" @click="navPreview(-1)">上一张</button>
             <button class="vt-btn-inverse" :disabled="previewIndex >= taskImages.length - 1" @click="navPreview(1)">下一张</button>
-            <button class="vt-btn-inverse" @click="closePreview">关闭</button>
+            <button class="vt-media-close" title="关闭预览（Esc）" aria-label="关闭预览" @click="closePreview">
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
           </div>
         </div>
 

@@ -33,20 +33,59 @@ def box_iou(a, b):
     )
 
 
-def filter_duplicate_boxes(candidate_boxes, existing_manual, existing_auto, iou_thresh):
-    """过滤与现有人工或自动框高度重叠的候选框。"""
+SAME_OBJECT_IOU_THRESH = 0.7
+SAME_OBJECT_COVER_THRESH = 0.9
+
+
+def _box_area(box):
+    return max(0.0, box["x2"] - box["x1"]) * max(0.0, box["y2"] - box["y1"])
+
+
+def box_covered_ratio(existing, candidate):
+    """候选框被已有框盖住的比例（交集 ÷ 候选框面积）。"""
+    ix1 = max(existing["x1"], candidate["x1"])
+    iy1 = max(existing["y1"], candidate["y1"])
+    ix2 = min(existing["x2"], candidate["x2"])
+    iy2 = min(existing["y2"], candidate["y2"])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    return inter / (_box_area(candidate) + 1e-6)
+
+
+def box_min_cover_ratio(a, b):
+    """两个框里较小的那个被另一个盖住多少——套叠不分方向，大框套小框和小框钻大框是一回事。"""
+    if _box_area(a) <= _box_area(b):
+        return box_covered_ratio(b, a)
+    return box_covered_ratio(a, b)
+
+
+def is_same_object_box(a, b, iou_thresh=None):
+    """两个同类框说的是不是同一个东西：重叠到七成以上，或者一个九成以上落在另一个里。
+
+    重叠线取 0.7 是跟检测模型自己合并框用的线（Ultralytics 默认 NMS iou=0.7）对齐：
+    模型本身都会当成一个框合并掉的，程序才不许提第二遍；比它更激进就会把并排站、
+    互相遮挡的两个真实目标当成重复吞掉，而被吞掉的候选是看不见的。
+    只看 IoU 会放过套叠（大框套小框时并集被稀释）；只看覆盖比会放过差不多大的错位重画。
+    两条都要，判据才只有一处。
+    """
+    thresh = SAME_OBJECT_IOU_THRESH if iou_thresh is None else float(iou_thresh)
+    return box_iou(a, b) >= thresh or box_min_cover_ratio(a, b) >= SAME_OBJECT_COVER_THRESH
+
+
+def filter_duplicate_boxes(candidate_boxes, existing_manual, existing_auto, iou_thresh=None):
+    """过滤掉跟现有人工框、盘上待确认框、或本轮已经留下的框是同一个东西的候选框。
+
+    本轮内部的框也要比：模型的 NMS 只按重叠合并框，大框套小框时重叠很低，两个都会交出来；
+    盘上人工框和上一轮候选都比过了，唯独同一轮里先后出来的两个框没互相比过，
+    于是套叠的两个框一起进了候选，人在缩略图上看到的就是同一个目标画了两遍。
+    留下先到的那个：模型输出按置信度从高到低排，先到的就是它更确定的那个。
+    """
     filtered = []
     for candidate in candidate_boxes:
         duplicate = False
-        for existing in existing_manual:
-            if existing["class"] == candidate["class"] and box_iou(existing, candidate) >= iou_thresh:
+        for existing in list(existing_manual) + list(existing_auto) + filtered:
+            if existing["class"] == candidate["class"] and is_same_object_box(existing, candidate, iou_thresh):
                 duplicate = True
                 break
-        if not duplicate:
-            for existing in existing_auto:
-                if existing["class"] == candidate["class"] and box_iou(existing, candidate) >= iou_thresh:
-                    duplicate = True
-                    break
         if not duplicate:
             filtered.append(candidate)
     return filtered
@@ -139,19 +178,19 @@ def polygon_iou(a, b):
 
 
 def polygon_overlap_metrics(existing, candidate):
-    """返回 polygon 的 IoU 与候选被覆盖比例，用于待复核去重。"""
+    """返回 polygon 的 IoU 与「较小那个被另一个盖住多少」，用于待复核去重。"""
     bbox_existing = polygon_bbox(existing)
     bbox_candidate = polygon_bbox(candidate)
     if not bbox_existing or not bbox_candidate:
-        return {"iou": 0.0, "candidate_covered_ratio": 0.0}
+        return {"iou": 0.0, "min_cover_ratio": 0.0}
     bbox_overlap = box_iou(bbox_existing, bbox_candidate)
     if bbox_overlap <= 0:
-        return {"iou": 0.0, "candidate_covered_ratio": 0.0}
+        return {"iou": 0.0, "min_cover_ratio": 0.0}
 
     points_existing = (existing or {}).get("points") or []
     points_candidate = (candidate or {}).get("points") or []
     if len(points_existing) < 3 or len(points_candidate) < 3:
-        return {"iou": 0.0, "candidate_covered_ratio": 0.0}
+        return {"iou": 0.0, "min_cover_ratio": 0.0}
 
     union_bbox = {
         "x1": min(bbox_existing["x1"], bbox_candidate["x1"]),
@@ -183,9 +222,11 @@ def polygon_overlap_metrics(existing, candidate):
             inter = int(np.logical_and(existing_mask, candidate_mask).sum())
             union = int(np.logical_or(existing_mask, candidate_mask).sum())
             candidate_area = int(candidate_mask.sum())
+            existing_area = int(existing_mask.sum())
+            smaller_area = min(candidate_area, existing_area)
             return {
                 "iou": inter / float(union) if union > 0 else 0.0,
-                "candidate_covered_ratio": inter / float(candidate_area) if candidate_area > 0 else 0.0,
+                "min_cover_ratio": inter / float(smaller_area) if smaller_area > 0 else 0.0,
             }
         except Exception:
             pass
@@ -193,29 +234,29 @@ def polygon_overlap_metrics(existing, candidate):
     bbox_intersection = max(0.0, min(bbox_existing["x2"], bbox_candidate["x2"]) - max(bbox_existing["x1"], bbox_candidate["x1"])) * max(
         0.0, min(bbox_existing["y2"], bbox_candidate["y2"]) - max(bbox_existing["y1"], bbox_candidate["y1"])
     )
-    candidate_bbox_area = max(0.0, bbox_candidate["x2"] - bbox_candidate["x1"]) * max(0.0, bbox_candidate["y2"] - bbox_candidate["y1"])
+    smaller_bbox_area = min(_box_area(bbox_existing), _box_area(bbox_candidate))
     return {
         "iou": bbox_overlap,
-        "candidate_covered_ratio": bbox_intersection / float(candidate_bbox_area + 1e-6),
+        "min_cover_ratio": bbox_intersection / float(smaller_bbox_area + 1e-6),
     }
 
 
 def filter_duplicate_polygons(candidate_polygons, existing_manual, existing_auto, iou_thresh):
-    """过滤与现有人工或待复核轮廓高度重叠的候选 polygon。"""
+    """过滤跟现有人工或待复核轮廓是同一个东西的候选 polygon。"""
     filtered = []
     for candidate in candidate_polygons:
         duplicate = False
         for existing in existing_manual:
             if existing.get("class") == candidate.get("class"):
                 metrics = polygon_overlap_metrics(existing, candidate)
-                if metrics["iou"] >= iou_thresh or metrics["candidate_covered_ratio"] >= 0.9:
+                if metrics["iou"] >= float(iou_thresh) or metrics["min_cover_ratio"] >= SAME_OBJECT_COVER_THRESH:
                     duplicate = True
                     break
         if not duplicate:
             for existing in existing_auto:
                 if existing.get("class") == candidate.get("class"):
                     metrics = polygon_overlap_metrics(existing, candidate)
-                    if metrics["iou"] >= iou_thresh or metrics["candidate_covered_ratio"] >= 0.9:
+                    if metrics["iou"] >= float(iou_thresh) or metrics["min_cover_ratio"] >= SAME_OBJECT_COVER_THRESH:
                         duplicate = True
                         break
         if not duplicate:

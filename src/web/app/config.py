@@ -30,11 +30,20 @@ _DEFAULTS = {
         "bootstrap_admin_email": "admin@local",
         "allow_register": False,
     },
-    "jwt": {
-        "algorithm": "HS256",
-        "issuer": "vision-train",
-    },
 }
+
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_duration_seconds(value):
+    """把秒数或 `7d` / `12h` 形式的时长解析为秒。"""
+    text = str(value).strip().lower()
+    if text.isdigit():
+        return int(text)
+    unit = text[-1:]
+    if unit in _DURATION_UNITS and text[:-1].isdigit():
+        return int(text[:-1]) * _DURATION_UNITS[unit]
+    raise ValueError(f"无法解析时长: {value}（支持秒数或 7d/12h/30m 形式）")
 
 
 def _apply_env(section_name, env_map):
@@ -49,10 +58,13 @@ def _apply_env(section_name, env_map):
         if isinstance(default, bool):
             out[key] = parse_bool(value, default=default)
         elif isinstance(default, int):
-            try:
-                out[key] = int(value)
-            except ValueError:
-                pass
+            if section_name == "auth" and key == "session_ttl_seconds":
+                out[key] = _parse_duration_seconds(value)
+            else:
+                try:
+                    out[key] = int(value)
+                except ValueError:
+                    pass
         else:
             out[key] = value
     return out
@@ -87,18 +99,11 @@ CONFIG = {
             "allow_register": "VISION_TRAIN_AUTH_ALLOW_REGISTER",
         },
     ),
-    "jwt": _apply_env(
-        "jwt",
-        {
-            "algorithm": "VISION_TRAIN_JWT_ALGORITHM",
-        },
-    ),
 }
 
 IO = CONFIG["io"]
 SERVER = CONFIG["server"]
 AUTH = CONFIG["auth"]
-JWT = CONFIG["jwt"]
 
 
 def _resolve_relative_to_cwd(target):
@@ -118,11 +123,16 @@ def _resolve_dir_relative_to_cwd(config_key, default_relative):
 
 
 def _require_env_dir(env_name, description):
-    """强制要求环境变量提供目录路径，并归一化为绝对路径。"""
+    """强制要求环境变量提供目录路径，并归一化为唯一的真实绝对路径。
+
+    这里用 realpath 而不是 abspath：数据集扫描侧本来就按 realpath 认目录，
+    根目录若留着符号链接形态（macOS 的 /tmp 就是 /private/tmp），
+    两条路径相减会跑出一串 ../，标签与候选被静默读成空。
+    """
     value = os.environ.get(env_name)
     if value in (None, ""):
         raise RuntimeError(f"必须设置环境变量 {env_name} 指向{description}")
-    return os.path.abspath(value)
+    return os.path.realpath(value)
 
 
 PROJECTS_DIR = _require_env_dir("VISION_TRAIN_PROJECTS_DIR", "项目根目录")

@@ -170,9 +170,7 @@ def api_video_task_image_file():
 bp.add_url_rule(
     "/api/video/task/import",
     view_func=json_body_endpoint(
-        lambda project_path, task_id, dataset_name, selected_images: {
-            "imported_count": import_task_images(project_path, task_id, dataset_name, selected_images)
-        },
+        import_task_images,
         project_path=param(
             "project_path",
             required=True,
@@ -181,6 +179,7 @@ bp.add_url_rule(
         task_id=param("task_id", required=True),
         dataset_name=param("dataset_name", required=True),
         selected_images=param("selected_images"),
+        vision_task_type=param("vision_task_type"),
     ),
     methods=["POST"],
 )

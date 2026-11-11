@@ -33,15 +33,30 @@ export const useMainStore = defineStore('main', {
     pretrainedModels: [],        // 默认模型列表（训练等场景）
     autoAnnotateModels: [],      // 自动标注候选模型列表
     pretrainedOptions: [],       // 全部官方预设（含未下载）
-    selectedDataset: null,
+    selectedDatasetId: '',       // 当前打开的数据集身份；后端保证每个数据集都有
     authEnabled: null,           // null = 未加载；true / false 来自 /api/auth/status
+    // 走查时把侧边栏和顶栏让给图片列表；放在 store 是因为要动的三层（App / 页面 / 列表）不在一起
+    listFocus: false,
     isLoading: false,
     error: null,
   }),
+
+  getters: {
+    // 数据集对象永远从最新的项目列表里现取：后台刷新只换对象，不会换身份，
+    // 所以「当前打开哪个数据集」不可能被一次刷新悄悄清掉。
+    selectedDataset(state) {
+      if (!state.selectedDatasetId || !state.currentProject) return null;
+      return (state.currentProject.datasets || [])
+        .find((item) => item.dataset_id === state.selectedDatasetId) || null;
+    },
+  },
   
   actions: {
     setAuthEnabled(enabled) {
       this.authEnabled = !!enabled;
+    },
+    setListFocus(enabled) {
+      this.listFocus = !!enabled;
     },
     mergePretrainedStatus(status) {
       if (!status?.name) return;
@@ -71,6 +86,7 @@ export const useMainStore = defineStore('main', {
      * 拉取项目列表
      * @param {Object} [opts]
      * @param {boolean} [opts.silent=false] silent=true 时不切换 isLoading（用于后台局部刷新，不让 Sidebar 闪 loading）
+     * @returns {Promise<boolean>} 是否拉取成功；调用方据此区分「刷新后仍没有」与「没刷成功」
      */
     async fetchProjects(opts = {}) {
       const silent = opts.silent === true;
@@ -84,9 +100,11 @@ export const useMainStore = defineStore('main', {
                       || this.projects.find(p => p.path === this.currentProject.path);
           if (cur) this.currentProject = cur;
         }
+        return true;
       } catch (err) {
         // silent 只控制 isLoading；错误一律提示用户。
         handleStoreError(err, this);
+        return false;
       } finally {
         if (!silent) this.isLoading = false;
       }
@@ -112,7 +130,7 @@ export const useMainStore = defineStore('main', {
       const res = await api.deleteProject({ name, confirm: true });
       if (this.currentProject?.name === name) {
         this.currentProject = null;
-        this.selectedDataset = null;
+        this.selectedDatasetId = '';
       }
       await this.fetchProjects({ silent: true });
       return res;
@@ -197,23 +215,17 @@ export const useMainStore = defineStore('main', {
     },
 
     selectProject(project) {
+      const projectId = project?.id || project?.path;
+      const sameProject = !!projectId && (this.currentProject?.id || this.currentProject?.path) === projectId;
       this.currentProject = project;
-      this.selectedDataset = null;
+      // 换项目才需要放下数据集；重复选中同一个项目不应该让页面丢失正在看的数据集
+      if (!sameProject) {
+        this.selectedDatasetId = '';
+      }
     },
 
     selectDataset(dataset) {
-      this.selectedDataset = dataset;
-    },
-
-    /** 拉取项目列表 + 保持 currentProject / selectedDataset 引用最新 */
-    async refreshKeepSelection() {
-      const selectedPath = this.selectedDataset?.path;
-      await this.fetchProjects({ silent: true });
-      if (this.currentProject && selectedPath) {
-        this.selectedDataset = (this.currentProject.datasets || []).find(d => d.path === selectedPath) || null;
-      } else {
-        this.selectedDataset = null;
-      }
+      this.selectedDatasetId = dataset?.dataset_id || '';
     },
 
     /** 启动版本状态轮询（引用计数，幂等） */
@@ -226,7 +238,7 @@ export const useMainStore = defineStore('main', {
           (ds) => ds.versioning_status === 'pending'
         );
         if (!hasPending) return;
-        await this.refreshKeepSelection();
+        await this.fetchProjects({ silent: true });
       }, VERSION_POLL_INTERVAL_MS);
     },
 

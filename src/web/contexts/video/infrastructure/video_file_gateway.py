@@ -2,11 +2,11 @@
 
 import os
 
-from contexts.project.infrastructure.project_paths import (
+from contexts.project.application.project_service import (
     get_project_videos_dir,
 )
-from contexts.task.domain.task_types import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.infrastructure.task_runtime import list_project_tasks
+from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION
+from contexts.task.application.task_service import list_project_tasks
 from protocols.task_status import is_active_task_status
 from shared.utils.fs_utils import remove_file_silent
 from constants.media import VIDEO_FILE_EXTENSION_SET
@@ -92,7 +92,7 @@ def remove_video_file(project_path, video_name):
     for task in related_tasks:
         if is_active_task_status(task.get("status")):
             try:
-                from contexts.task.infrastructure.task_runtime import request_task_stop
+                from contexts.task.application.task_service import request_task_stop
                 request_task_stop(task["id"])
                 stop_requested_ids.append(task["id"])
             except ValueError:

@@ -1,8 +1,8 @@
 """集中封装训练产物、导出记录与最近任务查询。"""
 
-from contexts.task.domain.task_artifact_keys import ARTIFACT_OUTPUT_DIR
-from contexts.task.domain.task_types import TASK_TYPE_EXPORT, TASK_TYPE_TRAINING
-from contexts.task.infrastructure.task_runtime import list_project_tasks, load_task
+from protocols.task_artifact_keys import ARTIFACT_OUTPUT_DIR
+from protocols.task_type import TASK_TYPE_EXPORT, TASK_TYPE_TRAINING
+from contexts.task.application.task_service import list_project_tasks, load_task
 from contexts.training.infrastructure.artifact_scanner import scan_training_run_artifacts
 from contexts.training.presenters import list_training_export_records, present_run_artifacts, present_task_artifacts
 from shared.utils.value_utils import require_present

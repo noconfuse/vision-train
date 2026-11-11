@@ -1,15 +1,9 @@
 <template>
-  <div v-if="visible" class="vt-modal-backdrop" @click.self="onClose">
-    <div class="vt-modal-panel vt-modal-panel--md p-6">
-      <div class="mb-4 flex items-center justify-between">
-        <h3 class="text-lg font-semibold text-slate-800 inline-flex items-center gap-2">
-          <AppIcon name="upload" class="h-5 w-5 text-slate-600" />
-          <span>上传图片到 <span class="vt-text-accent">{{ datasetName }}</span></span>
-        </h3>
-        <button class="vt-modal-close" :disabled="uploading" @click="onClose">
-          <AppIcon name="close" class="h-4 w-4" />
-        </button>
-      </div>
+  <ModalShell v-if="visible" :title="`上传图片到 ${datasetName}`" size="md" body-class="p-6"
+              :dismissible="!uploading" @close="onClose">
+    <template #icon>
+      <AppIcon name="upload" class="h-5 w-5 text-slate-600" />
+    </template>
 
       <div v-if="!uploading && !success && !error">
         <div class="mb-3">
@@ -95,8 +89,7 @@
           </button>
         </div>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -110,6 +103,7 @@ import {
   isSupportedUploadFile,
 } from '../utils/media';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },

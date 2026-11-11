@@ -26,6 +26,20 @@ def write_yolo_lines(label_path, lines):
         handle.write("\n".join(lines or []))
 
 
+def split_yolo_line(line):
+    """把一行 YOLO 标签拆成 (类别号, 类别号之后的数值)，行不合规返回 None。
+
+    每类任务怎么解读这些数值（外接框、轮廓点列、关键点）由调用方决定，这里只管拆。
+    """
+    parts = str(line or "").split()
+    if len(parts) < 2:
+        return None
+    try:
+        return parse_yolo_class_id(parts[0]), [float(value) for value in parts[1:]]
+    except (TypeError, ValueError):
+        return None
+
+
 def collect_yolo_class_ids(label_path):
     """收集标签文件里出现过的类别编号。"""
     class_ids = set()

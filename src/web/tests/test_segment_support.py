@@ -9,18 +9,18 @@ from unittest.mock import patch
 
 from contexts.annotation.infrastructure.annotation_io import decode_segment_file
 from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
-from contexts.dataset.domain.capabilities import build_dataset_capabilities
+from protocols.capabilities.dataset_capabilities import build_dataset_capabilities
 from contexts.dataset.infrastructure.dataset_import_strategy import resolve_dataset_import_strategy
 from contexts.dataset.infrastructure.dataset_mutation_strategy import resolve_dataset_mutation_strategy
 from contexts.dataset.infrastructure.dataset_scan_strategy import resolve_dataset_scan_strategy
 from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
-from contexts.model.domain.capabilities import (
+from protocols.capabilities.model_capabilities import (
     MODEL_TRAINING_MODE_YOLO_SEGMENT,
     build_model_capabilities,
 )
-from contexts.training.domain.export_profile import get_training_export_profile
-from contexts.training.domain.result_profile import get_training_result_profile
-from contexts.training.domain.training_profile import get_training_profile
+from protocols.capabilities.export_profile import get_training_export_profile
+from protocols.capabilities.result_profile import get_training_result_profile
+from protocols.capabilities.training_profile import get_training_profile
 from contexts.training.infrastructure.training_runtime_adapter import resolve_training_runtime_adapter
 from protocols.vision_task_type import VISION_TASK_TYPE_SEGMENT
 
@@ -28,6 +28,8 @@ from protocols.vision_task_type import VISION_TASK_TYPE_SEGMENT
 class SegmentSupportTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="vt_segment_support_")
+        with open(os.path.join(self.temp_dir, ".vision-train.meta.json"), "w", encoding="utf-8") as handle:
+            handle.write('{"vision_task_type": "segment", "dataset_id": "segment_support"}')
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -130,11 +132,12 @@ class SegmentSupportTests(unittest.TestCase):
         self.assertEqual(result["polygons"][0]["class"], 2)
         self.assertEqual(len(result["polygons"][0]["points"]), 4)
 
-    def test_segment_strategy_saves_commits_and_filters_auto_polygons(self):
+    def test_segment_strategy_saves_refines_and_keeps_the_chosen_polygons(self):
         strategy = resolve_annotation_task_strategy(VISION_TASK_TYPE_SEGMENT)
-        image_path = os.path.join(self.temp_dir, "sample.jpg")
-        manual_label_path = os.path.join(self.temp_dir, "labels", "sample.txt")
-        auto_label_path = os.path.join(self.temp_dir, "auto_labels", "sample.txt")
+        image_path = os.path.join(self.temp_dir, "train", "images", "sample.jpg")
+        manual_label_path = os.path.join(self.temp_dir, "train", "labels", "sample.txt")
+        auto_label_path = os.path.join(self.temp_dir, "auto_labels", "train", "sample.txt")
+        os.makedirs(os.path.dirname(image_path), exist_ok=True)
         os.makedirs(os.path.dirname(manual_label_path), exist_ok=True)
         os.makedirs(os.path.dirname(auto_label_path), exist_ok=True)
         with open(image_path, "wb") as handle:
@@ -145,6 +148,7 @@ class SegmentSupportTests(unittest.TestCase):
             "manual_label_path": manual_label_path,
             "auto_label_path": auto_label_path,
             "dataset_root": self.temp_dir,
+            "project_path": self.temp_dir,
             "split": "train",
             "relative_noext": "sample",
         }
@@ -175,16 +179,17 @@ class SegmentSupportTests(unittest.TestCase):
             self.assertEqual(len(payload["manual_annotation"]["polygons"]), 1)
             self.assertEqual(len(payload["auto_annotation"]["polygons"]), 1)
 
-            strategy.commit_auto_annotation(context)
+            # 保存即审核：人留下的轮廓跟着人工轮廓一起被写回标签
+            strategy.save_manual_annotation(context, {"polygons": [manual_polygon] + refined["polygons"]})
             merged = decode_segment_file(manual_label_path, 100, 100)
             self.assertEqual(len(merged), 2)
-            self.assertFalse(os.path.exists(auto_label_path))
 
     def test_segment_strategy_filters_candidate_when_mostly_covered_by_manual_polygon(self):
         strategy = resolve_annotation_task_strategy(VISION_TASK_TYPE_SEGMENT)
-        image_path = os.path.join(self.temp_dir, "covered.jpg")
-        manual_label_path = os.path.join(self.temp_dir, "labels", "covered.txt")
-        auto_label_path = os.path.join(self.temp_dir, "auto_labels", "covered.txt")
+        image_path = os.path.join(self.temp_dir, "train", "images", "covered.jpg")
+        manual_label_path = os.path.join(self.temp_dir, "train", "labels", "covered.txt")
+        auto_label_path = os.path.join(self.temp_dir, "auto_labels", "train", "covered.txt")
+        os.makedirs(os.path.dirname(image_path), exist_ok=True)
         os.makedirs(os.path.dirname(manual_label_path), exist_ok=True)
         os.makedirs(os.path.dirname(auto_label_path), exist_ok=True)
         with open(image_path, "wb") as handle:
@@ -195,6 +200,7 @@ class SegmentSupportTests(unittest.TestCase):
             "manual_label_path": manual_label_path,
             "auto_label_path": auto_label_path,
             "dataset_root": self.temp_dir,
+            "project_path": self.temp_dir,
             "split": "train",
             "relative_noext": "covered",
         }

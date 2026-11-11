@@ -4,21 +4,33 @@ import os
 import threading
 
 from protocols.task_status import TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING
+from protocols.task_type import TASK_TYPE_AUTO_ANNOTATION
 
 from contexts.annotation.infrastructure.annotation_io import (
     build_dataset_image_context,
     get_dataset_root,
 )
-from contexts.dataset.infrastructure.dataset_schema import find_dataset_config
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
+from contexts.dataset.application.dataset_service import (
+    ensure_dataset_task_identity,
+    find_dataset_config,
+    load_dataset_names,
+    load_dataset_vision_task_type,
+)
 from contexts.annotation.infrastructure.batch_helpers import list_batch_image_paths
 from contexts.annotation.infrastructure.annotation_task_strategy import resolve_annotation_task_strategy
-from contexts.task.infrastructure.task_repository import (
+from contexts.annotation.domain.class_alignment import (
+    class_ids_from_annotation,
+    normalize_model_names,
+    require_auto_classes_writable,
+)
+from contexts.annotation.domain.services import SAME_OBJECT_IOU_THRESH
+from contexts.task.application.task_service import (
     create_task as start_task,
     update_task as update_task_status,
+    list_tasks as list_task_items,
+    load_task,
 )
-from contexts.task.infrastructure.task_runtime import list_tasks as list_task_items, load_task
-from shared.utils.path_utils import project_name_from_path, resolve_storage_path
+from shared.utils.path_utils import project_name_from_path, resolve_storage_path, storage_path_ref
 from shared.utils.time_utils import now_iso
 
 
@@ -53,7 +65,38 @@ def auto_annotate_image(project_path, image_ref, model_path=None, conf=0.25, max
 
     results = model.predict(image_path, conf=float(conf), max_det=int(max_det), verbose=False)
     prediction = results[0] if results else None
-    return strategy.extract_auto_annotation(prediction) if prediction is not None else {}
+    annotation = strategy.extract_auto_annotation(prediction) if prediction is not None else {}
+    require_auto_classes_writable(
+        normalize_model_names(getattr(model, "names", None)),
+        load_dataset_names(dataset_root),
+        class_ids_from_annotation(annotation, vision_task_type),
+    )
+    return annotation
+
+
+def round_artifacts(added, pending, errors):
+    """把一轮自动标注的实测数字收成可查询的产物。"""
+    return {
+        "added": int(added),
+        "pending": int(pending),
+        "failed_images": len(errors),
+        "errors": list(errors[:3]),
+    }
+
+
+def round_message(added, pending, errors, class_names=None):
+    """把一轮的实测结果写成一句进度条下方可直接展示的话。"""
+    parts = []
+    scope = f"{'、'.join(class_names)}：" if class_names else ""
+    if added:
+        parts.append(f"{scope}候选 {added} 条")
+    else:
+        parts.append(f"{scope}没有可写入的结果" if class_names else "没有可写入的结果")
+    if pending:
+        parts.append(f"{pending} 张图有待审候选")
+    if errors:
+        parts.append(f"{len(errors)} 张写入失败（{errors[0]}）")
+    return " / ".join(parts)
 
 
 def get_batch_auto_annotation_status(task_id=None):
@@ -61,11 +104,11 @@ def get_batch_auto_annotation_status(task_id=None):
     task = None
     if task_id:
         task = load_task(task_id)
-        if not task or task.get("type") != "auto_annotation":
+        if not task or task.get("type") != TASK_TYPE_AUTO_ANNOTATION:
             raise ValueError("自动标注任务不存在")
     else:
-        tasks = list_task_items(type_="auto_annotation", limit=20)
-        task = next((item for item in tasks if item.get("type") == "auto_annotation"), None)
+        tasks = list_task_items(type_=TASK_TYPE_AUTO_ANNOTATION, limit=20)
+        task = next((item for item in tasks if item.get("type") == TASK_TYPE_AUTO_ANNOTATION), None)
         if not task:
             return {"task_id": None, "is_running": False, "progress": 0, "message": "", "added": 0, "pending": 0}
 
@@ -80,6 +123,8 @@ def get_batch_auto_annotation_status(task_id=None):
         "error": task.get("error"),
         "added": int(artifacts.get("added") or 0),
         "pending": int(artifacts.get("pending") or 0),
+        "failed_images": int(artifacts.get("failed_images") or 0),
+        "errors": list(artifacts.get("errors") or []),
     }
 
 
@@ -92,20 +137,40 @@ def start_batch_auto_annotation(
     conf=0.25,
     max_det=200,
     batch_size=1,
-    iou_thresh=0.5,
+    iou_thresh=SAME_OBJECT_IOU_THRESH,
+    classes=None,
 ):
-    """创建批量自动标注任务并启动后台线程。"""
+    """创建批量自动标注任务并启动后台线程。
+
+    推断结果一律写进 auto_labels 目录当候选，真人不并入人工标签。
+    classes 给了就只探这几个类别（漏标探测一轮一个类，候选才不至于一次涨到审不动的量）。
+    """
     project_name = project_name_from_path(project_path)
     dataset_root = get_dataset_root(project_path, dataset_name)
     vision_task_type = load_dataset_vision_task_type(dataset_root)
     strategy = resolve_annotation_task_strategy(vision_task_type)
     if not strategy.supports_auto_annotation:
         raise ValueError("当前任务类型暂不支持自动标注")
+
+    probe_ids = sorted({int(class_id) for class_id in (classes or ())})
+    dataset_names = load_dataset_names(dataset_root)
+
+    from ultralytics import YOLO
+
+    # 权重在这里同步加载：类别表对不对、选的类别模型里有没有，当场就要答复，不能跑到一半才抛
+    model = YOLO(model_path)
+    if model is None:
+        raise ValueError("模型不可用")
+    model_names = normalize_model_names(getattr(model, "names", None))
+    if probe_ids:
+        require_auto_classes_writable(model_names, dataset_names, probe_ids)
+
     task = start_task(
         project_path=project_path,
         project_name=project_name,
-        type_="auto_annotation",
+        type_=TASK_TYPE_AUTO_ANNOTATION,
         dataset_name=dataset_name,
+        dataset_id=ensure_dataset_task_identity(dataset_root)["dataset_id"],
         dataset_path=dataset_root,
         vision_task_type=vision_task_type,
         payload={
@@ -115,6 +180,7 @@ def start_batch_auto_annotation(
             "max_det": max_det,
             "batch_size": batch_size,
             "iou_thresh": iou_thresh,
+            "classes": probe_ids or None,
             "image_count": len(image_paths) if isinstance(image_paths, list) else None,
         },
         message="启动批量自动标注...",
@@ -123,15 +189,23 @@ def start_batch_auto_annotation(
     update_task_status(task_id, status=TASK_STATUS_RUNNING, started_at=now_iso())
 
     def run_batch():
-        """批量推理图片、去重结果并持续更新任务进度。"""
+        """批量推理图片、把候选落盘并持续更新任务进度。"""
         added = 0
         pending = 0
+        errors = []
         try:
-            from ultralytics import YOLO
-
-            model = YOLO(model_path)
-            if model is None:
-                raise ValueError("模型不可用")
+            # 出处要跟着每一批候选写下去：审核时问「这个框是谁给的」必须能当场回答
+            run_source = {
+                "task_id": task_id,
+                "engine": "ultralytics",
+                "model_path": storage_path_ref(model_path) if model_path else "",
+                "model_name": os.path.basename(str(model_path or "")),
+                "conf_thresh": float(conf),
+                "max_det": int(max_det),
+                "classes": probe_ids or None,
+                "started_at": now_iso(),
+            }
+            probe_names = [str(dataset_names[cid]) for cid in probe_ids] if dataset_names else []
 
             img_dir = strategy.get_auto_annotation_image_dir(dataset_root, split)
             resolved_image_paths = [resolve_storage_path(path) for path in (image_paths or [])]
@@ -142,6 +216,7 @@ def start_batch_auto_annotation(
                 progress=0,
                 message=f"执行批量自动标注（{total} 张）",
                 payload={**(task.get("payload", {}) or {}), "image_count": total},
+                artifacts=round_artifacts(added, pending, errors),
             )
 
             for index in range(0, len(images), int(batch_size)):
@@ -160,32 +235,41 @@ def start_batch_auto_annotation(
 
                 for batch_index, result in enumerate(results):
                     image_path = batch[batch_index]
-                    context = build_dataset_image_context(dataset_root, split, image_path)
-                    annotation = strategy.extract_auto_annotation(result)
-                    refined_annotation = strategy.refine_auto_annotation(context, annotation, float(iou_thresh))
-                    if not strategy.has_auto_annotation_content(refined_annotation):
-                        continue
+                    context = build_dataset_image_context(dataset_root, split, image_path, project_path=project_path)
                     try:
-                        strategy.save_auto_annotation(context, refined_annotation)
+                        annotation = strategy.select_auto_annotation_classes(
+                            strategy.extract_auto_annotation(result), probe_ids or None
+                        )
+                        refined_annotation = strategy.refine_auto_annotation(context, annotation, float(iou_thresh))
+                        if not strategy.has_auto_annotation_content(refined_annotation):
+                            continue
+                        # 类别对不上就整轮停下：宁可不出结果，也不把模型的编号写进数据集
+                        require_auto_classes_writable(
+                            model_names,
+                            dataset_names,
+                            class_ids_from_annotation(refined_annotation, vision_task_type),
+                        )
+                        strategy.save_auto_annotation(context, refined_annotation, source=run_source)
                         added += strategy.count_auto_annotation_items(refined_annotation)
                         pending += 1
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # 单张失败不吞掉：整轮照常收尾，但失败张数和第一条原因要能看见
+                        errors.append(f"{os.path.basename(str(image_path))}: {exc}")
 
                 update_task_status(
                     task_id,
                     progress=int((index + len(batch)) / total * 100) if total else 100,
                     message=f"已处理 {min(index + len(batch), total)}/{total}",
-                    artifacts={"added": added, "pending": pending},
+                    artifacts=round_artifacts(added, pending, errors),
                 )
 
             update_task_status(
                 task_id,
                 status=TASK_STATUS_COMPLETED,
                 progress=100,
-                message=f"完成（新增 {added} 条自动标注 / {pending} 张图）",
+                message=round_message(added, pending, errors, probe_names),
                 finished_at=now_iso(),
-                artifacts={"added": added, "pending": pending},
+                artifacts=round_artifacts(added, pending, errors),
             )
         except Exception as exc:
             update_task_status(

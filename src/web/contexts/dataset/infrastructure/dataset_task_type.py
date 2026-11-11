@@ -26,7 +26,7 @@ def new_dataset_id():
 def require_dataset_vision_task_type(value):
     """校验并返回数据集内部记录的任务类型。"""
     if value not in VISION_TASK_TYPE_SET:
-        raise ValueError("数据集缺少合法的 vision_task_type")
+        raise ValueError("缺少任务类型记录（vision_task_type）")
     return value
 
 
@@ -44,7 +44,7 @@ def save_dataset_task_meta(dataset_root, data):
     payload = dict(data or {})
     payload["vision_task_type"] = require_dataset_vision_task_type(payload.get("vision_task_type"))
     if not str(payload.get("dataset_id") or "").strip():
-        raise ValueError("数据集缺少稳定 dataset_id")
+        raise ValueError("缺少稳定身份记录（dataset_id）")
     payload.setdefault("created_at", now_iso())
     payload["updated_at"] = now_iso()
     return save_json_file(get_dataset_task_meta_path(dataset_root), payload)
@@ -84,7 +84,7 @@ def load_dataset_identity_meta(dataset_root):
     meta = load_dataset_task_meta(dataset_root)
     dataset_id = str(meta.get("dataset_id") or "").strip()
     if not dataset_id:
-        raise ValueError("数据集缺少稳定 dataset_id")
+        raise ValueError("缺少稳定身份记录（dataset_id）")
     current_version_id = str(meta.get("current_version_id") or "").strip() or None
     versioning_status = str(meta.get("versioning_status") or "").strip() or None
     if current_version_id:

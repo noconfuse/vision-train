@@ -3,7 +3,7 @@
 import os
 
 from contexts.annotation.domain.services import box_iou_xyxy
-from contexts.model.infrastructure.model_catalog import load_openvino_metadata
+from contexts.model.application.model_service import load_openvino_metadata
 
 _openvino_cache = {}
 def _xywh_to_xyxy(xywh):

@@ -1,6 +1,6 @@
 """定义训练配置能力表，收口训练表单、增强参数和指标展示。"""
 
-from contexts.model.domain.capabilities import (
+from protocols.capabilities.model_capabilities import (
     MODEL_TRAINING_MODE_UNSUPPORTED,
     MODEL_TRAINING_MODE_YOLO_CLASSIFY,
     MODEL_TRAINING_MODE_YOLO_DETECT,

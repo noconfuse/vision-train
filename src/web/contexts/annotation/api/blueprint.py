@@ -3,19 +3,22 @@
 from flask import Blueprint
 
 from app.http import json_body_endpoint, param, query_params_endpoint
+from contexts.annotation.application.annotation_service import SAME_OBJECT_IOU_THRESH
 from contexts.annotation.application.use_cases import (
-    commit_auto_annotation,
     get_annotation_payload,
+    clear_pending_annotations,
+    commit_pending_annotations,
     list_missing_annotations,
     list_pending_auto_annotations,
     refine_segment_boundary_patch_annotation,
     refine_segment_annotation,
     erase_segment_annotation,
-    save_auto_annotation,
     save_manual_annotation,
     auto_annotate_image,
     get_batch_auto_annotation_status,
     start_batch_auto_annotation,
+    get_similarity_probe_status,
+    start_similarity_probe,
 )
 from shared.utils.path_utils import resolve_project_path
 
@@ -58,9 +61,33 @@ bp.add_url_rule(
         conf=param("conf", default=0.25),
         max_det=param("max_det", default=200),
         batch_size=param("batch_size", default=1),
-        iou_thresh=param("iou_thresh", default=0.5),
+        iou_thresh=param("iou_thresh", default=SAME_OBJECT_IOU_THRESH),
+        classes=param("classes", default=None),
     ),
     methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/annotation/similar_probe",
+    view_func=json_body_endpoint(
+        start_similarity_probe,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_ref=param("image_path", required=True),
+        class_id=param("class_id", required=True, transform=int),
+        sample_box=param("sample_box", required=True, required_message="探测相似必须给出样本框"),
+        score_thresh=param("score_thresh", default=0.45),
+        max_per_image=param("max_per_image", default=3),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/annotation/similar_probe/status",
+    view_func=query_params_endpoint(
+        get_similarity_probe_status,
+        task_id=param("task_id", required=True),
+    ),
+    methods=["GET"],
 )
 bp.add_url_rule(
     "/api/annotation/pending",
@@ -133,6 +160,27 @@ bp.add_url_rule(
     methods=["POST"],
 )
 bp.add_url_rule(
+    "/api/annotation/commit",
+    view_func=json_body_endpoint(
+        commit_pending_annotations,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        images=param("images", default=list),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/annotation/clear",
+    view_func=json_body_endpoint(
+        clear_pending_annotations,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        images=param("images", default=list),
+        classes=param("classes", default=None),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
     "/api/annotation/get",
     view_func=query_params_endpoint(
         get_annotation_payload,
@@ -143,31 +191,6 @@ bp.add_url_rule(
     ),
     methods=["GET"],
 )
-bp.add_url_rule(
-    "/api/annotation/commit",
-    view_func=json_body_endpoint(
-        commit_auto_annotation,
-        project_path=param("project_path", required=True, transform=resolve_project_path),
-        dataset_name=param("dataset_name", required=True),
-        split=param("split", default="train"),
-        image_ref=param("image_path", required=True),
-    ),
-    methods=["POST"],
-)
-bp.add_url_rule(
-    "/api/annotation/save_auto",
-    view_func=json_body_endpoint(
-        save_auto_annotation,
-        project_path=param("project_path", required=True, transform=resolve_project_path),
-        dataset_name=param("dataset_name", required=True),
-        split=param("split", default="train"),
-        image_ref=param("image_path", required=True),
-        annotation=param("annotation", default=dict),
-    ),
-    methods=["POST"],
-)
-
-
 bp.add_url_rule(
     "/api/auto_annotate/batch/status",
     view_func=query_params_endpoint(

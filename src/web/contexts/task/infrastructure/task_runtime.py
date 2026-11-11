@@ -2,14 +2,14 @@
 
 import os
 
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_LOG_PATH,
     ARTIFACT_STOP_SIGNAL_PATH,
     ARTIFACT_WORKER_EXITED_AT,
     ARTIFACT_WORKER_MODULE_NAME,
     ARTIFACT_WORKER_PID,
 )
-from contexts.task.domain.task_types import TASK_TYPE_TRAINING
+from protocols.task_type import TASK_TYPE_TRAINING
 from contexts.task.presenters import present_task, present_tasks
 from contexts.task.infrastructure.worker_task_ops import request_stop as write_stop_signal
 from shared.infra.worker_process import get_process_command, is_process_alive
@@ -38,16 +38,21 @@ def _read_log_tail(log_path, max_bytes=4000):
         return ""
 
 
-def attach_training_resume_info(task_dict):
-    """为训练任务补充可恢复训练信息。"""
+def attach_training_weight_info(task_dict):
+    """为训练任务补充权重产物可用性：能不能续训、能不能直接拿去评估和导出。"""
     if not task_dict or task_dict.get("type") != TASK_TYPE_TRAINING:
         return task_dict
     task_dict = dict(task_dict)
-    from contexts.training.infrastructure.training_artifacts import resolve_training_resume_weight
+    from contexts.training.application.training_service import (
+        get_training_best_weight_path,
+        resolve_training_resume_weight,
+    )
 
-    weight_name, weight_path = resolve_training_resume_weight(task_dict.get("artifacts") or {})
+    artifacts = task_dict.get("artifacts") or {}
+    weight_name, weight_path = resolve_training_resume_weight(artifacts)
     task_dict["resume_available"] = bool(weight_path)
     task_dict["resume_weight"] = weight_name or ""
+    task_dict["best_weight_ready"] = bool(get_training_best_weight_path(artifacts))
     return task_dict
 
 
@@ -79,15 +84,15 @@ def reconcile_worker_task(task_dict):
     if not task_dict:
         return task_dict
     if not is_active_task_status(task_dict.get("status")):
-        return attach_training_resume_info(task_dict)
+        return attach_training_weight_info(task_dict)
 
     artifacts = dict(task_dict.get("artifacts") or {})
     if not artifacts.get(ARTIFACT_WORKER_PID):
-        return attach_training_resume_info(task_dict)
+        return attach_training_weight_info(task_dict)
 
     worker_state = is_worker_alive(task_dict)
     if worker_state in (True, None):
-        return attach_training_resume_info(task_dict)
+        return attach_training_weight_info(task_dict)
 
     stop_signal_path = artifacts.get(ARTIFACT_STOP_SIGNAL_PATH)
     log_path = artifacts.get(ARTIFACT_LOG_PATH)
@@ -117,7 +122,7 @@ def reconcile_worker_task(task_dict):
             finished_at=now,
             artifacts=artifacts,
         )
-    return attach_training_resume_info(patched or task_dict)
+    return attach_training_weight_info(patched or task_dict)
 
 
 def load_task(task_id):

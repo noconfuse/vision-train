@@ -101,6 +101,16 @@ export const useTrainingWorkflowStore = defineStore('trainingWorkflow', {
       }
     },
 
+    async refreshWorkflow({ project_path = '', dataset_id = '', workflow_id = '' } = {}) {
+      const fresh = await this.fetchWorkflowDetail({ project_path, dataset_id, workflow_id, include_archived: true });
+      if (!fresh?.id) return null;
+      Object.values(this.workflowLists).forEach((list) => {
+        const index = (list || []).findIndex((item) => item?.id === fresh.id);
+        if (index >= 0) list.splice(index, 1, fresh);
+      });
+      return fresh;
+    },
+
     async fetchLatestWorkflowTask({
       project_path = '',
       dataset_id = '',
@@ -150,6 +160,15 @@ export const useTrainingWorkflowStore = defineStore('trainingWorkflow', {
 
     async archiveWorkflow(data, context = {}) {
       const workflow = await api.archiveTrainingWorkflow(data);
+      this.invalidateDataset({
+        project_path: data?.project_path,
+        dataset_id: context?.dataset_id || workflow?.dataset_id || data?.dataset_id,
+      });
+      return workflow;
+    },
+
+    async restoreWorkflow(data, context = {}) {
+      const workflow = await api.restoreTrainingWorkflow(data);
       this.invalidateDataset({
         project_path: data?.project_path,
         dataset_id: context?.dataset_id || workflow?.dataset_id || data?.dataset_id,

@@ -178,10 +178,106 @@
 
       <aside class="space-y-4 xl:sticky xl:top-3">
         <div class="border border-gray-200 p-4 bg-slate-50/60">
+          <div class="flex items-center justify-between">
+            <div class="vt-step-section-title">运行位置</div>
+            <button type="button" class="vt-btn-link text-xs" @click="showComputeTargets = true">
+              管理服务器
+            </button>
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <div
+              class="vt-choice-card relative p-2.5"
+              :class="[isLocalTarget ? 'vt-choice-card--selected' : 'vt-choice-card--interactive']"
+              @click="selectTarget('')"
+            >
+              <div class="font-semibold text-sm truncate">本机</div>
+              <div class="text-[11px] text-gray-500 mt-1 truncate">
+                {{ runtimeProfile?.device?.label || '读取设备中...' }}
+              </div>
+            </div>
+            <div
+              v-for="target in computeTargets"
+              :key="target.id"
+              class="vt-choice-card relative p-2.5"
+              :class="[
+                selectedTargetId === target.id ? 'vt-choice-card--selected' : 'vt-choice-card--interactive',
+                isActionPending(TRAINING_ACTION_KEY) ? 'pointer-events-none opacity-60' : '',
+              ]"
+              @click="selectTarget(target.id)"
+            >
+              <span class="vt-tag vt-tag--sm vt-tag-info absolute top-1.5 right-1.5">GPU {{ target.device }}</span>
+              <div class="font-semibold text-sm truncate pr-12">{{ target.name }}</div>
+              <div class="text-[11px] text-gray-500 mt-1 truncate font-mono">{{ target.ssh_host }}</div>
+            </div>
+          </div>
+
+          <template v-if="selectedTarget">
+            <div class="mt-3 flex items-center justify-between gap-2">
+              <div class="text-[11px] text-gray-500">
+                数据集临时同步到 {{ selectedTarget.remote_workspace }}（内存盘），训练结束按配置清理。
+              </div>
+              <AsyncButton
+                class="vt-btn-secondary text-xs inline-flex items-center gap-1 shrink-0"
+                :pending="pendingPreflight"
+                :loading-text="'检查中...'"
+                @click="runPreflight"
+              >
+                <AppIcon name="target" class="h-3.5 w-3.5" />
+                连通性检查
+              </AsyncButton>
+            </div>
+            <div class="mt-2">
+              <PreflightReport v-if="selectedPreflight" :report="selectedPreflight" />
+              <div v-else class="text-xs text-slate-600">
+                还没检查过这台服务器，先点一次连通性检查再开始训练。
+              </div>
+            </div>
+          </template>
+          <div v-else class="mt-3 text-[11px] text-gray-500">
+            本机训练用下面探测到的设备；远端 GPU 服务器用 SSH 连接，不需要在服务器上装本产品。
+          </div>
+        </div>
+
+        <div class="border border-gray-200 p-4 bg-slate-50/60">
           <div class="vt-step-section-title">{{ trainingProfile.supports_batch_calibration ? '环境与校准' : '训练环境' }}</div>
           <div class="mt-4 mb-4">
-            <div class="text-xs font-semibold text-slate-700 mb-3">当前训练环境</div>
-            <div v-if="runtimeProfile" class="grid grid-cols-2 gap-3 text-sm">
+            <div class="text-xs font-semibold text-slate-700 mb-3">
+              当前训练环境（{{ selectedTarget ? selectedTarget.name : '本机' }}）
+            </div>
+
+            <template v-if="selectedTarget">
+              <div v-if="selectedPreflight" class="grid grid-cols-2 gap-3 text-sm">
+                <div class="col-span-2">
+                  <div class="text-xs text-gray-500">GPU</div>
+                  <div class="text-slate-800 break-words">{{ selectedPreflight.gpu_names?.join(' / ') || `device ${selectedTarget.device}` }}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-500">python</div>
+                  <div class="font-mono text-slate-800">{{ selectedPreflight.python || '-' }}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-500">torch</div>
+                  <div class="font-mono text-slate-800">{{ selectedPreflight.torch || '-' }}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-500">ultralytics</div>
+                  <div class="font-mono text-slate-800">{{ selectedPreflight.ultralytics || '-' }}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-500">剩余空间</div>
+                  <div class="font-mono text-slate-800">{{ formatBytes(selectedPreflight.free_bytes) }}</div>
+                </div>
+                <div class="col-span-2">
+                  <div class="text-xs text-gray-500">远端工作目录</div>
+                  <div class="font-mono text-slate-800 break-all">{{ selectedTarget.remote_workspace }}</div>
+                </div>
+              </div>
+              <div v-else class="text-sm text-gray-400">
+                连通性检查通过后，这里会显示服务器上的 GPU 与环境版本。
+              </div>
+            </template>
+
+            <div v-else-if="runtimeProfile" class="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <div class="text-xs text-gray-500">运行设备</div>
                 <div class="font-semibold text-slate-800">{{ runtimeProfile.device?.label || '-' }}</div>
@@ -222,7 +318,7 @@
             <div v-else class="text-sm text-gray-400">正在加载训练运行环境...</div>
           </div>
 
-          <div v-if="trainingProfile.supports_batch_calibration" class="border-t border-gray-200 pt-4">
+          <div v-if="trainingProfile.supports_batch_calibration && !selectedTarget" class="border-t border-gray-200 pt-4">
             <div class="flex items-center justify-between gap-3 mb-3">
               <div>
                 <div class="text-xs font-semibold text-slate-700">批次校准</div>
@@ -319,6 +415,9 @@
               </div>
             </div>
           </div>
+          <div v-else-if="trainingProfile.supports_batch_calibration" class="border-t border-gray-200 pt-4 text-xs text-slate-600">
+            批次校准测的是本机显存，换不到远端服务器上。远端训练先用小一点的 batch 跑一轮，看服务器是否报显存不足。
+          </div>
         </div>
       </aside>
     </div>
@@ -342,6 +441,8 @@
         {{ trainingIdleButtonLabel }}
       </AsyncButton>
     </div>
+
+    <ComputeTargetModal v-if="showComputeTargets" @close="showComputeTargets = false" />
   </div>
 </template>
 
@@ -350,12 +451,15 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useMainStore } from '../stores/main';
 import { useTrainingStore } from '../stores/training';
 import { useTrainingWorkflowStore } from '../stores/trainingWorkflow';
+import { useComputeStore } from '../stores/compute';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { useDatasetCapabilities } from '../composables/useDatasetCapabilities';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
+import ComputeTargetModal from './ComputeTargetModal.vue';
+import PreflightReport from './PreflightReport.vue';
 import { getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted } from '../domain/task/taskStatus';
 import { formatBytes } from '../utils';
 import { resolveBatchCalibrationGuard, resolveTrainingModelGuard, resolveTrainingStartGuard } from '../utils/trainingActionGuards';
@@ -369,6 +473,7 @@ const emit = defineEmits(['training-started', 'show-task-detail', 'workflow-boun
 const store = useMainStore();
 const trainingStore = useTrainingStore();
 const workflowStore = useTrainingWorkflowStore();
+const computeStore = useComputeStore();
 const apiCall = useApiCall();
 const asyncAction = useAsyncAction();
 
@@ -392,8 +497,20 @@ const trainingGuard = computed(() => resolveTrainingStartGuard({
   requiresDownload: selectedPresetNeedsPreparation.value,
 }));
 
+// 选了远端服务器就必须先预检通过：预检失败时训练启动会被后端硬挡，
+// 界面上提前一步拦住，比让用户点下去再读一条长错误有用。
+const remoteStartGate = computed(() => {
+  if (!computeStore.selectedTargetId) return { enabled: true, label: '' };
+  const report = computeStore.selectedPreflight;
+  if (!report) return { enabled: false, label: '请先做连通性检查' };
+  if (!report.ok) return { enabled: false, label: '预检未通过' };
+  return { enabled: true, label: '' };
+});
+
 const selectedModel = ref('');
 const showAdvanced = ref(false);
+const showComputeTargets = ref(false);
+const pendingPreflight = ref(false);
 let calibrationTimer = null;
 const CALIBRATION_ACTION_KEY = 'training-panel:start-batch-calibration';
 const TRAINING_ACTION_KEY = 'training-panel:start-training';
@@ -403,6 +520,11 @@ const isModelSelectionLocked = computed(() => (
 ));
 
 const presetOptions = computed(() => store.pretrainedOptions || []);
+const computeTargets = computed(() => computeStore.targets);
+const selectedTargetId = computed(() => computeStore.selectedTargetId);
+const selectedTarget = computed(() => computeStore.selectedTarget);
+const selectedPreflight = computed(() => computeStore.selectedPreflight);
+const isLocalTarget = computed(() => !computeStore.selectedTargetId);
 const downloadedOptions = computed(() => presetOptions.value.filter((o) => o.is_downloaded));
 const allOptions = computed(() => presetOptions.value);
 const historyModels = computed(() => (
@@ -462,7 +584,7 @@ const config = reactive({
 const basicFields = computed(() => trainingProfile.value.basic_fields || []);
 const advancedFields = computed(() => trainingProfile.value.advanced_fields || []);
 
-const isValid = computed(() => trainingGuard.value.enabled);
+const isValid = computed(() => trainingGuard.value.enabled && remoteStartGate.value.enabled);
 const parsedImgsz = computed(() => parseInt(config.imgsz, 10) || trainingConfigDefaults.value.imgsz);
 const displayedCalibrationModel = computed(() => calibrationPayload.value.model_name || selectedModel.value || '-');
 const displayedCalibrationImgsz = computed(() => calibrationPayload.value.imgsz || parsedImgsz.value || '-');
@@ -499,9 +621,10 @@ const calibrationButtonLabel = computed(() => {
   if (isTaskActive(batchCalibration.value)) return '校准中...';
   return calibrationIdleButtonLabel.value;
 });
-const trainingIdleButtonLabel = computed(() => (
-  selectedPresetNeedsPreparation.value ? '请先下载' : '开始训练'
-));
+const trainingIdleButtonLabel = computed(() => {
+  if (selectedPresetNeedsPreparation.value) return '请先下载';
+  return remoteStartGate.value.label || '开始训练';
+});
 const trainingButtonLabel = computed(() => (
   '启动中...'
 ));
@@ -509,6 +632,21 @@ const trainingButtonLabel = computed(() => (
 const selectModel = (name) => {
   if (isModelSelectionLocked.value) return;
   selectedModel.value = name;
+};
+
+const selectTarget = (targetId) => {
+  if (isActionPending(TRAINING_ACTION_KEY)) return;
+  computeStore.selectTarget(targetId);
+};
+
+const runPreflight = async () => {
+  if (!selectedTargetId.value || pendingPreflight.value) return;
+  pendingPreflight.value = true;
+  try {
+    await computeStore.runPreflight(selectedTargetId.value);
+  } finally {
+    pendingPreflight.value = false;
+  }
 };
 
 const isPretrainedDownloading = (opt) => Boolean(opt && !opt.is_downloaded && opt.download_state === 'downloading');
@@ -713,6 +851,7 @@ const startTraining = async () => {
       model_path: selectedHistoryModelPath,
       training_config: buildTrainingConfig(),
       workflow_id: workflowId,
+      compute_target_id: computeStore.selectedTargetId || undefined,
     };
 
     await apiCall(trainingStore.startTraining(payload), {
@@ -732,6 +871,9 @@ const isModelOperationSupportedForTraining = (model) => {
 onMounted(() => {
   store.fetchModels(store.selectedDataset?.vision_task_type).catch(() => {});
   store.fetchPretrainedOptions(store.selectedDataset?.vision_task_type).catch(() => {});
+  if (!computeStore.loaded) {
+    computeStore.fetchComputeTargets().catch(() => {});
+  }
   if (!trainingStore.runtimeProfile) {
     trainingStore.fetchTrainingRuntimeProfile().catch(() => {});
   }

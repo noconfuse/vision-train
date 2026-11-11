@@ -2,8 +2,8 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_layout import extract_classification_class_name
-from contexts.model.domain.capabilities import (
+from contexts.dataset.application.dataset_service import extract_classification_class_name
+from protocols.capabilities.model_capabilities import (
     MODEL_TRAINING_MODE_UNSUPPORTED,
     MODEL_TRAINING_MODE_YOLO_CLASSIFY,
     MODEL_TRAINING_MODE_YOLO_DETECT,
@@ -122,6 +122,40 @@ def _to_float_list(values):
     return result
 
 
+def _attach_per_class(results, metrics):
+    """把逐类别明细并进评估结果。
+
+    总数指标看不出「稀类被练没」，所以逐类别 AP 与该类实例数是收敛曲线的唯一入口。
+    取不到明细时把原因原样记下来，让曲线页能说清这一轮为什么缺明细，而不是静默省略。
+    """
+    try:
+        summary = list(metrics.summary())
+        # ap_class_index 是 numpy 数组：不能用 `or []` 兜空，否则只含类别 0 的数组会被判成假而丢掉 id
+        raw_index = getattr(metrics, "ap_class_index", None)
+        class_index = [] if raw_index is None else list(raw_index)
+    except Exception as exc:
+        results["per_class"] = []
+        results["per_class_error"] = str(exc)
+        return results
+    rows = []
+    for position, row in enumerate(summary):
+        class_id = class_index[position] if position < len(class_index) else None
+        rows.append(
+            {
+                "class_id": int(class_id) if class_id is not None else None,
+                "class_name": str(row.get("Class") or ""),
+                "instances": int(row.get("Instances") or 0),
+                "images": int(row.get("Images") or 0),
+                "precision": float(row.get("Box-P") or 0.0),
+                "recall": float(row.get("Box-R") or 0.0),
+                "map50": float(row.get("mAP50") or 0.0),
+                "map50_95": float(row.get("mAP50-95") or 0.0),
+            }
+        )
+    results["per_class"] = rows
+    return results
+
+
 class TrainingRuntimeAdapter:
     """训练运行时策略基类。"""
 
@@ -163,13 +197,16 @@ class DetectTrainingRuntimeAdapter(TrainingRuntimeAdapter):
         }
 
     def build_evaluate_results(self, metrics, split):
-        return {
-            "split": split,
-            "map50": float(getattr(metrics.box, "map50", 0)),
-            "map50_95": float(getattr(metrics.box, "map", 0)),
-            "precision": float(getattr(metrics.box, "mp", 0)),
-            "recall": float(getattr(metrics.box, "mr", 0)),
-        }
+        return _attach_per_class(
+            {
+                "split": split,
+                "map50": float(getattr(metrics.box, "map50", 0)),
+                "map50_95": float(getattr(metrics.box, "map", 0)),
+                "precision": float(getattr(metrics.box, "mp", 0)),
+                "recall": float(getattr(metrics.box, "mr", 0)),
+            },
+            metrics,
+        )
 
     def build_inference_result(self, output, _image_path, _img_dir, _class_names):
         names = getattr(output, "names", {}) or {}
@@ -268,17 +305,20 @@ class SegmentTrainingRuntimeAdapter(TrainingRuntimeAdapter):
         }
 
     def build_evaluate_results(self, metrics, split):
-        return {
-            "split": split,
-            "box_precision": float(getattr(metrics.box, "mp", 0)),
-            "box_recall": float(getattr(metrics.box, "mr", 0)),
-            "box_map50": float(getattr(metrics.box, "map50", 0)),
-            "box_map50_95": float(getattr(metrics.box, "map", 0)),
-            "seg_precision": float(getattr(metrics.seg, "mp", 0)),
-            "seg_recall": float(getattr(metrics.seg, "mr", 0)),
-            "seg_map50": float(getattr(metrics.seg, "map50", 0)),
-            "seg_map50_95": float(getattr(metrics.seg, "map", 0)),
-        }
+        return _attach_per_class(
+            {
+                "split": split,
+                "box_precision": float(getattr(metrics.box, "mp", 0)),
+                "box_recall": float(getattr(metrics.box, "mr", 0)),
+                "box_map50": float(getattr(metrics.box, "map50", 0)),
+                "box_map50_95": float(getattr(metrics.box, "map", 0)),
+                "seg_precision": float(getattr(metrics.seg, "mp", 0)),
+                "seg_recall": float(getattr(metrics.seg, "mr", 0)),
+                "seg_map50": float(getattr(metrics.seg, "map50", 0)),
+                "seg_map50_95": float(getattr(metrics.seg, "map", 0)),
+            },
+            metrics,
+        )
 
     def build_inference_result(self, output, _image_path, _img_dir, _class_names):
         names = getattr(output, "names", {}) or {}
@@ -342,15 +382,18 @@ class PoseTrainingRuntimeAdapter(TrainingRuntimeAdapter):
         pose_metrics = getattr(metrics, "pose", None)
         if pose_metrics is None:
             pose_metrics = getattr(metrics, "box", None)
-        return {
-            "split": split,
-            "precision": float(getattr(pose_metrics, "mp", 0)),
-            "recall": float(getattr(pose_metrics, "mr", 0)),
-            "map50": float(getattr(pose_metrics, "map50", 0)),
-            "map50_95": float(getattr(pose_metrics, "map", 0)),
-            "box_map50": float(getattr(getattr(metrics, "box", None), "map50", 0)),
-            "box_map50_95": float(getattr(getattr(metrics, "box", None), "map", 0)),
-        }
+        return _attach_per_class(
+            {
+                "split": split,
+                "precision": float(getattr(pose_metrics, "mp", 0)),
+                "recall": float(getattr(pose_metrics, "mr", 0)),
+                "map50": float(getattr(pose_metrics, "map50", 0)),
+                "map50_95": float(getattr(pose_metrics, "map", 0)),
+                "box_map50": float(getattr(getattr(metrics, "box", None), "map50", 0)),
+                "box_map50_95": float(getattr(getattr(metrics, "box", None), "map", 0)),
+            },
+            metrics,
+        )
 
     def build_inference_result(self, output, _image_path, _img_dir, _class_names):
         names = getattr(output, "names", {}) or {}

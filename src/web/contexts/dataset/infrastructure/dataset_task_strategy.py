@@ -11,12 +11,19 @@ from contexts.dataset.infrastructure.dataset_layout import (
     build_label_relpath,
     extract_classification_class_name,
     get_dataset_auto_labels_dir,
+    get_dataset_auto_meta_path,
     get_dataset_images_dir,
     get_dataset_labels_dir,
     get_dataset_legacy_labels_dir,
     get_dataset_split_dir,
     get_dataset_unlabeled_dir,
+    normalize_standard_dataset_split,
     resolve_existing_label_path_for_image,
+)
+from contexts.dataset.infrastructure.overlapping_labels import (
+    count_redundant_boxes,
+    parse_label_line,
+    to_xyxy_box,
 )
 from protocols.vision_task_type import (
     VISION_TASK_TYPE_CLASSIFY,
@@ -24,7 +31,7 @@ from protocols.vision_task_type import (
     VISION_TASK_TYPE_POSE,
     VISION_TASK_TYPE_SEGMENT,
 )
-from shared.utils.fs_utils import allocate_nonconflicting_path, is_system_hidden_file, is_within_path, remove_dir_if_empty, remove_file_silent, resolve_safe_child_path
+from shared.utils.fs_utils import allocate_nonconflicting_path, is_system_hidden_file, is_within_path, move_path, remove_dir_if_empty, remove_empty_dirs_up_to, remove_file_silent, resolve_safe_child_path
 from shared.utils.path_utils import resolve_relative_child_path, resolve_storage_path, validate_filename
 from shared.utils.zip_utils import split_archive_filename, safe_extract_archive
 
@@ -109,13 +116,59 @@ class BaseDatasetTaskStrategy:
         """删除一张图片及其关联标注产物。"""
         raise NotImplementedError
 
+    def move_image(self, *_args, **_kwargs):
+        """把一张图片及其关联标注产物搬到目标 split。"""
+        raise NotImplementedError
+
+    def _resolve_move_target_split(self, split, target_split):
+        """校验移动的目标 split：必须是标准 split，且不能就是当前 split。"""
+        target = normalize_standard_dataset_split(target_split)
+        if target == str(split or "").strip().lower():
+            raise ValueError("目标 split 与图片当前所在 split 相同")
+        return target
+
+    def _raise_if_move_conflict(self, target_image_path, image_rel, target_split):
+        """目标 split 已有同名图片时拒绝移动，避免覆盖别人的标签或凭空多出副本。"""
+        if os.path.exists(target_image_path):
+            raise ValueError(
+                f"{target_split} 中已存在同名图片 {os.path.basename(str(image_rel))}，请先重命名或删除那边的同名文件"
+            )
+
     def delete_duplicate_image(self, *_args, **_kwargs):
         """删除重复图片，并完成该任务类型要求的后置清理。"""
         raise NotImplementedError
 
     def resolve_deduplicate_label_paths(self, dataset_root, split, rel_noext):
         """返回去重时需要一并清理的关联标签文件列表。"""
-        return [os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel_noext))]
+        auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+        auto_path = os.path.join(auto_dir, build_label_relpath(rel_noext))
+        return [auto_path, get_dataset_auto_meta_path(auto_path, auto_dir)]
+
+    def count_overlapping_boxes(self, dataset_root, split, image_path):
+        """这张图里有几个「被同类另一个框盖住九成以上」的框。
+
+        判据建立在 YOLO 检测框（class + 4 个数）之上：分类任务没有标签文件，
+        分割 / 姿态的多边形行解析不成检测框，所以都数不出冗余框。
+        """
+        del dataset_root, split, image_path
+        return 0
+
+    def list_pending_boxes(self, dataset_root, split, image_ref):
+        """走查列表要的候选框几何（归一化 x1y1x2y2）。
+
+        只有检测任务画得出框：分割/姿态的标签行不是框，分类整图一个判断，
+        这三种就靠列表上的「待复核」点标，不在缩略图上画。
+        """
+        del dataset_root, split, image_ref
+        return []
+
+    def list_label_boxes(self, dataset_root, split, image_ref):
+        """走查列表要的人工标签框几何（归一化 x1y1x2y2）。
+
+        和 ``list_pending_boxes`` 同一条收口：只有检测任务画得出框，其余任务类型返回空。
+        """
+        del dataset_root, split, image_ref
+        return []
 
     def ensure_label_dirs(self, _dataset_root, _label_name):
         """新增分类时按需创建附属产物目录（如分类任务的 split 类别子目录）。
@@ -235,6 +288,46 @@ class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
             "annotated": label_has_content,
         }
 
+    def count_overlapping_boxes(self, dataset_root, split, image_path):
+        """检测任务按标签文件数同类重复框；没有标签文件就是 0。"""
+        img_dir = get_dataset_images_dir(dataset_root, split)
+        lbl_dir = get_dataset_labels_dir(dataset_root, split)
+        rel = os.path.relpath(image_path, img_dir)
+        return count_redundant_boxes(os.path.join(lbl_dir, build_label_relpath(rel)))
+
+    def list_pending_boxes(self, dataset_root, split, image_ref):
+        """读这张图的候选文件，解析成缩略图上能直接画的框；没有候选就是空。"""
+        return self._list_boxes(self._auto_label_path(dataset_root, split, image_ref))
+
+    def list_label_boxes(self, dataset_root, split, image_ref):
+        """读这张图的人工标签文件，解析成缩略图上能直接画的框；没标过就是空。"""
+        return self._list_boxes(self._manual_label_path(dataset_root, split, image_ref))
+
+    def _rel_to_image(self, dataset_root, split, image_ref):
+        image_path = resolve_storage_path(image_ref)
+        return os.path.relpath(image_path, get_dataset_images_dir(dataset_root, split))
+
+    def _auto_label_path(self, dataset_root, split, image_ref):
+        rel = self._rel_to_image(dataset_root, split, image_ref)
+        return os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel))
+
+    def _manual_label_path(self, dataset_root, split, image_ref):
+        rel = self._rel_to_image(dataset_root, split, image_ref)
+        return os.path.join(get_dataset_labels_dir(dataset_root, split), build_label_relpath(rel))
+
+    def _list_boxes(self, label_path):
+        """候选和人工标签共用一套行编码，所以缩略图上的框也从同一个解析口出来。"""
+        if not os.path.isfile(label_path):
+            return []
+        boxes = []
+        with open(label_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                parsed = parse_label_line(line)
+                if not parsed:
+                    continue
+                boxes.append({"class": parsed["class_id"], **to_xyxy_box(parsed["box"])})
+        return boxes
+
     def upload_images(self, dataset_root, split, files):
         """把上传图片保存到检测数据集的 images 目录。"""
         return self._save_upload_payload(get_dataset_images_dir(dataset_root, split), files)
@@ -268,6 +361,7 @@ class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
         rel_noext = os.path.splitext(image_rel)[0]
         label_path = resolve_safe_child_path(lbl_dir, build_label_relpath(rel_noext))
         auto_path = resolve_safe_child_path(auto_dir, build_label_relpath(rel_noext))
+        meta_path = get_dataset_auto_meta_path(auto_path, auto_dir)
         deleted = {"image": False, "label": False, "auto_label": False}
         if os.path.exists(image_path):
             remove_file_silent(image_path)
@@ -278,7 +372,44 @@ class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
         if os.path.exists(auto_path):
             remove_file_silent(auto_path)
             deleted["auto_label"] = True
+        # 元信息文件与标签文件是同一批候选：图片没了就要一起走，否则留下串位的孤档
+        if meta_path and os.path.exists(meta_path):
+            remove_file_silent(meta_path)
         return deleted
+
+    def move_image(self, dataset_root, split, image_rel, target_split):
+        """把检测图片与其人工/自动标签（含审核元信息）一起搬到目标 split。"""
+        target_split = self._resolve_move_target_split(split, target_split)
+        source_images_dir = get_dataset_images_dir(dataset_root, split)
+        image_path = resolve_safe_child_path(source_images_dir, image_rel)
+        if not os.path.isfile(image_path):
+            raise ValueError("图片不存在")
+        self._raise_if_move_conflict(
+            resolve_safe_child_path(get_dataset_images_dir(dataset_root, target_split), image_rel),
+            image_rel,
+            target_split,
+        )
+        rel_noext = os.path.splitext(image_rel)[0]
+        source_auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+        target_auto_dir = get_dataset_auto_labels_dir(dataset_root, target_split)
+        source_auto_path = resolve_safe_child_path(source_auto_dir, build_label_relpath(rel_noext))
+        moved = {"image": False, "label": False, "auto_label": False}
+        move_path(image_path, resolve_safe_child_path(get_dataset_images_dir(dataset_root, target_split), image_rel), ensure_parent=True)
+        moved["image"] = True
+        source_label_path = resolve_safe_child_path(get_dataset_labels_dir(dataset_root, split), build_label_relpath(rel_noext))
+        if os.path.isfile(source_label_path):
+            move_path(source_label_path, resolve_safe_child_path(get_dataset_labels_dir(dataset_root, target_split), build_label_relpath(rel_noext)), ensure_parent=True)
+            moved["label"] = True
+        if os.path.isfile(source_auto_path):
+            target_auto_path = resolve_safe_child_path(target_auto_dir, build_label_relpath(rel_noext))
+            move_path(source_auto_path, target_auto_path, ensure_parent=True)
+            moved["auto_label"] = True
+            source_meta_path = get_dataset_auto_meta_path(source_auto_path, source_auto_dir)
+            if source_meta_path and os.path.isfile(source_meta_path):
+                move_path(source_meta_path, get_dataset_auto_meta_path(target_auto_path, target_auto_dir), ensure_parent=True)
+        # 子目录里的图片搬走后可能留下空目录，与 delete_image 的清理口径保持一致
+        remove_empty_dirs_up_to(image_path, source_images_dir)
+        return moved
 
     def delete_duplicate_image(self, dataset_root, split, image_path):
         """删除重复检测图片本体，不额外做目录清理。"""
@@ -289,10 +420,13 @@ class DetectDatasetTaskStrategy(BaseDatasetTaskStrategy):
 
     def resolve_deduplicate_label_paths(self, dataset_root, split, rel_noext):
         """返回检测图片去重时需要清理的全部标签文件路径。"""
+        auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+        auto_path = os.path.join(auto_dir, build_label_relpath(rel_noext))
         return [
             os.path.join(get_dataset_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
             os.path.join(get_dataset_legacy_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
-            os.path.join(get_dataset_auto_labels_dir(dataset_root, split), build_label_relpath(rel_noext)),
+            auto_path,
+            get_dataset_auto_meta_path(auto_path, auto_dir),
         ]
 
 
@@ -352,7 +486,7 @@ class ClassifyDatasetTaskStrategy(BaseDatasetTaskStrategy):
         auto_label_exists = bool(auto_label_path and os.path.exists(auto_label_path))
         if auto_label_exists:
             try:
-                from contexts.annotation.infrastructure.annotation_io import decode_classification_file
+                from contexts.annotation.application.annotation_service import decode_classification_file
 
                 auto_class_id = decode_classification_file(auto_label_path)
             except Exception:
@@ -432,6 +566,44 @@ class ClassifyDatasetTaskStrategy(BaseDatasetTaskStrategy):
             remove_file_silent(auto_label_path)
             deleted["auto_label"] = True
         return deleted
+
+    def move_image(self, dataset_root, split, image_rel, target_split):
+        """把分类图片搬到目标 split，保持它所在的类别目录与已标注/未标注区域。"""
+        target_split = self._resolve_move_target_split(split, target_split)
+        zones = [
+            (get_dataset_unlabeled_dir(dataset_root, split), get_dataset_unlabeled_dir(dataset_root, target_split), "unlabeled"),
+            (get_dataset_split_dir(dataset_root, split), get_dataset_split_dir(dataset_root, target_split), ""),
+        ]
+        source_root_dir = image_path = target_image_path = None
+        auto_prefix = ""
+        for source_dir, target_dir, prefix in zones:
+            candidate = resolve_safe_child_path(source_dir, image_rel)
+            if os.path.isfile(candidate):
+                source_root_dir = source_dir
+                image_path = candidate
+                target_image_path = resolve_safe_child_path(target_dir, image_rel)
+                auto_prefix = prefix
+                break
+        if not image_path:
+            raise ValueError("图片不存在")
+        self._raise_if_move_conflict(target_image_path, image_rel, target_split)
+        moved = {"image": False, "label": False, "auto_label": False}
+        move_path(image_path, target_image_path, ensure_parent=True)
+        moved["image"] = True
+        if auto_prefix:
+            label_rel = build_label_relpath(os.path.splitext(image_rel)[0])
+            source_auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
+            target_auto_dir = get_dataset_auto_labels_dir(dataset_root, target_split)
+            source_auto_path = resolve_safe_child_path(source_auto_dir, auto_prefix, label_rel)
+            if os.path.isfile(source_auto_path):
+                target_auto_path = resolve_safe_child_path(target_auto_dir, auto_prefix, label_rel)
+                move_path(source_auto_path, target_auto_path, ensure_parent=True)
+                moved["auto_label"] = True
+                source_meta_path = get_dataset_auto_meta_path(source_auto_path, source_auto_dir)
+                if source_meta_path and os.path.isfile(source_meta_path):
+                    move_path(source_meta_path, get_dataset_auto_meta_path(target_auto_path, target_auto_dir), ensure_parent=True)
+        remove_empty_dirs_up_to(image_path, source_root_dir)
+        return moved
 
     def delete_duplicate_image(self, dataset_root, split, image_path):
         """删除重复分类图片，并向上清理已空的类别目录。"""

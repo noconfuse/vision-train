@@ -204,18 +204,14 @@
     </main>
 
     <!-- 任务详情弹窗 -->
-    <div v-if="detailTask" class="vt-modal-backdrop" @click.self="detailTask = null">
-      <div class="vt-modal-panel vt-modal-panel--lg max-h-[80vh] overflow-y-auto p-5">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <h3 class="text-base font-semibold text-slate-800">任务详情</h3>
-            <div class="text-xs text-gray-500 font-mono">{{ detailTask.id }} · {{ typeLabel(detailTask.type) }}</div>
-          </div>
-          <button class="vt-btn-secondary vt-btn-size-sm" @click="detailTask = null">
-            <AppIcon name="close" class="h-4 w-4" />
-            关闭
-          </button>
-        </div>
+    <ModalShell
+      v-if="detailTask"
+      size="lg"
+      title="任务详情"
+      body-class="p-5"
+      @close="detailTask = null"
+    >
+        <div class="mb-3 text-xs text-gray-500 font-mono">{{ detailTask.id }} · {{ typeLabel(detailTask.type) }}</div>
         <div v-if="detailLoading" class="text-center py-8 text-gray-500">加载中...</div>
         <div v-else-if="detailError" class="bg-red-50 text-red-700 text-sm p-3 border border-red-200">{{ detailError }}</div>
         <div v-else class="space-y-3 text-sm">
@@ -264,8 +260,7 @@
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   </div>
 </template>
 
@@ -276,6 +271,7 @@ import { useMainStore } from '../stores/main';
 import api from '../api';
 import AppHeader from '../components/AppHeader.vue';
 import AppIcon from '../components/ui/AppIcon.vue';
+import ModalShell from '../components/ui/ModalShell.vue';
 import AsyncButton from '../components/ui/AsyncButton.vue';
 import UiTooltip from '../components/ui/Tooltip.vue';
 import { useAsyncAction } from '../composables/useAsyncAction';
@@ -488,6 +484,8 @@ const onView = async (t) => {
 
 onMounted(async () => {
   await load();
+  const focusId = String(route.query.task_id || '').trim();
+  if (focusId) await focusTaskById(focusId);
   timer = setInterval(() => load(false), 2000);
 });
 onUnmounted(() => {

@@ -21,6 +21,7 @@
             preserveAspectRatio="none"
             @pointerdown="onCanvasPointerDown"
           >
+            <!-- 人工实例和模型候选共用这一组：候选只是多了虚线，颜色跟着类别走，一样能选、能拖、能删 -->
             <g v-for="(instance, instanceIdx) in instances" :key="instance.id">
               <g v-if="getInstanceSkeletonSegments(instance, instanceIdx).length">
                 <line
@@ -30,60 +31,37 @@
                   :y1="segment.y1"
                   :x2="segment.x2"
                   :y2="segment.y2"
-                  :stroke="instance.is_auto ? 'rgba(34,211,238,0.9)' : (selectedInstanceIdx === instanceIdx ? getColor(instance.class) : 'rgba(255,255,255,0.65)')"
-                  :stroke-width="instance.is_auto ? (2.2 / scale) : (selectedInstanceIdx === instanceIdx ? (2.8 / scale) : (1.8 / scale))"
-                  :opacity="instance.is_auto ? 0.9 : (selectedInstanceIdx === instanceIdx ? 0.95 : 0.5)"
-                  :stroke-dasharray="instance.is_auto ? '8 6' : '0'"
+                  :stroke="(isCandidate(instance) || selectedInstanceIdx === instanceIdx) ? getClassColor(instance.class) : 'rgba(255,255,255,0.65)'"
+                  :stroke-width="selectedInstanceIdx === instanceIdx ? (2.8 / scale) : (1.8 / scale)"
+                  :stroke-dasharray="isCandidate(instance) ? '8 6' : '0'"
+                  :opacity="selectedInstanceIdx === instanceIdx ? 0.95 : 0.5"
                   stroke-linecap="round"
                   style="pointer-events: none;"
                 />
               </g>
               <rect
-                v-if="instance.is_auto && getInstanceBBox(instance)"
+                v-if="(selectedInstanceIdx === instanceIdx || isCandidate(instance)) && getInstanceBBox(instance)"
                 :x="getInstanceBBox(instance).x1"
                 :y="getInstanceBBox(instance).y1"
                 :width="getInstanceBBox(instance).width"
                 :height="getInstanceBBox(instance).height"
-                fill="rgba(34,211,238,0.08)"
-                stroke="#22d3ee"
-                :stroke-width="selectedInstanceIdx === instanceIdx ? (2.4 / scale) : (1.8 / scale)"
-                stroke-dasharray="10 6"
-                :opacity="selectedInstanceIdx === instanceIdx ? 1 : 0.88"
-                style="pointer-events: none;"
-              />
-              <text
-                v-if="instance.is_auto && getInstanceBBox(instance)"
-                :x="getInstanceBBox(instance).x1"
-                :y="Math.max(14 / scale, getInstanceBBox(instance).y1 - 6 / scale)"
-                fill="#67e8f9"
-                :font-size="11 / scale"
-                font-weight="bold"
-                style="text-shadow: 0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9); pointer-events: none;"
-              >
-                AUTO
-              </text>
-              <rect
-                v-if="selectedInstanceIdx === instanceIdx && getInstanceBBox(instance)"
-                :x="getInstanceBBox(instance).x1"
-                :y="getInstanceBBox(instance).y1"
-                :width="getInstanceBBox(instance).width"
-                :height="getInstanceBBox(instance).height"
-                :stroke="instance.is_auto ? '#22d3ee' : 'rgba(255,255,255,0.7)'"
+                :stroke="isCandidate(instance) ? getClassColor(instance.class) : 'rgba(255,255,255,0.7)'"
                 :stroke-width="1.5 / scale"
                 stroke-dasharray="8 6"
-                fill="transparent"
+                :fill="getClassColor(instance.class)"
+                :fill-opacity="isCandidate(instance) ? 0.12 : 0"
                 style="pointer-events: none;"
               />
               <text
-                v-if="selectedInstanceIdx === instanceIdx && getInstanceBBox(instance)"
+                v-if="(selectedInstanceIdx === instanceIdx || isCandidate(instance)) && getInstanceBBox(instance)"
                 :x="getInstanceBBox(instance).x1"
                 :y="Math.max(14 / scale, getInstanceBBox(instance).y1 - 6 / scale)"
-                :fill="instance.is_auto ? '#67e8f9' : '#ffffff'"
+                :fill="isCandidate(instance) ? getClassColor(instance.class) : '#ffffff'"
                 :font-size="12 / scale"
                 font-weight="bold"
                 style="text-shadow: 0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9); pointer-events: none;"
               >
-                {{ getInstanceTitle(instance, instanceIdx) }} {{ instance.is_auto ? '(Auto)' : '' }}
+                {{ getInstanceTitle(instance, instanceIdx) }}<template v-if="isCandidate(instance)"> {{ formatConf(instance.conf) }}</template>
               </text>
 
               <g v-for="(point, pointIdx) in instance.keypoints" :key="`${instance.id}-${pointIdx}`">
@@ -120,23 +98,12 @@
                   style="pointer-events: none;"
                 />
                 <circle
-                  v-if="hasPlacedKeypoint(point) && instance.is_auto"
-                  :cx="point.x"
-                  :cy="point.y"
-                  :r="selectedInstanceIdx === instanceIdx && selectedKeypointIdx === pointIdx ? (8.5 / scale) : (6 / scale)"
-                  fill="rgba(34,211,238,0.22)"
-                  stroke="rgba(103,232,249,0.95)"
-                  :stroke-width="1.25 / scale"
-                  :opacity="selectedInstanceIdx === instanceIdx ? 1 : 0.9"
-                  style="pointer-events: none;"
-                />
-                <circle
                   v-if="hasPlacedKeypoint(point)"
                   :cx="point.x"
                   :cy="point.y"
                   :r="selectedInstanceIdx === instanceIdx && selectedKeypointIdx === pointIdx ? (6 / scale) : (4 / scale)"
-                  :fill="point.visible === 1 ? '#f59e0b' : (selectedInstanceIdx === instanceIdx ? getColor(instance.class) : '#ffffff')"
-                  :stroke="instance.is_auto ? '#22d3ee' : 'white'"
+                  :fill="point.visible === 1 ? '#f59e0b' : ((selectedInstanceIdx === instanceIdx || isCandidate(instance)) ? getClassColor(instance.class) : '#ffffff')"
+                  stroke="white"
                   :stroke-width="selectedInstanceIdx === instanceIdx && selectedKeypointIdx === pointIdx ? (2 / scale) : (1.25 / scale)"
                   :opacity="selectedInstanceIdx === instanceIdx ? 1 : 0.82"
                   style="cursor: move; touch-action: none;"
@@ -156,26 +123,24 @@
               </g>
             </g>
           </svg>
-        </div>
-      </div>
+        </div>      </div>
 
       <div class="w-80 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-200">
-          <h3 class="font-bold text-gray-800 mb-1">姿态标注</h3>
+          <div class="flex items-start justify-between gap-2">
+            <h3 class="font-bold text-gray-800">姿态标注</h3>
+            <button type="button" class="vt-modal-close -mt-1 -mr-1 shrink-0" title="关闭标注器（Esc）" @click="$emit('close')">
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
+          </div>
           <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
             <template #trigger>
-              <p class="text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
+              <p class="mt-1 text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
             </template>
             {{ image.path }}
           </UiTooltip>
           <div class="mt-2 text-xs text-gray-500">
             先选标注对象和关键点，再点击图片落点；默认保持当前关键点不跳转，按 `Tab` 切下一个。
-          </div>
-          <div
-            v-if="autoInstanceCount > 0"
-            class="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-700"
-          >
-            当前有 {{ autoInstanceCount }} 个自动标注对象，画面中会以青色虚线、青色外圈和 `AUTO` 标识显示，保存前请确认。
           </div>
         </div>
 
@@ -187,54 +152,27 @@
                 新增实例
               </button>
             </div>
-            <div class="space-y-3">
-              <div v-if="manualInstanceEntries.length" class="space-y-2">
-                <div class="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-gray-400">
-                  <span>人工标注</span>
-                  <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{{ manualInstanceEntries.length }}</span>
-                </div>
-                <button
-                  v-for="entry in manualInstanceEntries"
-                  :key="entry.instance.id"
-                  type="button"
-                  class="vt-selectable w-full p-2 text-left"
-                  :class="selectedInstanceIdx === entry.index ? 'vt-selectable--selected' : 'border-transparent'"
-                  @click="selectInstance(entry.index)"
-                >
-                  <div class="flex items-center gap-2">
-                    <div class="h-3 w-3 rounded-full" :style="{ backgroundColor: getColor(entry.instance.class) }"></div>
-                    <span class="text-sm font-medium">{{ getInstanceTitle(entry.instance, entry.index) }}</span>
-                    <span class="ml-auto rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">人工</span>
-                  </div>
-                  <div class="mt-1 text-xs text-gray-500">
-                    已标 {{ countPlacedKeypoints(entry.instance) }}/{{ keypointCount }} 个关键点
-                  </div>
-                </button>
+            <div class="space-y-2">
+              <div v-if="!instances.length" class="text-xs text-gray-400">
+                暂无标注对象，点「新增实例」开始。
               </div>
-
-              <div v-if="autoInstanceEntries.length" class="space-y-2">
-                <div class="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-cyan-600">
-                  <span>自动标注待确认</span>
-                  <span class="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] text-cyan-700">{{ autoInstanceEntries.length }}</span>
+              <button
+                v-for="(instance, index) in instances"
+                :key="instance.id"
+                type="button"
+                class="vt-selectable w-full p-2 text-left"
+                :class="selectedInstanceIdx === index ? 'vt-selectable--selected' : 'border-transparent'"
+                @click="selectInstance(index)"
+              >
+                <div class="flex items-center gap-2">
+                  <div class="h-3 w-3 rounded-full" :style="{ backgroundColor: getClassColor(instance.class) }"></div>
+                  <span class="text-sm font-medium">{{ getInstanceTitle(instance, index) }}</span>
+                  <span v-if="isCandidate(instance)" class="ml-auto shrink-0 text-[11px] text-amber-700">{{ formatConf(instance.conf) }}</span>
                 </div>
-                <button
-                  v-for="entry in autoInstanceEntries"
-                  :key="entry.instance.id"
-                  type="button"
-                  class="vt-selectable w-full border-cyan-200 bg-cyan-50/80 p-2 text-left"
-                  :class="selectedInstanceIdx === entry.index ? 'vt-selectable--selected ring-1 ring-cyan-300' : 'hover:border-cyan-300'"
-                  @click="selectInstance(entry.index)"
-                >
-                  <div class="flex items-center gap-2">
-                    <div class="h-3 w-3 rounded-full bg-cyan-400 shadow-[0_0_0_2px_rgba(34,211,238,0.18)]"></div>
-                    <span class="text-sm font-medium text-slate-800">{{ getInstanceTitle(entry.instance, entry.index) }}</span>
-                    <span class="ml-auto rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700">AUTO</span>
-                  </div>
-                  <div class="mt-1 text-xs text-cyan-700/80">
-                    待确认，已标 {{ countPlacedKeypoints(entry.instance) }}/{{ keypointCount }} 个关键点
-                  </div>
-                </button>
-              </div>
+                <div class="mt-1 text-xs text-gray-500">
+                  已标 {{ countPlacedKeypoints(instance) }}/{{ keypointCount }} 个关键点
+                </div>
+              </button>
             </div>
           </div>
 
@@ -248,7 +186,7 @@
                 :class="currentClass === idx ? 'vt-selectable--selected' : 'border-transparent'"
                 @click="updateSelectedInstanceClass(idx)"
               >
-                <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getColor(idx) }"></div>
+                <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getClassColor(idx) }"></div>
                 <span class="text-sm font-medium">{{ name }}</span>
                 <span class="text-xs text-gray-400 ml-auto">id: {{ idx }}</span>
               </div>
@@ -296,9 +234,8 @@
         </div>
 
         <div class="p-4 border-t border-gray-200 bg-gray-50 space-y-3">
-          <div class="flex justify-between items-center text-sm text-gray-600">
-            <span>实例数量: {{ instances.length }}</span>
-            <span v-if="hasChanges" class="vt-tag vt-tag-warn">未保存</span>
+          <div v-if="hasChanges" class="flex justify-end">
+            <span class="vt-tag vt-tag-warn">未保存</span>
           </div>
 
           <div class="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
@@ -319,8 +256,8 @@
           <AsyncButton
             @click="save"
             class="vt-btn-solid-primary vt-btn-size-lg w-full justify-center"
-            :disabled="loading"
-            :pending="isActionPending(SAVE_ACTION_KEY)"
+            :disabled="loading || busy"
+            :pending="busy"
             loading-text="保存标注 (Ctrl+S)"
           >
             <AppIcon name="check" class="h-4 w-4" />
@@ -328,11 +265,11 @@
           </AsyncButton>
 
           <div class="flex gap-2">
-            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <AppIcon name="previous" class="h-4 w-4" />
               <span>上一张</span>
             </button>
-            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <span>下一张</span>
               <AppIcon name="next" class="h-4 w-4" />
             </button>
@@ -349,7 +286,8 @@ import api from '../api';
 import { useMainStore } from '../stores/main';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
-import { getPathDisplayName } from '../utils';
+import { getPathDisplayName, formatConf } from '../utils';
+import { getClassColor } from '../utils/classColors';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
@@ -369,11 +307,14 @@ const asyncAction = useAsyncAction();
 const SAVE_ACTION_KEY = 'pose-annotator:save';
 const isActionPending = (key) => asyncAction.isPending(key);
 
+const busy = computed(() => isActionPending(SAVE_ACTION_KEY));
+
 const containerRef = ref(null);
 const imgRef = ref(null);
 const loading = ref(true);
 const hasChanges = ref(false);
 const instances = ref([]);
+const isCandidate = (instance) => instance?.candidate === true;
 const currentClass = ref(0);
 const selectedInstanceIdx = ref(-1);
 const selectedKeypointIdx = ref(0);
@@ -393,11 +334,6 @@ let activeLoadToken = 0;
 let activePointerId = null;
 const draggingPoint = ref(null);
 
-const colors = [
-  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e',
-  '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899',
-];
-
 const COCO_KEYPOINT_NAMES = [
   'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
   'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist',
@@ -412,7 +348,6 @@ const COCO_SKELETON = [
   [1, 3], [2, 4], [3, 5], [4, 6],
 ];
 
-const getColor = (idx) => colors[Math.abs(Number(idx || 0)) % colors.length];
 const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
 const normalizeKptName = (name) => String(name || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 
@@ -475,19 +410,6 @@ const selectedSkeleton = computed(() => {
   return COCO_SKELETON;
 });
 
-const manualInstanceEntries = computed(() => (
-  instances.value
-    .map((instance, index) => ({ instance, index }))
-    .filter((entry) => !entry.instance.is_auto)
-));
-
-const autoInstanceEntries = computed(() => (
-  instances.value
-    .map((instance, index) => ({ instance, index }))
-    .filter((entry) => entry.instance.is_auto)
-));
-
-const autoInstanceCount = computed(() => autoInstanceEntries.value.length);
 
 const normalizeSkeleton = (rawSkeleton, keypointTotal) => {
   if (!Array.isArray(rawSkeleton) || !Number.isFinite(Number(keypointTotal)) || Number(keypointTotal) <= 0) {
@@ -543,7 +465,7 @@ const normalizeKeypoint = (point) => {
   return visible > 0 ? { x, y, visible } : { x: 0, y: 0, visible: 0 };
 };
 
-const normalizeInstance = (instance, { isAuto = false } = {}) => {
+const normalizeInstance = (instance) => {
   const keypoints = Array.from({ length: keypointCount.value }, (_, index) => {
     const point = Array.isArray(instance?.keypoints) ? instance.keypoints[index] : null;
     return normalizeKeypoint(point || {});
@@ -551,7 +473,6 @@ const normalizeInstance = (instance, { isAuto = false } = {}) => {
   return {
     id: nextInstanceId(),
     class: Number(instance?.class || 0),
-    is_auto: !!isAuto,
     keypoints,
   };
 };
@@ -621,7 +542,6 @@ const addInstance = () => {
   instances.value.push({
     id: nextInstanceId(),
     class: Number(currentClass.value || 0),
-    is_auto: false,
     keypoints: buildBlankKeypoints(),
   });
   selectedInstanceIdx.value = index;
@@ -813,9 +733,16 @@ const fetchAnnotations = async () => {
     flipIdx.value = Array.isArray(poseMeta.flip_idx) ? poseMeta.flip_idx : [];
     keypointNamesByClass.value = poseMeta.kpt_names && typeof poseMeta.kpt_names === 'object' ? poseMeta.kpt_names : {};
     poseSkeleton.value = normalizeSkeleton(poseMeta.skeleton, keypointCount.value);
-    const manual = (res.manual_annotation?.instances || []).map((instance) => normalizeInstance(instance, { isAuto: false }));
-    const auto = (res.auto_annotation?.instances || []).map((instance) => normalizeInstance(instance, { isAuto: true }));
-    instances.value = [...manual, ...auto];
+    const manual = (res.manual_annotation?.instances || []).map((instance) => normalizeInstance(instance));
+    // 候选带 candidate 标记：虚线是它「待复核」的记号，保存时它和人工实例一样落进标签
+    const candidates = (res.auto_annotation?.instances || [])
+      .map((instance) => ({
+        ...normalizeInstance(instance),
+        candidate: true,
+        conf: Number.isFinite(Number(instance.conf)) ? Number(instance.conf) : null,
+      }))
+      .filter((instance) => instance.keypoints.some((point) => hasPlacedKeypoint(point)));
+    instances.value = [...manual, ...candidates];
     ensureSelection();
   } catch (error) {
     console.error(error);
@@ -841,6 +768,7 @@ const buildSavePayload = () => {
 };
 
 const save = async () => {
+  if (busy.value) return;
   await asyncAction.run(SAVE_ACTION_KEY, async () => {
     await apiCall(api.saveAnnotation({
       project_path: store.currentProject.path,
@@ -853,7 +781,7 @@ const save = async () => {
       onSuccess: async () => {
         hasChanges.value = false;
         await fetchAnnotations();
-        emit('update', props.image);
+        emit('update', { ...props.image, annotated: true, pending: false, has_auto_label: false });
       },
     });
   });

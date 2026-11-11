@@ -4,18 +4,23 @@ import os
 
 from db import session_scope
 from db.models import Task, WorkflowRecord
-from contexts.task.domain.task_types import TRAINING_TASK_TYPES
-from contexts.task.infrastructure.task_repository import new_workflow_id
-from contexts.task.infrastructure.task_runtime import list_project_tasks
-from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
+from protocols.task_type import TRAINING_TASK_TYPES
+from contexts.task.application.task_service import (
+    new_workflow_id,
+    list_project_tasks,
+    list_task_storage_paths,
+)
+from contexts.dataset.application.dataset_service import (
+    resolve_project_dataset_root,
+    load_dataset_identity_meta,
+    load_dataset_vision_task_type,
+    ensure_dataset_version_state,
+)
 from contexts.training.domain.training_constants import (
     TRAINING_CALIBRATIONS_DIRNAME,
     TRAINING_OUTPUTS_DIRNAME,
     WORKFLOW_TYPE_TRAINING,
 )
-from contexts.task.infrastructure.worker_task_ops import list_task_storage_paths
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type
-from contexts.dataset.infrastructure.dataset_versioning import ensure_dataset_version_state
 from shared.utils.fs_utils import remove_tree
 from shared.utils.path_utils import project_name_from_path
 from shared.utils.time_utils import now_iso
@@ -168,9 +173,7 @@ def touch_training_workflow_record(workflow_id, **patch):
 
 
 def list_training_workflow_tasks(project_path, workflow_id=None, dataset_id=None, include_archived=True):
-    """列出训练工作流相关的任务记录。"""
-    if not dataset_id:
-        return []
+    """列出训练工作流相关的任务记录；不传 dataset_id 就是整个项目。"""
     items = list_project_tasks(
         project_path,
         dataset_id=dataset_id,
@@ -184,10 +187,8 @@ def list_training_workflow_tasks(project_path, workflow_id=None, dataset_id=None
 
 
 def list_training_workflows(project_path, dataset_id=None, include_archived=False, archived_only=False):
-    """查询项目下的训练工作流列表并聚合任务摘要。"""
+    """查询项目下的训练工作流列表并聚合任务摘要；不传 dataset_id 就是整个项目。"""
     require_present("缺少项目路径", project_path=project_path)
-    if not dataset_id:
-        return []
     with session_scope() as session:
         query = session.query(WorkflowRecord).filter(
             WorkflowRecord.project_path == project_path,

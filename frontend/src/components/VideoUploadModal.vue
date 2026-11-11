@@ -1,17 +1,9 @@
 <template>
-  <div v-if="visible" class="vt-modal-backdrop" @click.self="onClose">
-    <div class="vt-modal-panel vt-modal-panel--md p-6">
-      <div class="mb-4 flex items-center justify-between">
-        <h3 class="text-lg font-semibold text-slate-800 inline-flex items-center gap-2">
-          <AppIcon name="video" class="h-5 w-5 text-slate-600" />
-          <span>上传视频到 <span class="vt-text-accent">{{ project?.name }}</span></span>
-        </h3>
-        <button class="vt-modal-close"
-                :disabled="uploading"
-                @click="onClose">
-          <AppIcon name="close" class="h-4 w-4" />
-        </button>
-      </div>
+  <ModalShell v-if="visible" :title="`上传视频到 ${project?.name}`" size="md" body-class="p-6"
+              :dismissible="!uploading" @close="onClose">
+    <template #icon>
+      <AppIcon name="video" class="h-5 w-5 text-slate-600" />
+    </template>
 
       <div v-if="!uploading && !success && !error">
         <div>
@@ -109,8 +101,7 @@
           </button>
         </div>
       </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -125,6 +116,7 @@ import {
   isSupportedVideoFile,
 } from '../utils/media';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
 const props = defineProps({

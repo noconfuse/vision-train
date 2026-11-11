@@ -1,6 +1,6 @@
 """聚合训练工作流状态并提炼前端所需的视图字段。"""
 
-from contexts.task.domain.task_types import (
+from protocols.task_type import (
     TASK_TYPE_BATCH_CALIBRATION,
     TASK_TYPE_EVALUATE,
     TASK_TYPE_EXPORT,

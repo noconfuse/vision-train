@@ -8,6 +8,7 @@ from contexts.model.api.blueprint import bp as model_bp
 from contexts.project.api.blueprint import bp as project_bp
 from contexts.task.api.blueprint import bp as task_bp
 from contexts.annotation.api.blueprint import bp as annotation_bp
+from contexts.compute.api.blueprint import bp as compute_bp
 from contexts.training.api.blueprint import bp as training_bp
 from contexts.video.api.blueprint import bp as video_bp
 
@@ -21,6 +22,7 @@ def register_blueprints(app):
     app.register_blueprint(model_bp)
     app.register_blueprint(project_bp)
     app.register_blueprint(annotation_bp)
+    app.register_blueprint(compute_bp)
     app.register_blueprint(training_bp)
     app.register_blueprint(video_bp)
     app.register_blueprint(task_bp)

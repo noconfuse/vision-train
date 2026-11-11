@@ -2,7 +2,7 @@
 
 import os
 
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_BEST_WEIGHT_PATH,
     ARTIFACT_LAST_WEIGHT_PATH,
 )

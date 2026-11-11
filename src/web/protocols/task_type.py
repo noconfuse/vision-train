@@ -8,6 +8,8 @@ TASK_TYPE_EXPORT = "export"
 TASK_TYPE_TEMPLATE = "template"
 TASK_TYPE_FRAME_EXTRACTION = "frame_extraction"
 TASK_TYPE_DATASET_SNAPSHOT = "dataset_snapshot"
+TASK_TYPE_AUTO_ANNOTATION = "auto_annotation"
+TASK_TYPE_SIMILAR_PROBE = "similar_probe"
 
 TRAINING_TASK_TYPES = frozenset(
     (

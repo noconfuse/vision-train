@@ -4,7 +4,7 @@ import os
 import sys
 import traceback
 
-from contexts.task.domain.task_types import (
+from protocols.task_type import (
     TASK_TYPE_BATCH_CALIBRATION,
     TASK_TYPE_DATASET_SNAPSHOT,
     TASK_TYPE_EVALUATE,
@@ -14,7 +14,7 @@ from contexts.task.domain.task_types import (
     TASK_TYPE_TEMPLATE,
     TASK_TYPE_TRAINING,
 )
-from contexts.task.infrastructure.task_runtime import load_task
+from contexts.task.application.task_service import load_task
 from contexts.training.infrastructure.export_gateway import execute_export_task
 from contexts.training.infrastructure.execution_runners import (
     execute_batch_calibration_task,

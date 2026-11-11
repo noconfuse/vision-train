@@ -16,7 +16,7 @@ from contexts.annotation.infrastructure.annotation_io import (
     resolve_classification_class_id,
 )
 from constants.media import IMAGE_FILE_EXTENSIONS
-from contexts.dataset.infrastructure.dataset_layout import (
+from contexts.dataset.application.dataset_service import (
     build_label_relpath,
     get_dataset_auto_labels_dir,
     get_dataset_images_dir,
@@ -24,14 +24,25 @@ from contexts.dataset.infrastructure.dataset_layout import (
     get_dataset_unlabeled_dir,
 )
 from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_DETECT, VISION_TASK_TYPE_POSE, VISION_TASK_TYPE_SEGMENT
-from shared.utils.fs_utils import remove_dir_if_empty, remove_file_silent
+from shared.utils.fs_utils import remove_empty_dirs_up_to
 from shared.utils.path_utils import build_file_items, file_api_url, storage_path_ref, slice_items
 from shared.utils.yolo_utils import read_yolo_lines, write_yolo_lines
 from contexts.annotation.infrastructure.batch_helpers import (
     extract_prediction_boxes,
     load_existing_manual_boxes,
 )
+from contexts.annotation.infrastructure.auto_annotation_store import (
+    attach_conf,
+    describe_auto_items,
+    drop_auto_annotation,
+    load_auto_meta,
+    write_auto_annotation,
+)
 from contexts.annotation.domain.services import filter_duplicate_boxes, filter_duplicate_polygons, polygon_area
+from contexts.annotation.domain.class_alignment import (
+    class_ids_from_label_lines,
+    require_label_classes_writable,
+)
 
 
 class BaseAnnotationTaskStrategy:
@@ -52,8 +63,28 @@ class BaseAnnotationTaskStrategy:
         """按当前任务类型保存自动标注结果。"""
         raise NotImplementedError
 
-    def commit_auto_annotation(self, *_args, **_kwargs):
-        """把自动标注结果合并到人工标注真源。"""
+    def commit_auto_annotation(self, context):
+        """把这张图还没审的候选搬进人工标签，然后清掉候选——就是逐张点保存的那一下。
+
+        接在现有标签后面：原来的框不动，一行都不重写。搬运走的是标签同一套编码，
+        搬过去的内容和当初看到的内容才不会是两回事。
+        """
+        lines = read_yolo_lines(context["auto_label_path"])
+        existing = read_yolo_lines(context["manual_label_path"])
+        write_yolo_lines(context["manual_label_path"], existing + lines)
+        drop_auto_annotation(context)
+        return {"written_items": len(lines), "label_items": len(existing) + len(lines)}
+
+    def encode_label_lines(self, _context, _annotation):
+        """把一批结果编码成可直接写进标签文件的文本行。
+
+        落盘到待确认目录和并入人工标签走的是同一条编码路径：两处各算一遍，
+        人点保存时写进去的内容就可能和当初看到的不是一回事。
+        """
+        raise NotImplementedError
+
+    def decode_pending_items(self, *_args, **_kwargs):
+        """按标签行序解码待确认结果，并贴回逐条置信度。"""
         raise NotImplementedError
 
     def list_missing_annotations(self, *_args, **_kwargs):
@@ -72,6 +103,25 @@ class BaseAnnotationTaskStrategy:
         """把模型输出转换为当前任务类型的自动标注载荷。"""
         raise NotImplementedError
 
+    def select_auto_annotation_classes(self, annotation, class_ids):
+        """只留下选定类别的候选；没给选定类别就原样返回。
+
+        漏标探测按类别一轮一轮跑：一次探六个类，候选队列会涨到人审不动的量。
+        """
+        payload = annotation or {}
+        if not class_ids:
+            return payload
+        if payload.get("class_id") is not None:
+            return payload if int(payload["class_id"]) in class_ids else {}
+        pruned = dict(payload)
+        for key in ("boxes", "polygons", "instances"):
+            if key in payload:
+                pruned[key] = [
+                    item for item in payload[key] or []
+                    if int(item.get("class", -1)) in class_ids
+                ]
+        return pruned
+
     def refine_auto_annotation(self, _context, annotation, _iou_thresh):
         """在写入待确认结果前，对自动标注载荷执行任务类型特有的清洗。"""
         return annotation
@@ -83,18 +133,6 @@ class BaseAnnotationTaskStrategy:
     def count_auto_annotation_items(self, _annotation):
         """返回一次自动标注实际新增的结果数量。"""
         raise NotImplementedError
-
-
-def _remove_empty_dirs_up_to(path, stop_dir):
-    """自下而上清理空目录，直到到达给定根目录。"""
-    current_dir = os.path.dirname(path)
-    stop_dir = os.path.realpath(stop_dir)
-    while current_dir and os.path.realpath(current_dir).startswith(stop_dir) and os.path.realpath(current_dir) != stop_dir:
-        remove_dir_if_empty(current_dir)
-        parent_dir = os.path.dirname(current_dir)
-        if parent_dir == current_dir:
-            break
-        current_dir = parent_dir
 
 
 def _scalar_to_float(value, default=0.0):
@@ -195,10 +233,12 @@ def _build_pose_instance_from_prediction(box, keypoint_row):
         keypoints.append({"x": x, "y": y, "visible": visible})
     if not any(int(point.get("visible", 0) or 0) > 0 for point in keypoints):
         return None
+    raw_conf = getattr(box, "conf", None)
     return {
         "class": class_id,
         **bbox,
         "keypoints": keypoints,
+        "conf": round(_scalar_to_float(raw_conf), 6) if raw_conf is not None else None,
     }
 
 
@@ -246,6 +286,8 @@ def _sanitize_pose_instance(instance, width, height, keypoint_count):
         "y1": y1,
         "x2": x2,
         "y2": y2,
+        # 清洗会重建实例，置信度不带就丢了审核依据
+        "conf": (instance or {}).get("conf"),
         "keypoints": normalized_points,
     }
 
@@ -259,22 +301,34 @@ class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
     def get_annotation_payload(self, context):
         """根据类别目录归属生成分类标注载荷。"""
         width, height = get_image_size(context["image_path"])
+        auto_meta = load_auto_meta(context)
+        first_item = auto_meta["items"][0] if auto_meta["items"] else {}
         return {
             "vision_task_type": self.vision_task_type,
             "manual_annotation": {"class_id": resolve_classification_class_id(context)},
-            "auto_annotation": {"class_id": decode_classification_file(context["auto_label_path"])},
+            "auto_annotation": {
+                "class_id": decode_classification_file(context["auto_label_path"]),
+                "conf": (first_item or {}).get("conf"),
+                "source": auto_meta["source"],
+            },
             "width": width,
             "height": height,
         }
 
+    def commit_auto_annotation(self, context):
+        """分类的候选是一个类别答案，不是一批标签行：按行搬进标签文件会造出没人认得的标签。
+        它的判定就是把答案落到类别目录里，走逐张保存那一条路。
+        """
+        raise NotImplementedError("分类任务没有标签文件可搬，请逐张保存")
+
     def save_manual_annotation(self, context, annotation):
         """通过移动图片到目标类别目录保存分类人工标注。"""
         lines = encode_classification_lines(annotation or {})
+        require_label_classes_writable(context.get("class_names") or [], class_ids_from_label_lines(lines))
         target_image_path = context["image_path"]
         if not lines:
             if context.get("is_unlabeled"):
-                remove_file_silent(context["auto_label_path"])
-                _remove_empty_dirs_up_to(context["auto_label_path"], context["auto_dir"])
+                drop_auto_annotation(context)
                 return {
                     "image_path": storage_path_ref(target_image_path),
                     "image_url": file_api_url(target_image_path),
@@ -283,9 +337,8 @@ class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
             target_image_path = os.path.join(context["unlabeled_dir"], context["sample_relative_path"])
             os.makedirs(os.path.dirname(target_image_path), exist_ok=True)
             os.replace(context["image_path"], target_image_path)
-            _remove_empty_dirs_up_to(context["image_path"], context["split_dir"])
-            remove_file_silent(context["auto_label_path"])
-            _remove_empty_dirs_up_to(context["auto_label_path"], context["auto_dir"])
+            remove_empty_dirs_up_to(context["image_path"], context["split_dir"])
+            drop_auto_annotation(context)
             return {
                 "image_path": storage_path_ref(target_image_path),
                 "image_url": file_api_url(target_image_path),
@@ -301,29 +354,34 @@ class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
             target_image_path = os.path.join(context["split_dir"], target_class_name, context["sample_relative_path"])
             os.makedirs(os.path.dirname(target_image_path), exist_ok=True)
             os.replace(context["image_path"], target_image_path)
-            _remove_empty_dirs_up_to(context["image_path"], context["unlabeled_dir"] if context.get("is_unlabeled") else context["split_dir"])
-        remove_file_silent(context["auto_label_path"])
-        _remove_empty_dirs_up_to(context["auto_label_path"], context["auto_dir"])
+            remove_empty_dirs_up_to(context["image_path"], context["unlabeled_dir"] if context.get("is_unlabeled") else context["split_dir"])
+        drop_auto_annotation(context)
         return {
             "image_path": storage_path_ref(target_image_path),
             "image_url": file_api_url(target_image_path),
             "label_path": storage_path_ref(target_image_path),
         }
 
-    def save_auto_annotation(self, context, annotation):
+    def encode_label_lines(self, _context, annotation):
+        """分类候选整图一个判断，编码成一行的候选类别。"""
+        return encode_classification_lines(annotation or {})
+
+    def save_auto_annotation(self, context, annotation, source=None):
         """把分类自动标注候选类别写入待确认目录。"""
-        lines = encode_classification_lines(annotation or {})
+        lines = self.encode_label_lines(context, annotation)
         if not lines:
             raise ValueError("自动标注结果为空")
-        write_yolo_lines(context["auto_label_path"], lines)
+        # 分类的候选是一张图一个答案，合并写入会变成两个答案，所以只有这一类覆盖写
+        write_auto_annotation(context, lines, describe_auto_items(annotation), source, merge_existing=False)
         return {"label_path": storage_path_ref(context["auto_label_path"])}
 
-    def commit_auto_annotation(self, context):
-        """把分类自动标注候选类别提升为最终人工标注。"""
-        auto_class_id = decode_classification_file(context["auto_label_path"])
-        if auto_class_id is None:
-            raise ValueError("当前图片不存在待确认自动标注")
-        return self.save_manual_annotation(context, {"class_id": auto_class_id})
+    def decode_pending_items(self, context, _width, _height, meta=None):
+        """分类候选解码为单条整图结果，没有待确认候选时为空。"""
+        class_id = decode_classification_file(context["auto_label_path"])
+        if class_id is None:
+            return []
+        meta_items = (meta if meta is not None else load_auto_meta(context))["items"]
+        return [{"class": class_id, "conf": meta_items[0].get("conf") if meta_items else None}]
 
     def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
         """扫描分类未标注工作区，返回仍未归类的图片。"""
@@ -359,7 +417,13 @@ class ClassifyAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         """把分类模型输出解析为单个候选 class_id。"""
         probs = getattr(prediction, "probs", None)
         top1 = getattr(probs, "top1", None) if probs is not None else None
-        return {"class_id": int(top1)} if top1 is not None else {}
+        if top1 is None:
+            return {}
+        top1_conf = getattr(probs, "top1conf", None)
+        return {
+            "class_id": int(top1),
+            "conf": round(_scalar_to_float(top1_conf), 6) if top1_conf is not None else None,
+        }
 
     def has_auto_annotation_content(self, annotation):
         """分类候选结果以单个 class_id 为准。"""
@@ -379,35 +443,40 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
     def get_annotation_payload(self, context):
         """读取检测人工框和自动框，构造标注载荷。"""
         width, height = get_image_size(context["image_path"])
+        auto_meta = load_auto_meta(context)
         return {
             "vision_task_type": self.vision_task_type,
             "manual_annotation": {"boxes": decode_detect_file(context["manual_label_path"], width, height)},
-            "auto_annotation": {"boxes": decode_detect_file(context["auto_label_path"], width, height)},
+            "auto_annotation": {"boxes": self.decode_pending_items(context, width, height, auto_meta), "source": auto_meta["source"]},
             "width": width,
             "height": height,
         }
 
+    def decode_pending_items(self, context, width, height, meta=None):
+        """按行序解码检测待确认框，并贴回逐框置信度。"""
+        return attach_conf(decode_detect_file(context["auto_label_path"], width, height), meta if meta is not None else load_auto_meta(context))
+
     def save_manual_annotation(self, context, annotation):
-        """把检测框写入人工标签文件，并清除待确认自动标签。"""
+        """把检测框写入人工标签文件。这张图的候选由保存它的用例一并判掉。"""
         width, height = get_image_size(context["image_path"])
         labels = (annotation or {}).get("boxes") or []
         write_yolo_lines(context["manual_label_path"], encode_detect_lines(labels, width, height))
-        remove_file_silent(context["auto_label_path"])
         return {"label_path": storage_path_ref(context["manual_label_path"])}
 
-    def save_auto_annotation(self, context, annotation):
-        """把检测自动标注结果写入 auto_labels 目录。"""
+    def encode_label_lines(self, context, annotation):
+        """把检测框编码成 YOLO 行。"""
         width, height = get_image_size(context["image_path"])
-        labels = (annotation or {}).get("boxes") or []
-        write_yolo_lines(context["auto_label_path"], encode_detect_lines(labels, width, height))
-        return {"label_path": storage_path_ref(context["auto_label_path"])}
+        return encode_detect_lines((annotation or {}).get("boxes") or [], width, height)
 
-    def commit_auto_annotation(self, context):
-        """把检测自动标注框并入人工标签文件。"""
-        merged = read_yolo_lines(context["manual_label_path"]) + read_yolo_lines(context["auto_label_path"])
-        write_yolo_lines(context["manual_label_path"], merged)
-        remove_file_silent(context["auto_label_path"])
-        return {"label_path": storage_path_ref(context["manual_label_path"])}
+    def save_auto_annotation(self, context, annotation, source=None):
+        """把检测自动标注结果写入 auto_labels 目录，并留下逐框置信度与出处。"""
+        write_auto_annotation(
+            context,
+            self.encode_label_lines(context, annotation),
+            describe_auto_items(annotation),
+            source,
+        )
+        return {"label_path": storage_path_ref(context["auto_label_path"])}
 
     def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
         """扫描检测图片目录，返回缺失或空人工标签的图片。"""
@@ -450,7 +519,11 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         return {"boxes": extract_prediction_boxes(prediction)}
 
     def refine_auto_annotation(self, context, annotation, iou_thresh):
-        """检测自动标注需去重已有人工框与待确认框。"""
+        """检测自动标注只清洗「跟已有框是同一个东西」的候选。
+
+        判据只有一条，在 domain/services.is_same_object_box：重叠到七成以上，或一个
+        九成以上落在另一个里。iou_thresh 就是那条里的重叠线，接口参数真的生效。
+        """
         boxes = (annotation or {}).get("boxes") or []
         if not boxes:
             return {"boxes": []}
@@ -458,7 +531,7 @@ class DetectAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
         rel_noext = context["relative_noext"]
         existing_manual = load_existing_manual_boxes(context["dataset_root"], context.get("split"), rel_noext, width, height)
         existing_auto = decode_detect_file(context["auto_label_path"], width, height)
-        return {"boxes": filter_duplicate_boxes(boxes, existing_manual, existing_auto, float(iou_thresh))}
+        return {"boxes": filter_duplicate_boxes(boxes, existing_manual, existing_auto, iou_thresh)}
 
     def has_auto_annotation_content(self, annotation):
         """检测候选结果以框列表非空为准。"""
@@ -477,32 +550,39 @@ class SegmentAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
 
     def get_annotation_payload(self, context):
         width, height = get_image_size(context["image_path"])
+        auto_meta = load_auto_meta(context)
         return {
             "vision_task_type": self.vision_task_type,
             "manual_annotation": {"polygons": decode_segment_file(context["manual_label_path"], width, height)},
-            "auto_annotation": {"polygons": decode_segment_file(context["auto_label_path"], width, height)},
+            "auto_annotation": {"polygons": self.decode_pending_items(context, width, height, auto_meta), "source": auto_meta["source"]},
             "width": width,
             "height": height,
         }
 
+    def decode_pending_items(self, context, width, height, meta=None):
+        """按行序解码待确认轮廓，并贴回逐条置信度。"""
+        return attach_conf(decode_segment_file(context["auto_label_path"], width, height), meta if meta is not None else load_auto_meta(context))
+
     def save_manual_annotation(self, context, annotation):
+        """把人工轮廓写入标签文件。这张图的候选由保存它的用例一并判掉。"""
         width, height = get_image_size(context["image_path"])
         labels = (annotation or {}).get("polygons") or []
         write_yolo_lines(context["manual_label_path"], encode_segment_lines(labels, width, height))
-        remove_file_silent(context["auto_label_path"])
         return {"label_path": storage_path_ref(context["manual_label_path"])}
 
-    def save_auto_annotation(self, context, annotation):
+    def encode_label_lines(self, context, annotation):
+        """把分割轮廓编码成 YOLO 行。"""
         width, height = get_image_size(context["image_path"])
-        labels = (annotation or {}).get("polygons") or []
-        write_yolo_lines(context["auto_label_path"], encode_segment_lines(labels, width, height))
-        return {"label_path": storage_path_ref(context["auto_label_path"])}
+        return encode_segment_lines((annotation or {}).get("polygons") or [], width, height)
 
-    def commit_auto_annotation(self, context):
-        merged = read_yolo_lines(context["manual_label_path"]) + read_yolo_lines(context["auto_label_path"])
-        write_yolo_lines(context["manual_label_path"], merged)
-        remove_file_silent(context["auto_label_path"])
-        return {"label_path": storage_path_ref(context["manual_label_path"])}
+    def save_auto_annotation(self, context, annotation, source=None):
+        write_auto_annotation(
+            context,
+            self.encode_label_lines(context, annotation),
+            describe_auto_items(annotation),
+            source,
+        )
+        return {"label_path": storage_path_ref(context["auto_label_path"])}
 
     def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
         img_dir = get_dataset_images_dir(dataset_root, split)
@@ -546,15 +626,18 @@ class SegmentAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
                 if segment is None:
                     continue
                 class_id = 0
+                conf = None
                 if index < len(boxes) and getattr(boxes[index], "cls", None) is not None:
                     class_id = int(boxes[index].cls.item())
+                if index < len(boxes) and getattr(boxes[index], "conf", None) is not None:
+                    conf = _scalar_to_float(boxes[index].conf)
                 points = []
                 for point in segment.tolist():
                     if len(point) < 2:
                         continue
                     points.append({"x": float(point[0]), "y": float(point[1])})
                 if len(points) >= 3:
-                    polygons.append({"class": class_id, "points": points})
+                    polygons.append({"class": class_id, "points": points, "conf": conf})
         except Exception:
             return {"polygons": []}
         return {"polygons": polygons}
@@ -575,7 +658,12 @@ class SegmentAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
                 points.append({"x": x, "y": y})
             if len(points) >= 3 and points[0] == points[-1]:
                 points = points[:-1]
-            candidate = {"class": int(polygon.get("class", 0)), "points": points}
+            candidate = {
+                "class": int(polygon.get("class", 0)),
+                "points": points,
+                # 置信度要一路跟到元信息：清洗会重建多边形，不带上就丢了审核依据
+                "conf": polygon.get("conf"),
+            }
             if len(points) < 3:
                 continue
             if polygon_area(candidate) < 9.0:
@@ -608,6 +696,7 @@ class PoseAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
     def get_annotation_payload(self, context):
         width, height = get_image_size(context["image_path"])
         pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
+        auto_meta = load_auto_meta(context)
         return {
             "vision_task_type": self.vision_task_type,
             "manual_annotation": {
@@ -618,55 +707,44 @@ class PoseAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
                     kpt_shape=pose_meta.get("kpt_shape"),
                 )
             },
-            "auto_annotation": {
-                "instances": decode_pose_file(
-                    context["auto_label_path"],
-                    width,
-                    height,
-                    kpt_shape=pose_meta.get("kpt_shape"),
-                )
-            },
+            "auto_annotation": {"instances": self.decode_pending_items(context, width, height, auto_meta), "source": auto_meta["source"]},
             "pose_meta": pose_meta,
             "width": width,
             "height": height,
         }
 
-    def save_manual_annotation(self, context, annotation):
-        width, height = get_image_size(context["image_path"])
+    def decode_pending_items(self, context, width, height, meta=None):
+        """按行序解码待确认姿态实例，并贴回逐条置信度。"""
         pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
-        labels = (annotation or {}).get("instances") or []
-        write_yolo_lines(
-            context["manual_label_path"],
-            encode_pose_lines(
-                labels,
-                width,
-                height,
-                kpt_shape=pose_meta.get("kpt_shape"),
-            ),
+        return attach_conf(
+            decode_pose_file(context["auto_label_path"], width, height, kpt_shape=pose_meta.get("kpt_shape")),
+            meta if meta is not None else load_auto_meta(context),
         )
-        remove_file_silent(context["auto_label_path"])
+
+    def save_manual_annotation(self, context, annotation):
+        """把人工姿态实例写入标签文件。这张图的候选由保存它的用例一并判掉。"""
+        write_yolo_lines(context["manual_label_path"], self.encode_label_lines(context, annotation))
         return {"label_path": storage_path_ref(context["manual_label_path"])}
 
-    def save_auto_annotation(self, context, annotation):
+    def encode_label_lines(self, context, annotation):
+        """把姿态实例编码成带关键点的 YOLO 行。"""
         width, height = get_image_size(context["image_path"])
         pose_meta = load_pose_annotation_meta(context["dataset_root"], context.get("class_names"))
-        labels = (annotation or {}).get("instances") or []
-        write_yolo_lines(
-            context["auto_label_path"],
-            encode_pose_lines(
-                labels,
-                width,
-                height,
-                kpt_shape=pose_meta.get("kpt_shape"),
-            ),
+        return encode_pose_lines(
+            (annotation or {}).get("instances") or [],
+            width,
+            height,
+            kpt_shape=pose_meta.get("kpt_shape"),
+        )
+
+    def save_auto_annotation(self, context, annotation, source=None):
+        write_auto_annotation(
+            context,
+            self.encode_label_lines(context, annotation),
+            describe_auto_items(annotation),
+            source,
         )
         return {"label_path": storage_path_ref(context["auto_label_path"])}
-
-    def commit_auto_annotation(self, context):
-        merged = read_yolo_lines(context["manual_label_path"]) + read_yolo_lines(context["auto_label_path"])
-        write_yolo_lines(context["manual_label_path"], merged)
-        remove_file_silent(context["auto_label_path"])
-        return {"label_path": storage_path_ref(context["manual_label_path"])}
 
     def list_missing_annotations(self, dataset_root, split, offset=0, limit=50):
         img_dir = get_dataset_images_dir(dataset_root, split)
@@ -745,7 +823,7 @@ class PoseAnnotationTaskStrategy(BaseAnnotationTaskStrategy):
                 cleaned,
                 existing_manual,
                 existing_auto,
-                float(iou_thresh),
+                iou_thresh,
             )
         }
 

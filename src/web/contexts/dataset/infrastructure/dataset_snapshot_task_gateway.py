@@ -10,14 +10,15 @@ import logging
 import os
 
 from contexts.dataset.infrastructure.dataset_task_type import ensure_dataset_task_identity
-from contexts.project.infrastructure.project_paths import get_project_task_dir
-from contexts.task.domain.task_types import TASK_TYPE_DATASET_SNAPSHOT
-from contexts.task.infrastructure.task_repository import (
+from contexts.project.application.project_service import get_project_task_dir
+from protocols.task_type import TASK_TYPE_DATASET_SNAPSHOT
+from contexts.task.application.task_service import (
     create_task as start_task,
     get_task_record,
     update_task as update_task_status,
+    build_worker_artifacts,
+    mark_worker_started,
 )
-from contexts.task.infrastructure.worker_task_ops import build_worker_artifacts, mark_worker_started
 from shared.infra.worker_process import spawn_worker_process
 from shared.utils.path_utils import project_name_from_path, resolve_project_path, resolve_storage_path
 from shared.utils.time_utils import now_iso

@@ -2,7 +2,7 @@
 
 import os
 
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_LOG_PATH,
     ARTIFACT_STOP_SIGNAL_PATH,
     ARTIFACT_TASK_DIR,

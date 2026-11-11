@@ -3,12 +3,11 @@
 from flask import Blueprint
 
 from app.http import json_body_endpoint, json_endpoint, json_error_response, param, query_params, query_params_endpoint
-from contexts.task.domain.task_artifact_keys import ARTIFACT_TEMPLATE_DIR
-from contexts.task.domain.task_types import TASK_TYPE_TEMPLATE
-from contexts.task.infrastructure.task_runtime import load_task
+from protocols.task_artifact_keys import ARTIFACT_TEMPLATE_DIR
+from protocols.task_type import TASK_TYPE_TEMPLATE
+from contexts.task.application.task_service import load_task
 from contexts.training.application.commands import (
     archive_training_workflow_record,
-    continue_training,
     create_training_workflow_record,
     delete_export_task_record,
     delete_template_task_record,
@@ -68,6 +67,7 @@ bp.add_url_rule(
         training_config=param("training_config", default=dict),
         dataset_path=param("dataset_path"),
         workflow_id=param("workflow_id"),
+        compute_target_id=param("compute_target_id"),
     ),
     methods=["POST"],
 )
@@ -159,23 +159,12 @@ bp.add_url_rule(
 
 
 bp.add_url_rule(
-    "/api/training/continue",
-    view_func=json_body_endpoint(
-        continue_training,
-        project_path=param("project_path", required=True, transform=resolve_project_path, required_message="缺少项目路径"),
-        dataset_name=param("dataset_name", default="training"),
-        training_config=param("training_config", default=dict),
-    ),
-    methods=["POST"],
-)
-bp.add_url_rule(
     "/api/training/resume",
     view_func=json_body_endpoint(
         resume_training,
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", default="training"),
         task_id=param("task_id", required=True),
-        training_config=param("training_config", default=dict),
     ),
     methods=["POST"],
 )
@@ -208,6 +197,7 @@ bp.add_url_rule(
         dataset_name=param("dataset_name", required=True),
         src_task_id=param("task_id", required=True),
         use_best=param("use_best", default=True, transform=lambda value: parse_bool(value, default=True)),
+        split=param("split", default=""),
     ),
     methods=["POST"],
 )

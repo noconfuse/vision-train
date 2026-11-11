@@ -1,9 +1,9 @@
 """构造训练链路统一能力快照。"""
 
-from contexts.dataset.domain.capabilities import build_dataset_capabilities
-from contexts.training.domain.export_profile import build_training_export_profile
-from contexts.training.domain.result_profile import build_training_result_profile
-from contexts.training.domain.training_profile import build_training_profile
+from protocols.capabilities.dataset_capabilities import build_dataset_capabilities
+from protocols.capabilities.export_profile import build_training_export_profile
+from protocols.capabilities.result_profile import build_training_result_profile
+from protocols.capabilities.training_profile import build_training_profile
 
 
 def build_training_capabilities_snapshot(vision_task_type, dataset_metadata=None):

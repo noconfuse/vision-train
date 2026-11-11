@@ -89,7 +89,7 @@ html, body, #app {
 }
 
 .vt-modal-panel {
-  @apply w-full border border-gray-200 bg-white;
+  @apply w-full flex max-h-[calc(100vh-2rem)] flex-col overflow-hidden border border-gray-200 bg-white;
 }
 
 .vt-modal-panel--md {
@@ -103,7 +103,7 @@ html, body, #app {
 }
 
 .vt-modal-header {
-  @apply flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3;
+  @apply flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 px-4 py-3;
 }
 
 .vt-modal-close {
@@ -111,11 +111,11 @@ html, body, #app {
 }
 
 .vt-modal-body {
-  @apply p-4;
+  @apply min-h-0 flex-1 overflow-y-auto p-4;
 }
 
 .vt-modal-footer {
-  @apply flex flex-wrap items-center justify-end gap-2 border-t border-gray-200 px-4 py-3 bg-gray-50;
+  @apply flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-gray-200 px-4 py-3 bg-gray-50;
 }
 
 .vt-workspace-backdrop {
@@ -152,6 +152,13 @@ html, body, #app {
 
 .vt-media-backdrop {
   @apply fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4;
+}
+
+/* 叠层只有两档：弹窗/工作区/媒体预览 50，盖在它们上面的二次确认框 60。
+   这里全是未分层规则，优先级高于 Tailwind 的 @layer utilities，
+   所以 `z-[60]` 这种工具类压不住 .vt-modal-backdrop 的 z-50，顶部档必须写成类。 */
+.vt-overlay--top {
+  z-index: 60;
 }
 
 .vt-media-panel {
@@ -593,6 +600,13 @@ html, body, #app {
   color: var(--vt-color-primary);
 }
 
+.vt-menu-item {
+  @apply block w-full px-3 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50;
+}
+.vt-menu-item--danger {
+  @apply text-rose-600 hover:bg-rose-50;
+}
+
 .vt-chip {
   @apply inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-xs transition-colors;
   border-color: var(--vt-color-tertiary-border);
@@ -718,16 +732,6 @@ html, body, #app {
   padding-top: 0;
   padding-bottom: 0;
 }
-.vt-input--with-leading {
-  padding-left: 2.5rem;
-}
-.vt-input--with-trailing {
-  padding-right: 2.5rem;
-}
-.vt-input--with-both {
-  padding-left: 2.5rem;
-  padding-right: 2.5rem;
-}
 .vt-textarea {
   @apply w-full border border-gray-300 bg-white px-3 py-2 text-sm text-slate-800 transition-colors outline-none;
 }
@@ -751,6 +755,17 @@ html, body, #app {
 .vt-control-auto {
   width: auto;
 }
+/* 图标内嵌在输入框里时留出两侧空间；必须排在 .vt-control-* 之后，否则会被它们的 px-* 覆盖 */
+.vt-input--with-leading {
+  padding-left: 2.5rem;
+}
+.vt-input--with-trailing {
+  padding-right: 2.5rem;
+}
+.vt-input--with-both {
+  padding-left: 2.5rem;
+  padding-right: 2.5rem;
+}
 .vt-control-page {
   width: 3rem;
 }
@@ -770,6 +785,13 @@ html, body, #app {
 }
 .vt-icon-btn--sm {
   @apply h-7 w-7;
+}
+
+/* 图标开关的开启态：和 vt-view-tab--active 同一套颜色，一个开关只有一种亮法 */
+.vt-icon-btn--active {
+  border-color: var(--vt-color-primary-border);
+  background: var(--vt-color-primary-soft);
+  color: var(--vt-color-primary);
 }
 
 .vt-overlay-icon-btn {

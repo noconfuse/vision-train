@@ -4,11 +4,9 @@
 
 ## 1.1 目标
 
-让读者理解：
-
 - 项目在系统里代表什么
 - 项目下沉淀了哪些数据
-- 创建 / 编辑 / 删除 / 切换项目会引发什么副作用
+- 创建 / 编辑 / 删除 / 切换项目的副作用
 
 ## 1.2 前置条件
 
@@ -32,10 +30,12 @@
 projects/<project_name>/
 ├── training/                  # 数据集根目录
 │   ├── <dataset_name>/
-│   └── <dataset_name>.dvc     # DVC 指针文件（数据集被跟踪时生成）
+│   ├── <dataset_name>.dvc     # DVC 指针文件（数据集被跟踪时生成）
+│   └── .dataset-store/        # 数据集版本快照仓库
 ├── training_outputs/          # 训练 / 评估 / 导出 / 部署模板产物
 ├── training_calibrations/     # 批次校准产物
 ├── videos/                    # 视频原文件
+├── temp_tasks/                # 抽帧等任务的临时结果
 └── .description               # 项目描述（仅 UI 展示）
 ```
 

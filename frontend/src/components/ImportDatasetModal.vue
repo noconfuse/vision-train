@@ -1,17 +1,9 @@
 <template>
-  <div class="vt-modal-backdrop" @click.self="onCancel">
-    <div class="vt-modal-panel vt-modal-panel--md flex flex-col">
-      <div class="vt-modal-header">
-        <h3 class="text-base font-semibold text-slate-800 inline-flex items-center gap-2">
-          <AppIcon name="download" class="h-4 w-4 text-slate-600" />
-          <span>导入数据集</span>
-        </h3>
-        <button class="vt-modal-close" @click="onCancel" :disabled="uploading && !success && !error">
-          <AppIcon name="close" class="h-4 w-4" />
-        </button>
-      </div>
-
-      <div class="vt-modal-body space-y-3">
+  <ModalShell title="导入数据集" size="md" body-class="space-y-3"
+              :dismissible="!(uploading && !success && !error)" @close="onCancel">
+    <template #icon>
+      <AppIcon name="download" class="h-4 w-4 text-slate-600" />
+    </template>
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
             任务类型 <span class="text-rose-500">*</span>
@@ -228,9 +220,7 @@
             开始导入
           </button>
         </div>
-      </div>
-    </div>
-  </div>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -241,6 +231,7 @@ import { formatBytes, validateResourceName } from '../utils';
 import { ARCHIVE_FILE_ACCEPT, isSupportedArchiveFile } from '../utils/media';
 import { VISION_TASK_TYPE } from '../domain/dataset/visionTaskType';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
 const props = defineProps({

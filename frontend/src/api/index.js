@@ -329,7 +329,6 @@ const api = {
   startDatasetSnapshot(data) { return post('/dataset/snapshot/start', data); },
   splitDataset(data) { return post('/dataset/split', data); },
   updateDatasetTags(data) { return post('/dataset/update_tags', data); },
-  clearDatasetAutoLabels(data) { return post('/dataset/clear_auto_labels', data); },
   deleteDatasetFolder(data) { return post('/dataset/delete_folder', data); },
   createDatasetSubset(data) { return post('/dataset/create_subset', data); },
   createEmptyDataset(data) { return post('/dataset/create_empty', data); },
@@ -338,6 +337,9 @@ const api = {
 
   // Dataset Images & Annotation
   getDatasetImages(params, cfg = {}) { return get('/dataset/images', { ...(cfg || {}), params }); },
+  getDatasetCursor(params) { return get('/dataset/cursor', { params }); },
+  setDatasetCursor(data) { return post('/dataset/cursor', data); },
+  locateDatasetImage(params) { return get('/dataset/image_index', { params }); },
   uploadDatasetImages(formData, onProgress) {
     return post('/dataset/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -352,15 +354,25 @@ const api = {
     return http.get('/dataset/download', { params, responseType: 'blob' }).then(r => r.data);
   },
   batchDeleteDatasetImages(data) { return post('/dataset/batch_delete', data); },
+  deleteDatasetImage(data) { return post('/dataset/delete', data); },
+  moveDatasetImage(data) { return post('/dataset/move_image', data); },
   reorderDatasetLabels(data) { return post('/dataset/reorder_labels', data); },
   deleteDatasetLabel(data) { return post('/dataset/delete_label', data); },
   addDatasetLabel(data) { return post('/dataset/add_label', data); },
+  copyDatasetLabels(data) { return post('/dataset/copy_labels', data); },
   deduplicateDatasetImages(data) { return post('/dataset/deduplicate_images', data); },
   mergeDatasets(data) { return post('/dataset/merge', data); },
   autoAnnotate(data) { return post('/auto_annotate/batch', data); },
   getAutoAnnotateStatus(params) { return get('/auto_annotate/batch/status', { params }); },
   getAnnotation(params) { return get('/annotation/get', { params }); },
   saveAnnotation(data) { return post('/annotation/save', data); },
+  // 批量写入 = 逐张保存的批量版，名单由调用方按当前筛选给全
+  commitPendingAnnotations(data) { return post('/annotation/commit', data); },
+  // 清空候选按当前筛选（split + 类别）走，人工标签不碰
+  clearPendingAnnotations(data) { return post('/annotation/clear', data); },
+  // 以选中框为样本在本 split 检索相似目标，命中当候选写进待复核
+  startSimilarProbe(data) { return post('/annotation/similar_probe', data); },
+  getSimilarProbeStatus(params) { return get('/annotation/similar_probe/status', { params }); },
   refineSegmentAnnotation(data) { return post('/annotation/segment/refine', data); },
   refineSegmentBoundaryPatch(data) { return post('/annotation/segment/boundary_patch', data); },
   eraseSegmentAnnotation(data) { return post('/annotation/segment/erase', data); },
@@ -371,6 +383,13 @@ const api = {
   preparePretrainedModel(name, onEvent) {
     return consumeSse(`/api/pretrained/prepare?name=${encodeURIComponent(name)}`, onEvent);
   },
+
+  // 远端 GPU 服务器
+  getComputeTargets() { return get('/compute_targets'); },
+  createComputeTarget(data) { return post('/compute_targets/create', data); },
+  updateComputeTarget(data) { return post('/compute_targets/update', data); },
+  deleteComputeTarget(data) { return post('/compute_targets/delete', data); },
+  preflightComputeTarget(data) { return post('/compute_targets/preflight', data); },
 
   // Training
   createTrainingWorkflow(data) { return post('/training/workflow/create', data); },

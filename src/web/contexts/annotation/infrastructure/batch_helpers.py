@@ -1,11 +1,10 @@
-"""提供批量自动标注过程中的路径、框结果和标签追加辅助逻辑。"""
+"""提供批量自动标注过程中的路径、框结果和已有标签读取辅助逻辑。"""
 
 import os
 
-from contexts.annotation.infrastructure.annotation_io import decode_detect_file, encode_detect_lines
+from contexts.annotation.infrastructure.annotation_io import decode_detect_file
 from constants.media import IMAGE_FILE_EXTENSIONS
 from shared.utils.path_utils import is_within_path
-from shared.utils.yolo_utils import read_yolo_lines, write_yolo_lines
 
 
 def list_batch_image_paths(img_dir, image_paths=None):
@@ -39,13 +38,26 @@ def build_auto_label_path(img_dir, auto_label_dir, image_path):
 
 
 def extract_prediction_boxes(prediction):
-    """把 Ultralytics 预测结果统一成框列表。"""
+    """把 Ultralytics 预测结果统一成框列表。
+
+    置信度必须一路带到候选里：审核时「模型有多确定」是人决定留不留的唯一依据。
+    """
     boxes = []
     try:
         for box in prediction.boxes:
             xyxy = box.xyxy[0].tolist()
             cls = int(box.cls.item()) if hasattr(box, "cls") else 0
-            boxes.append({"class": cls, "x1": xyxy[0], "y1": xyxy[1], "x2": xyxy[2], "y2": xyxy[3]})
+            conf = box.conf.item() if hasattr(box, "conf") else None
+            boxes.append(
+                {
+                    "class": cls,
+                    "x1": xyxy[0],
+                    "y1": xyxy[1],
+                    "x2": xyxy[2],
+                    "y2": xyxy[3],
+                    "conf": round(float(conf), 6) if conf is not None else None,
+                }
+            )
     except Exception:
         return []
     return boxes
@@ -61,11 +73,3 @@ def load_existing_manual_boxes(ds_root, split, rel_noext, width, height):
         if os.path.exists(candidate):
             return decode_detect_file(candidate, width, height)
     return []
-
-
-def append_auto_label_boxes(auto_label_path, boxes, width, height):
-    """把新框追加写入自动标签文件。"""
-    lines = read_yolo_lines(auto_label_path)
-    lines.extend(encode_detect_lines(boxes, width, height))
-    write_yolo_lines(auto_label_path, lines)
-    return len(lines)

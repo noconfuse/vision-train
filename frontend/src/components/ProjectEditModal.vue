@@ -1,16 +1,7 @@
 <template>
-  <div class="vt-modal-backdrop" @click.self="onCancel">
-    <div class="vt-modal-panel vt-modal-panel--md flex flex-col">
-      <div class="vt-modal-header">
-        <h3 class="text-base font-semibold text-slate-800">
-          {{ mode === 'create' ? '新建项目' : '编辑项目' }}
-        </h3>
-        <button class="vt-modal-close" :disabled="submitting || success" @click="onCancel">
-          <AppIcon name="close" class="h-4 w-4" />
-        </button>
-      </div>
-
-      <form class="vt-modal-body space-y-3" @submit.prevent="onSubmit">
+  <ModalShell :title="mode === 'create' ? '新建项目' : '编辑项目'" size="md"
+              :dismissible="!(submitting || success)" @close="onCancel">
+    <form class="space-y-3" @submit.prevent="onSubmit">
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
             项目名 <span class="text-rose-500">*</span>
@@ -96,9 +87,8 @@
             <span>{{ submitting ? (mode === 'create' ? '创建中…' : '保存中…') : (success ? (mode === 'create' ? '创建成功' : '保存成功') : (mode === 'create' ? '创建' : '保存')) }}</span>
           </button>
         </div>
-      </form>
-    </div>
-  </div>
+    </form>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -107,6 +97,7 @@ import { useMainStore } from '../stores/main';
 import { useAsyncEmit } from '../composables/useAsyncEmit';
 import { validateResourceName } from '../utils';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 
 const props = defineProps({
   mode: { type: String, default: 'create' }, // 'create' | 'edit'

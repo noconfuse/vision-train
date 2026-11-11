@@ -1,6 +1,6 @@
 """定义项目命名规则与默认目录常量。"""
 
-from contexts.training.domain.training_constants import TRAINING_DATA_DIRNAME, TRAINING_OUTPUTS_DIRNAME
+from protocols.storage_layout import TRAINING_DATA_DIRNAME, TRAINING_OUTPUTS_DIRNAME
 from shared.utils.name_utils import TOKEN_NAME_PATTERN, validate_token_name
 
 PROJECT_NAME_PATTERN = TOKEN_NAME_PATTERN

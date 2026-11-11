@@ -60,9 +60,9 @@
           <tbody>
             <tr
               v-for="ds in allDatasets"
-              :key="ds.path"
+              :key="ds.dataset_id"
               class="vt-table-row cursor-pointer"
-              :class="store.selectedDataset?.path === ds.path ? 'vt-list-row--selected' : 'bg-white'"
+              :class="store.selectedDatasetId === ds.dataset_id ? 'vt-list-row--selected' : 'bg-white'"
               @click="openDataset(ds)"
             >
               <td class="vt-table-cell">
@@ -176,14 +176,15 @@
     </div>
 
     <!-- 重切分 Modal -->
-    <div v-if="splitDataset" class="vt-modal-backdrop" @click.self="closeSplit">
-      <div class="vt-modal-panel vt-modal-panel--md p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-base font-semibold text-slate-800">重切分数据集：{{ splitDataset.name }}</h3>
-          <button class="vt-modal-close" aria-label="关闭重切分数据集弹窗" @click="closeSplit">
-            <AppIcon name="close" class="h-4 w-4" />
-          </button>
-        </div>
+    <ModalShell
+      v-if="splitDataset"
+      size="md"
+      :title="`重切分数据集：${splitDataset.name}`"
+      body-class="p-5"
+      close-title="关闭重切分数据集弹窗"
+      :dismissible="!isActionPending(SPLIT_ACTION_KEY)"
+      @close="closeSplit"
+    >
         <div class="space-y-4">
           <div class="text-sm leading-6 text-slate-500">
             按整个数据集总样本重新生成 `train / val / test`，并尽量保持类别分布一致。
@@ -198,28 +199,28 @@
             <input v-model.number="testRatio" type="number" min="0" max="0.9" step="0.05"
                    class="vt-input" />
           </div>
-          <div class="flex justify-end gap-2">
-            <button class="vt-btn-link" :disabled="isActionPending(SPLIT_ACTION_KEY)" @click="closeSplit">取消</button>
-            <AsyncButton
-              class="vt-btn-solid-primary vt-btn-size-md"
-              :pending="isActionPending(SPLIT_ACTION_KEY)"
-              loading-text="处理中..."
-              @click="runSplit"
-            >
-              开始重切分
-            </AsyncButton>
-          </div>
         </div>
-      </div>
-    </div>
+      <template #footer>
+        <button class="vt-btn-link" :disabled="isActionPending(SPLIT_ACTION_KEY)" @click="closeSplit">取消</button>
+        <AsyncButton
+          class="vt-btn-solid-primary vt-btn-size-md"
+          :pending="isActionPending(SPLIT_ACTION_KEY)"
+          loading-text="处理中..."
+          @click="runSplit"
+        >
+          开始重切分
+        </AsyncButton>
+      </template>
+    </ModalShell>
 
     <!-- 标签 Modal -->
-    <div v-if="tagsDataset" class="vt-modal-backdrop" @click.self="closeTags">
-      <div class="vt-modal-panel vt-modal-panel--lg p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-base font-semibold text-slate-800">数据集标签：{{ tagsDataset.name }}</h3>
-          <button class="vt-btn-link" @click="closeTags">关闭</button>
-        </div>
+    <ModalShell
+      v-if="tagsDataset"
+      size="lg"
+      :title="`数据集标签：${tagsDataset.name}`"
+      body-class="p-5"
+      @close="closeTags"
+    >
         <div class="flex flex-wrap gap-2 mb-4">
           <span v-if="editTags.length === 0" class="text-sm text-gray-500">暂无标签</span>
           <button
@@ -236,53 +237,51 @@
                  placeholder="输入标签后回车或点击添加" @keydown.enter.prevent="addTag" />
           <button class="vt-btn-solid-primary vt-btn-size-md" @click="addTag">添加</button>
         </div>
-        <div class="flex justify-end gap-2">
-          <button class="vt-btn-link" @click="closeTags">取消</button>
-          <AsyncButton
-            class="vt-btn-solid-primary vt-btn-size-md"
-            :pending="isActionPending(TAGS_ACTION_KEY)"
-            loading-text="保存中..."
-            @click="saveTags"
-          >
-            保存
-          </AsyncButton>
-        </div>
-      </div>
-    </div>
+      <template #footer>
+        <button class="vt-btn-link" @click="closeTags">取消</button>
+        <AsyncButton
+          class="vt-btn-solid-primary vt-btn-size-md"
+          :pending="isActionPending(TAGS_ACTION_KEY)"
+          loading-text="保存中..."
+          @click="saveTags"
+        >
+          保存
+        </AsyncButton>
+      </template>
+    </ModalShell>
 
-    <div v-if="versionsDataset" class="vt-modal-backdrop" @click.self="closeVersions">
-      <div class="vt-modal-panel vt-modal-panel--lg max-h-[80vh] overflow-y-auto p-5">
-        <div class="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <h3 class="text-base font-semibold text-slate-800">数据集版本：{{ versionsDataset.name }}</h3>
-            <div class="mt-1 font-mono text-[11px] text-gray-400 break-all">
-              <span>ID {{ versionsDataset.dataset_id || '-' }}</span>
-              <span class="mx-1 text-gray-300">·</span>
-              <span>当前 {{ getCurrentVersionDisplay(versionsDataset) }}</span>
-            </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <button
-              v-if="snapshotTask"
-              class="vt-btn-link"
-              type="button"
-              @click="goToSnapshotTask"
-            >
-              查看任务中心
-            </button>
-            <AsyncButton
-              class="vt-btn-solid-primary vt-btn-size-md"
-              :pending="isActionPending(PUBLISH_VERSION_ACTION_KEY)"
-              :disabled="isSnapshotInFlight"
-              loading-text="发布中..."
-              @click="publishVersion"
-            >
-              发布当前版本
-            </AsyncButton>
-            <button class="vt-modal-close" aria-label="关闭版本管理弹窗" @click="closeVersions">
-              <AppIcon name="close" class="h-4 w-4" />
-            </button>
-          </div>
+    <ModalShell
+      v-if="versionsDataset"
+      size="lg"
+      :title="`数据集版本：${versionsDataset.name}`"
+      body-class="p-5"
+      close-title="关闭版本管理弹窗"
+      @close="closeVersions"
+    >
+      <template #header-extra>
+        <button
+          v-if="snapshotTask"
+          class="vt-btn-link"
+          type="button"
+          @click="goToSnapshotTask"
+        >
+          查看任务中心
+        </button>
+        <AsyncButton
+          class="vt-btn-solid-primary vt-btn-size-md"
+          :pending="isActionPending(PUBLISH_VERSION_ACTION_KEY)"
+          :disabled="isSnapshotInFlight"
+          loading-text="发布中..."
+          @click="publishVersion"
+        >
+          发布当前版本
+        </AsyncButton>
+      </template>
+
+        <div class="mb-4 font-mono text-[11px] text-gray-400 break-all">
+          <span>ID {{ versionsDataset.dataset_id || '-' }}</span>
+          <span class="mx-1 text-gray-300">·</span>
+          <span>当前 {{ getCurrentVersionDisplay(versionsDataset) }}</span>
         </div>
 
         <div v-if="snapshotTask" class="mb-4 vt-note" :class="snapshotBannerClass">
@@ -344,29 +343,32 @@
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
 
     <!-- 删除确认 Modal -->
-    <div v-if="deleteDataset" class="vt-modal-backdrop" @click.self="closeDelete">
-      <div class="vt-modal-panel vt-modal-panel--md p-5">
-        <h3 class="text-base font-semibold text-rose-700 mb-2">删除数据集</h3>
+    <ModalShell
+      v-if="deleteDataset"
+      size="md"
+      title="删除数据集"
+      body-class="p-5"
+      :dismissible="!isActionPending(DELETE_ACTION_KEY)"
+      @close="closeDelete"
+    >
         <div class="text-sm text-gray-600 mb-6">
           将删除目录：<span class="font-mono">{{ deleteDataset.path }}</span>
         </div>
-        <div class="flex justify-end gap-2">
-          <button class="vt-btn-link" :disabled="isActionPending(DELETE_ACTION_KEY)" @click="closeDelete">取消</button>
-          <AsyncButton
-            class="vt-btn-danger"
-            :pending="isActionPending(DELETE_ACTION_KEY)"
-            loading-text="删除中..."
-            @click="runDelete"
-          >
-            确认删除
-          </AsyncButton>
-        </div>
-      </div>
-    </div>
+      <template #footer>
+        <button class="vt-btn-link" :disabled="isActionPending(DELETE_ACTION_KEY)" @click="closeDelete">取消</button>
+        <AsyncButton
+          class="vt-btn-danger"
+          :pending="isActionPending(DELETE_ACTION_KEY)"
+          loading-text="删除中..."
+          @click="runDelete"
+        >
+          确认删除
+        </AsyncButton>
+      </template>
+    </ModalShell>
   </div>
 </template>
 
@@ -385,6 +387,7 @@ import { useDatasetSnapshotStore } from '../stores/datasetSnapshot';
 import ImportDatasetModal from './ImportDatasetModal.vue';
 import CreateDatasetModal from './CreateDatasetModal.vue';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 import {
@@ -488,7 +491,7 @@ const handleCreateDataset = async ({ datasetName, visionTaskType, initialClasses
       });
     }
     toast.success(`数据集「${datasetName}」已创建`);
-    await store.refreshKeepSelection();
+    await store.fetchProjects({ silent: true });
     onDone && onDone();
   } catch (e) {
     toast.error(`创建失败: ${e?.message || e}`);
@@ -666,7 +669,7 @@ const goToSnapshotTask = () => {
 };
 
 onMounted(() => {
-  store.refreshKeepSelection();
+  store.fetchProjects({ silent: true });
   store.ensureVersioningPoll();
 });
 
@@ -677,11 +680,8 @@ onBeforeUnmount(() => {
 });
 
 const findDatasetAfterRefresh = (source) => {
-  if (!source) return null;
-  return allDatasets.value.find((item) => item.dataset_id && item.dataset_id === source.dataset_id)
-    || allDatasets.value.find((item) => item.path === source.path)
-    || allDatasets.value.find((item) => item.name === source.name)
-    || null;
+  if (!source?.dataset_id) return null;
+  return allDatasets.value.find((item) => item.dataset_id === source.dataset_id) || null;
 };
 
 const loadVersions = async (dataset = versionsDataset.value) => {
@@ -766,7 +766,7 @@ const runSplit = async () => {
       test_ratio: testRatio.value
     }), {
       onSuccess: async (data) => {
-        await store.refreshKeepSelection();
+        await store.fetchProjects({ silent: true });
         closeSplit();
         const c = data.counts || {};
         toast.success(`重切分完成：train=${c.train ?? '-'} val=${c.val ?? '-'} test=${c.test ?? '-'}`);
@@ -818,7 +818,7 @@ const refreshVersionsAfterSnapshot = async (datasetId) => {
   if (!currentDataset || currentDataset.dataset_id !== datasetId) return;
   snapshotRefreshPending.value = true;
   try {
-    await store.refreshKeepSelection();
+    await store.fetchProjects({ silent: true });
     const refreshedDataset = findDatasetAfterRefresh(currentDataset) || currentDataset;
     versionsDataset.value = refreshedDataset;
     workflowStore.invalidateDataset({
@@ -854,7 +854,7 @@ const saveTags = async () => {
       tags: editTags.value
     }), {
       onSuccess: async () => {
-        await store.refreshKeepSelection();
+        await store.fetchProjects({ silent: true });
         closeTags();
         toast.success('标签已保存');
       },
@@ -920,7 +920,7 @@ const restoreVersion = async (version) => {
       version_id: version.version_id,
     }), {
       onSuccess: async () => {
-        await store.refreshKeepSelection();
+        await store.fetchProjects({ silent: true });
         const refreshedDataset = findDatasetAfterRefresh(versionsDataset.value) || versionsDataset.value;
         versionsDataset.value = refreshedDataset;
         workflowStore.invalidateDataset({
@@ -957,7 +957,7 @@ const runDelete = async () => {
           dataset_name: deleteDataset.value.name,
           dataset_id: deleteDataset.value.dataset_id,
         });
-        await store.refreshKeepSelection();
+        await store.fetchProjects({ silent: true });
         closeDelete();
         toast.success('数据集已删除');
       },

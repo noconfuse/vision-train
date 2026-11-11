@@ -3,9 +3,9 @@
 import os
 from urllib.parse import quote
 
-from contexts.task.domain.task_artifact_keys import ARTIFACT_EXPORT_PATH
-from contexts.task.presenters import present_task, present_tasks
-from contexts.training.domain.capability_snapshot import build_training_capabilities_snapshot
+from protocols.task_artifact_keys import ARTIFACT_EXPORT_PATH
+from contexts.task.application.task_service import present_task, present_tasks
+from protocols.capabilities.snapshot import build_training_capabilities_snapshot
 from contexts.training.infrastructure.artifact_scanner import scan_export_outputs, scan_training_run_artifacts
 from shared.utils.path_utils import build_file_item, build_file_items, storage_path_ref
 

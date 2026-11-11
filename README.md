@@ -16,17 +16,18 @@ Vision Train 是一个面向视觉模型的本地一体化工作台，把数据�
 - 数据准备：导入现成数据、整理训练数据划分、下载或删除数据集
 - 视频处理：上传视频、预览视频、抽取候选图片并导入到数据集中
 - 图片标注：框选目标、修改类别、删除错误标注、批量清理图片
-- 智能辅助：用已有模型先生成标注草稿，再由人工复核确认
-- 数据整理：调整类别顺序、清理重复图片、合并数据集、删除无用标签
-- 数据增强：针对样本少的类别生成补强数据集，减少类别不平衡
+- 智能辅助：模型预标注产出待复核候选，在标注弹窗中审核，保存即写入正式标签
+- 数据整理：类别增删与重排、图片去重、数据集合并、子集生成、跨 split 移动
+- 数据增强：针对弱类生成补强数据集，原数据集不变
 - 数据集版本：发布 / 恢复 / 自动引导数据集版本快照
 
 ### 模型训练与上线
 
 - 模型训练：以工作流为中心管理多轮训练，跨任务类型（detect / classify / segment / pose）
-- 效果检查：查看测试结果，判断当前模型是否达到使用预期
+- 远端 GPU：登记 GPU 服务器并 SSH 预检，远端执行训练并回传产物
+- 效果检查：在 test split 上评估并查看指标
 - 模型导出：生成适合不同部署环境的模型文件并下载产物
-- 部署模板：基于 `pt` 或导出后产物生成 FastAPI / Python SDK / 批处理 模板包
+- 部署模板：基于 `pt` 或导出后产物生成 FastAPI / Python SDK / 批处理模板包
 - 工作流归档：归档 / 恢复训练工作流，保留历史任务与产物
 - 任务中心：统一查看抽帧、标注、训练、测试、导出、部署模板等后台任务状态
 
@@ -100,7 +101,7 @@ npm run dev
 http://localhost:5173
 ```
 
-如果你开启了认证，可在登录页用 `.env` 里配置的 `VISION_TRAIN_ADMIN_USER` / `VISION_TRAIN_ADMIN_PASSWORD` 登录。
+如果你开启了认证，可在登录页用 `.env` 里配置的 `VISION_TRAIN_ADMIN_USER` / `VISION_TRAIN_ADMIN_PASSWORD` 登录。会话使用服务端存储的随机 token（非 JWT），退出登录或修改密码后旧 token 会失效。
 
 ## 目录结构
 
@@ -127,8 +128,13 @@ http://localhost:5173
 - `VISION_TRAIN_PORT`：后端监听端口（默认 `8090`）
 - `VISION_TRAIN_DEBUG`：Flask debug 模式（默认 `false`）
 - `VISION_TRAIN_AUTH_ENABLED`：是否启用登录认证（默认 `false`）
-- `VISION_TRAIN_AUTH_ALLOW_REGISTER`：认证开启后是否允许注册（默认 `false`）
-- `VISION_TRAIN_SESSION_TTL`：会话有效期（默认 `7d`）
+- `VISION_TRAIN_AUTH_ALLOW_REGISTER`：认证开启后是否允许匿名自助注册（默认 `false`）
+- `VISION_TRAIN_SESSION_TTL`：会话有效期，支持秒数或 `7d` / `12h` 形式（默认 `7d`）
+- `VISION_TRAIN_ADMIN_USER`：首次启动时创建的管理员用户名（默认 `admin`）
+- `VISION_TRAIN_ADMIN_PASSWORD`：初始管理员密码；留空则不自动创建管理员
+- `VISION_TRAIN_ADMIN_EMAIL`：初始管理员邮箱（默认 `admin@local`）
+
+> 管理员始终可以通过 `POST /api/auth/register` 创建用户并指定角色；匿名自助注册仅在 `VISION_TRAIN_AUTH_ALLOW_REGISTER=true` 时开放，且只能创建普通用户。
 
 更完整的说明见 [docs/deploy/config.md](docs/deploy/config.md)。
 
@@ -142,7 +148,7 @@ http://localhost:5173
 ## 开发说明
 
 - 前端技术栈：Vue 3、Pinia、Vue Router、Vite、Tailwind CSS、reka-ui
-- 后端技术栈：Flask、SQLAlchemy、Ultralytics（PyTorch）、OpenCV、OpenVINO、Pillow、PyYAML、PyJWT
+- 后端技术栈：Flask、SQLAlchemy、Ultralytics（PyTorch）、OpenCV、OpenVINO、Pillow、PyYAML
 - 数据格式：YOLO 数据集格式，支持 `detect` / `classify` / `segment` / `pose` 四类任务
 - 任务执行：worker 子进程模式，任务进度通过 SQLite 任务表回写
 - 文档站：docsify（仓库 `docs/` 目录，零构建）

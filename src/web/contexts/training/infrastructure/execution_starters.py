@@ -2,13 +2,14 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta
-from contexts.task.domain.task_types import (
+from contexts.compute.application.compute_service import require_compute_target
+from contexts.dataset.application.dataset_service import load_dataset_identity_meta
+from protocols.task_type import (
     TASK_TYPE_EVALUATE,
     TASK_TYPE_INFERENCE,
     TASK_TYPE_TRAINING,
 )
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_BEST_WEIGHT_PATH,
     ARTIFACT_DATASET_YAML,
     ARTIFACT_LAST_WEIGHT_PATH,
@@ -16,17 +17,17 @@ from contexts.task.domain.task_artifact_keys import (
     ARTIFACT_OUTPUT_DIR,
     ARTIFACT_RUN_ID,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     create_task as start_task,
     update_task as update_task_status,
+    load_task,
+    build_worker_artifacts,
 )
-from contexts.task.infrastructure.task_runtime import load_task
 from contexts.training.domain.training_constants import (
     TRAINING_WEIGHT_BEST_FILENAME,
     TRAINING_WEIGHT_LAST_FILENAME,
     WORKFLOW_TYPE_TRAINING,
 )
-from contexts.task.infrastructure.worker_task_ops import build_worker_artifacts
 from contexts.training.infrastructure.evaluate_runtime import resolve_evaluate_split
 from contexts.training.infrastructure.execution_context import (
     resolve_dataset_root,
@@ -58,6 +59,22 @@ from contexts.training.infrastructure.runtime_profile import get_device
 from shared.utils.json_utils import save_json_file
 from shared.utils.path_utils import project_name_from_path
 from shared.utils.value_utils import require_present
+
+LOCAL_WORKER_MODULE = "task_worker"
+REMOTE_WORKER_MODULE = "remote_task_worker"
+
+
+def resolve_training_worker_module(compute_target_id):
+    """决定这次训练由本机 worker 还是远端监督进程执行。
+
+    选了远端就把「这台服务器存不存在」挡在启动前：任务建好了才发现服务器没了，
+    界面上只会多一条说不清的死任务。
+    """
+    if not compute_target_id:
+        return LOCAL_WORKER_MODULE
+    require_compute_target(compute_target_id)
+    return REMOTE_WORKER_MODULE
+
 def start_batch_calibration_task(project_path, dataset_name, model_name, imgsz=640, dataset_path=None, force=False, workflow_id=None, model_path=None):
     """创建或复用批次校准任务并启动 worker。"""
     try:
@@ -146,15 +163,21 @@ def start_training_task(
     resume_weight=None,
     workflow_id=None,
     model_path=None,
+    compute_target_id=None,
 ):
-    """创建训练任务、准备输入源并启动 worker。"""
+    """创建训练任务、准备输入源并启动 worker。
+
+    传 `compute_target_id` 就是「跑在那台远端 GPU 上」：worker 换成本地监督进程
+    `remote_task_worker`，它在本地维持任务状态；不传就是本机训练，行为不变。
+    """
     if not workflow_id and not resume_from_task_id:
         raise ValueError("缺少 workflow_id，请先创建工作流")
     require_present(project_path=project_path, dataset_name=dataset_name, model_name=model_name)
+    worker_module = resolve_training_worker_module(compute_target_id)
     training_config = normalize_training_config(training_config)
     train_id = new_run_token()
     save_dir = build_training_output_dir(project_path, dataset_name, train_id)
-    worker_artifacts = build_worker_artifacts(save_dir, "training-worker.log", "task_worker")
+    worker_artifacts = build_worker_artifacts(save_dir, "training-worker.log", worker_module)
     training_context = resolve_training_sources_context(project_path, dataset_name, model_name, dataset_path, model_path=model_path)
     config_save = {
         "dataset_name": dataset_name,
@@ -195,6 +218,7 @@ def start_training_task(
             "training_config": training_config,
             "resume_from_task_id": resume_from_task_id,
             "resume_weight": resume_weight,
+            "compute_target_id": compute_target_id or None,
         },
         message="初始化训练...",
         artifacts={
@@ -216,15 +240,19 @@ def start_training_task(
     )
     return start_worker_task(
         task["id"],
-        running_message=f"训练进程已启动，准备训练 {model_name}...",
+        running_message=(
+            f"已在 {require_compute_target(compute_target_id)['name']} 上启动训练，准备同步数据..."
+            if compute_target_id
+            else f"训练进程已启动，准备训练 {model_name}..."
+        ),
         failure_message="训练进程启动失败",
-        module_name="task_worker",
+        module_name=worker_module,
         progress=0,
     )
 
 
-def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
-    """基于训练产物创建测试评估任务。"""
+def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True, split=None):
+    """基于训练产物创建评估任务；split 为空时按 test 优先、val 兜底自动选定。"""
     src_task = load_task(src_task_id)
     if not src_task or not src_task.get("artifacts", {}).get(ARTIFACT_OUTPUT_DIR):
         raise ValueError("任务不存在或产物不可用")
@@ -248,9 +276,7 @@ def start_evaluate_task(project_path, dataset_name, src_task_id, use_best=True):
     data_yaml = artifacts.get(ARTIFACT_DATASET_YAML) or ((src_task.get("payload") or {}).get("training_config") or {}).get("data_yaml")
     if not data_yaml or not os.path.isfile(data_yaml):
         raise ValueError("dataset.yaml 不可用")
-    evaluate_split = resolve_evaluate_split(data_yaml)
-    if evaluate_split != "test":
-        raise ValueError("当前数据集没有测试集，无法执行测试评估")
+    evaluate_split = resolve_evaluate_split(data_yaml, split)
     eval_task = start_task(
         project_path=project_path,
         project_name=project_name_from_path(project_path),
@@ -353,6 +379,8 @@ def start_retry_training_task(project_path, dataset_name, task_id):
         training_config=payload.get("training_config") or {},
         dataset_path=task.get("dataset_path"),
         workflow_id=task.get("workflow_id") or task.get("id"),
+        # 原来跑在哪就重跑在哪：重新训练悄悄从远端 GPU 换回本机，等于把人家的排队位置改了
+        compute_target_id=payload.get("compute_target_id"),
     )
 
 

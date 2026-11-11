@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.2.0] - 2026-11-11
+
+
+### Features
+
+- 新增远端 GPU 训练：compute 上下文支持 GPU 服务器登记、SSH 预检、远端训练监督与产物回传，前端配套服务器管理弹窗与预检报告
+
+- 自动标注审核闭环：候选逐框附带置信度与出处 meta，新增模型/数据集类别对齐校验与以样本框检索同类的相似探测，保存即审核，支持批量接收/清空候选
+
+- 走查列表增强：dHash 相似帧折叠、同类重复框统计、浏览游标记忆、图片跨 split 移动与定位、跨数据集类别表复用
+
+- 训练工作流门禁：评估/导出/部署统一按 best.pt 权重可用性放行，评估 split 须在 dataset.yaml 声明，续跑简化为按任务 ID 恢复，新增工作流归档恢复
+
+- 认证改为服务端随机 token（退出/改密即失效），注册区分管理员建号与自助注册，会话 TTL 支持时长字符串
+
+
+### Code Refactoring
+
+- 领域协议上移至 protocols/，各 context 新增 application 门面，并以架构边界测试强制跨域只走门面
+
+- 孤儿任务回收增加静默期防止多实例误判，HTTP 参数绑定归一化，任务过滤参数严格校验，PROJECTS_DIR 用 realpath 修复符号链接路径
+
+
+### Documentation
+
+- 全量精简 docs/ 与 README：修正任务状态机、类别删除语义、任务中心入口等过时口径，删除截图复述段落与过时的后端重构 TODO
+
+
+### Chores
+
+- 删除非法数据集目录提示整条链路（后端 invalid_datasets、前端警告条与相关测试），扫描只返回合法数据集
+
+- 新增 19 个 PPE 数据整理/金标/训练集重建脚本与 17 个回归测试
+
+
 ## [0.1.0] - 2026-07-28
 
 

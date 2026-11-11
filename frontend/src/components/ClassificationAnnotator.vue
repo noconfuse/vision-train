@@ -1,28 +1,29 @@
 <template>
   <div class="vt-workspace-backdrop" @click.self="$emit('close')">
     <div class="vt-workspace-panel vt-workspace-panel--row vt-workspace-panel--xl">
-      <div class="flex-1 bg-gray-900 flex items-center justify-center overflow-hidden p-6">
+      <div class="flex-1 bg-gray-900 relative flex items-center justify-center overflow-hidden p-6">
         <div v-if="loading" class="text-sm text-white">加载中...</div>
         <img
           v-else
           :src="image.url"
           class="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
           draggable="false"
-        />
-      </div>
+        />      </div>
 
       <div class="w-80 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-200">
-          <h3 class="font-bold text-gray-800 mb-1">图片分类</h3>
+          <div class="flex items-start justify-between gap-2">
+            <h3 class="font-bold text-gray-800">图片分类</h3>
+            <button type="button" class="vt-modal-close -mt-1 -mr-1 shrink-0" title="关闭标注器（Esc）" @click="$emit('close')">
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
+          </div>
           <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
             <template #trigger>
-              <p class="text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
+              <p class="mt-1 text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
             </template>
             {{ image.path }}
           </UiTooltip>
-          <div v-if="autoClassId !== null" class="mt-2 text-xs text-amber-700">
-            待复核建议：{{ getClassName(autoClassId) }}
-          </div>
         </div>
 
         <div class="flex-1 overflow-y-auto p-4">
@@ -47,6 +48,7 @@
               @click="selectClass(idx)"
             >
               <span class="text-sm font-medium">{{ name }}</span>
+              <span v-if="idx === autoClassId" class="ml-2 shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">建议 {{ formatConf(autoConf) }}</span>
               <span class="ml-auto text-xs text-gray-400">id: {{ idx }}</span>
             </button>
           </div>
@@ -54,15 +56,15 @@
 
         <div class="p-4 border-t border-gray-200 bg-gray-50 space-y-3">
           <div class="flex justify-between items-center text-sm text-gray-600">
-            <span>当前标签: {{ currentClassId === null ? '未标注' : getClassName(currentClassId) }}</span>
+            <span class="min-w-0 truncate">当前标签: {{ currentClassId === null ? '未标注' : getClassName(currentClassId) }}</span>
             <span v-if="hasChanges" class="vt-tag vt-tag-warn">未保存</span>
           </div>
 
           <AsyncButton
             @click="save"
             class="vt-btn-solid-primary vt-btn-size-lg w-full justify-center"
-            :disabled="loading"
-            :pending="isActionPending(SAVE_ACTION_KEY)"
+            :disabled="loading || busy"
+            :pending="busy"
             loading-text="保存标注 (Ctrl+S)"
           >
             <AppIcon name="check" class="h-4 w-4" />
@@ -70,11 +72,11 @@
           </AsyncButton>
 
           <div class="flex gap-2">
-            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <AppIcon name="previous" class="h-4 w-4" />
               <span>上一张</span>
             </button>
-            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <span>下一张</span>
               <AppIcon name="next" class="h-4 w-4" />
             </button>
@@ -86,12 +88,12 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import api from '../api';
 import { useMainStore } from '../stores/main';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
-import { getPathDisplayName, parseOptionalNumber } from '../utils';
+import { getPathDisplayName, parseOptionalNumber, formatConf } from '../utils';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
@@ -111,6 +113,7 @@ const asyncAction = useAsyncAction();
 const loading = ref(true);
 const currentClassId = ref(null);
 const autoClassId = ref(null);
+const autoConf = ref(null);
 const hasChanges = ref(false);
 const SAVE_ACTION_KEY = 'classification-annotator:save';
 const isActionPending = (key) => asyncAction.isPending(key);
@@ -118,12 +121,19 @@ let activeLoadToken = 0;
 
 const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
 
+const busy = computed(() => isActionPending(SAVE_ACTION_KEY));
+
+const clearCandidate = () => {
+  autoClassId.value = null;
+  autoConf.value = null;
+};
+
 const fetchAnnotation = async () => {
   const token = ++activeLoadToken;
   loading.value = true;
   hasChanges.value = false;
   currentClassId.value = null;
-  autoClassId.value = null;
+  clearCandidate();
   try {
     const res = await api.getAnnotation({
       project_path: store.currentProject.path,
@@ -134,6 +144,7 @@ const fetchAnnotation = async () => {
     if (token !== activeLoadToken) return;
     currentClassId.value = parseOptionalNumber(res?.manual_annotation?.class_id, { integer: true });
     autoClassId.value = parseOptionalNumber(res?.auto_annotation?.class_id, { integer: true });
+    autoConf.value = parseOptionalNumber(res?.auto_annotation?.conf);
   } catch (err) {
     console.error(err);
   } finally {
@@ -153,6 +164,7 @@ const clearSelection = () => {
 };
 
 const save = async () => {
+  if (busy.value) return;
   await asyncAction.run(SAVE_ACTION_KEY, async () => {
     await apiCall(api.saveAnnotation({
       project_path: store.currentProject.path,

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from contexts.dataset.infrastructure import dvc_backend
 from contexts.dataset.infrastructure.dataset_schema import save_standard_dataset_yaml
-from contexts.dataset.domain.capabilities import DATASET_OPERATION_SPLIT_DATASET, build_dataset_capabilities
+from protocols.capabilities.dataset_capabilities import DATASET_OPERATION_SPLIT_DATASET, build_dataset_capabilities
 from contexts.dataset.application.use_cases import create_subset, list_project_datasets, list_dataset_versions, split_dataset_use_case
 from contexts.dataset.infrastructure.dataset_repository import analyze_dataset
 from contexts.dataset.infrastructure.dataset_task_type import (

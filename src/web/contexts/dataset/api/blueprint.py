@@ -7,7 +7,7 @@ from contexts.dataset.application.use_cases import (
     add_dataset_label_use_case,
     augment_subset,
     batch_delete_dataset_images,
-    clear_dataset_auto_labels,
+    copy_dataset_labels_use_case,
     create_empty_dataset,
     create_import_upload_job,
     create_subset,
@@ -17,14 +17,18 @@ from contexts.dataset.application.use_cases import (
     delete_dataset_label_use_case,
     download_dataset_info,
     get_dataset_info,
+    get_dataset_browse_cursor,
     has_dataset_import_job,
     list_dataset_images,
     list_dataset_versions,
     list_project_datasets,
+    locate_dataset_image,
     merge_dataset_pair,
+    move_dataset_image,
     publish_dataset_version,
     reorder_dataset_labels_use_case,
     restore_dataset_version,
+    set_dataset_browse_cursor,
     split_dataset_use_case,
     update_dataset_tags,
     upload_dataset_images,
@@ -145,6 +149,50 @@ bp.add_url_rule(
         mode=param("mode", default="include", transform=lambda value: str(value).strip().lower()),
         unannotated_raw=param("unannotated"),
         has_auto_label_raw=param("has_auto_label"),
+        keyword=param("keyword"),
+        overlap_dup_raw=param("overlap_dup"),
+        review_boxes_raw=param("review_boxes"),
+        fold_dup_raw=param("fold_dup"),
+    ),
+    methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/dataset/cursor",
+    view_func=query_params_endpoint(
+        get_dataset_browse_cursor,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+    ),
+    methods=["GET"],
+)
+bp.add_url_rule(
+    "/api/dataset/cursor",
+    view_func=json_body_endpoint(
+        set_dataset_browse_cursor,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_path=param("image_path", required=True),
+        image_name=param("image_name"),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/image_index",
+    view_func=query_params_endpoint(
+        locate_dataset_image,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", default="train"),
+        image_path=param("image_path", required=True),
+        classes_raw=param(("classes", "class")),
+        mode=param("mode", default="include", transform=lambda value: str(value).strip().lower()),
+        unannotated_raw=param("unannotated"),
+        has_auto_label_raw=param("has_auto_label"),
+        keyword=param("keyword"),
+        overlap_dup_raw=param("overlap_dup"),
+        fold_dup_raw=param("fold_dup"),
     ),
     methods=["GET"],
 )
@@ -166,6 +214,19 @@ bp.add_url_rule(
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
         split=param("split", default="train"),
+        image_rel=param("image_rel"),
+        image_path=param("image_path"),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/dataset/move_image",
+    view_func=json_body_endpoint(
+        move_dataset_image,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True),
+        split=param("split", required=True),
+        target_split=param("target_split", required=True),
         image_rel=param("image_rel"),
         image_path=param("image_path"),
     ),
@@ -216,6 +277,16 @@ bp.add_url_rule(
     methods=["POST"],
 )
 bp.add_url_rule(
+    "/api/dataset/copy_labels",
+    view_func=json_body_endpoint(
+        copy_dataset_labels_use_case,
+        project_path=param("project_path", required=True, transform=resolve_project_path),
+        dataset_name=param("dataset_name", required=True, transform=lambda value: str(value).strip()),
+        source_dataset_name=param("source_dataset_name", required=True, transform=lambda value: str(value).strip()),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
     "/api/dataset/update_tags",
     view_func=json_body_endpoint(
         update_dataset_tags,
@@ -242,15 +313,6 @@ bp.add_url_rule(
         project_path=param("project_path", required=True, transform=resolve_project_path),
         dataset_name=param("dataset_name", required=True),
         version_id=param("version_id", required=True),
-    ),
-    methods=["POST"],
-)
-bp.add_url_rule(
-    "/api/dataset/clear_auto_labels",
-    view_func=json_body_endpoint(
-        clear_dataset_auto_labels,
-        project_path=param("project_path", required=True, transform=resolve_project_path),
-        dataset_name=param("dataset_name", required=True),
     ),
     methods=["POST"],
 )

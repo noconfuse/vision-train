@@ -2,23 +2,21 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_schema import load_dataset_names
-from contexts.model.domain.capabilities import model_training_mode_for_task
-from contexts.task.domain.task_types import (
+from contexts.dataset.application.dataset_service import load_dataset_names
+from protocols.capabilities.model_capabilities import model_training_mode_for_task
+from protocols.task_type import (
     TASK_TYPE_EVALUATE,
     TASK_TYPE_INFERENCE,
 )
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_OUTPUT_DIR,
     ARTIFACT_STOP_SIGNAL_PATH,
     ARTIFACT_TASK_DIR,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     append_task_history as write_task_history,
     update_task as update_task_status,
-)
-from contexts.task.infrastructure.task_runtime import load_task
-from contexts.task.infrastructure.worker_task_ops import (
+    load_task,
     finish_worker_task,
     is_stop_requested,
     mark_worker_exited,
@@ -26,7 +24,12 @@ from contexts.task.infrastructure.worker_task_ops import (
     update_worker_task_progress,
 )
 from contexts.training.infrastructure.calibration_runtime import clear_accelerator_cache, run_batch_probe, search_calibration_limit
-from contexts.training.infrastructure.evaluate_runtime import build_evaluate_recommendations, resolve_evaluate_split
+from contexts.training.infrastructure.evaluate_runtime import (
+    build_eval_fingerprint,
+    build_evaluate_recommendations,
+    build_split_label,
+    resolve_evaluate_split,
+)
 from contexts.training.infrastructure.execution_context import (
     require_existing_dir_path,
     require_existing_file_path,
@@ -191,7 +194,6 @@ def execute_batch_calibration_task(task_id):
     attempts = []
     try:
         update_task_status(task_id, status=TASK_STATUS_RUNNING, progress=1, message="开始实测 batch 可启动上限...")
-        probe_script = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "batch_probe.py"))
         calibration = search_calibration_limit(
             task_id=task_id,
             stop_signal_path=stop_signal_path,
@@ -208,7 +210,6 @@ def execute_batch_calibration_task(task_id):
                 fraction=BATCH_CALIBRATION_FRACTION,
                 time_hours=BATCH_CALIBRATION_TIME_HOURS,
                 workers=BATCH_CALIBRATION_WORKERS,
-                probe_script_path=probe_script,
             ),
             is_stop_requested=is_stop_requested,
             update_progress=update_worker_task_progress,
@@ -265,9 +266,9 @@ def execute_evaluate_task(task_id):
     weight_path = evaluate_context["weight_path"]
     data_yaml = evaluate_context["data_yaml"]
     vision_task_type = evaluate_context["vision_task_type"]
-    evaluate_split = evaluate_context["split"] or resolve_evaluate_split(data_yaml)
-    if evaluate_split != "test":
-        raise ValueError("当前数据集没有测试集，无法执行测试评估")
+    evaluate_split = resolve_evaluate_split(data_yaml, evaluate_context["split"])
+    split_label = build_split_label(evaluate_split)
+    eval_image_paths = []
     mark_worker_started(task_id, os.getpid())
     try:
         from ultralytics import YOLO
@@ -278,16 +279,17 @@ def execute_evaluate_task(task_id):
         model = YOLO(weight_path)
 
         def on_val_start(validator):
-            """在评估开始时初始化批次总数和首条进度。"""
+            """在评估开始时初始化批次总数、评估图清单和首条进度。"""
             try:
                 total_batches = len(validator.dataloader or [])
             except Exception:
                 total_batches = 0
             validator._vt_total_batches = total_batches
+            eval_image_paths.extend(getattr(getattr(validator.dataloader, "dataset", None), "im_files", []) or [])
             if total_batches > 0:
-                update_worker_task_progress(task_id, 10, f"正在测试集上执行评估，共 {total_batches} 批...")
+                update_worker_task_progress(task_id, 10, f"正在{split_label}上执行评估，共 {total_batches} 批...")
             else:
-                update_worker_task_progress(task_id, 10, "正在测试集上执行评估...")
+                update_worker_task_progress(task_id, 10, f"正在{split_label}上执行评估...")
 
         def on_val_batch_end(validator):
             """在每个评估批次结束后刷新进度。"""
@@ -295,10 +297,10 @@ def execute_evaluate_task(task_id):
             current_batch = int(getattr(validator, "batch_i", -1) or -1) + 1
             if total_batches > 0:
                 progress = 10 + int(current_batch / total_batches * 85)
-                message = f"正在测试集上执行评估 {current_batch}/{total_batches} 批..."
+                message = f"正在{split_label}上执行评估 {current_batch}/{total_batches} 批..."
             else:
                 progress = min(95, 10 + max(current_batch, 0))
-                message = f"正在测试集上执行评估，第 {max(current_batch, 0)} 批..."
+                message = f"正在{split_label}上执行评估，第 {max(current_batch, 0)} 批..."
             update_worker_task_progress(task_id, progress, message)
 
         def on_val_end(_validator):
@@ -314,12 +316,14 @@ def execute_evaluate_task(task_id):
             split=evaluate_split,
         )
         results = runtime_adapter.build_evaluate_results(metrics, evaluate_split)
+        results["eval_fingerprint"] = build_eval_fingerprint(eval_image_paths)
+        results["eval_images"] = sorted({str(path) for path in eval_image_paths if str(path or "").strip()})
         results["recommendations"] = build_evaluate_recommendations(results, vision_task_type)
-        finish_worker_task(task_id, TASK_STATUS_COMPLETED, "测试评估完成", progress=100, artifacts_patch={"results": results}, stop_signal_path=stop_signal_path)
+        finish_worker_task(task_id, TASK_STATUS_COMPLETED, f"{split_label}评估完成", progress=100, artifacts_patch={"results": results}, stop_signal_path=stop_signal_path)
     except InterruptedError:
-        finish_worker_task(task_id, TASK_STATUS_STOPPED, "测试评估已终止", stop_signal_path=stop_signal_path)
+        finish_worker_task(task_id, TASK_STATUS_STOPPED, f"{split_label}评估已终止", stop_signal_path=stop_signal_path)
     except Exception as exc:
-        finish_worker_task(task_id, TASK_STATUS_FAILED, "测试评估失败", error=str(exc), stop_signal_path=stop_signal_path)
+        finish_worker_task(task_id, TASK_STATUS_FAILED, f"{split_label}评估失败", error=str(exc), stop_signal_path=stop_signal_path)
     finally:
         mark_worker_exited(task_id)
 

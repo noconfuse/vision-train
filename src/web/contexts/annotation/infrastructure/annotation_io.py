@@ -2,21 +2,20 @@
 
 import os
 
-from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
-from contexts.dataset.infrastructure.dataset_layout import (
+from contexts.dataset.application.dataset_service import (
+    resolve_project_dataset_root,
     extract_classification_class_name,
     build_label_relpath,
     get_dataset_auto_labels_dir,
+    get_dataset_auto_meta_path,
     get_dataset_labels_dir,
     get_dataset_split_dir,
     get_dataset_split_content_dir,
     get_dataset_unlabeled_dir,
-)
-from contexts.dataset.infrastructure.dataset_schema import (
     load_dataset_names,
     load_dataset_yaml,
+    load_dataset_vision_task_type,
 )
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
 from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY
 from shared.utils.path_utils import is_within_path, resolve_storage_path
 from shared.utils.value_utils import require_present
@@ -37,10 +36,23 @@ def resolve_dataset_image_context(project_path, dataset_name, split, image_ref):
     require_present(image_path=image_path)
 
     ds_root = get_dataset_root(project_path, dataset_name)
-    return build_dataset_image_context(ds_root, split, image_path)
+    return build_dataset_image_context(ds_root, split, image_path, project_path=project_path)
 
 
-def build_dataset_image_context(dataset_root, split, image_path):
+def _relative_image_path(image_path, base_dir):
+    """图片相对基准目录的路径。
+
+    两边可能来自不同形态（扫描按真实路径、引用按拼接路径），先各自归一再相减；
+    归一后还跑得出基准目录，说明这张图不属于这个数据集——当场报错，
+    不许像过去那样拼出一串 ../ 后静默读成空标签。
+    """
+    rel = os.path.relpath(os.path.realpath(image_path), os.path.realpath(base_dir))
+    if rel == os.pardir or rel.startswith(os.path.join(os.pardir, "")):
+        raise ValueError("图片不属于这个数据集，请刷新图片列表后重新打开")
+    return rel
+
+
+def build_dataset_image_context(dataset_root, split, image_path, project_path=""):
     """基于已知数据集根目录和图片路径解析标注上下文。"""
     image_path = resolve_storage_path(image_path)
     require_present(image_path=image_path)
@@ -58,7 +70,7 @@ def build_dataset_image_context(dataset_root, split, image_path):
     if vision_task_type == VISION_TASK_TYPE_CLASSIFY:
         is_unlabeled = is_within_path(image_path, unlabeled_dir)
         if is_unlabeled:
-            rel = os.path.relpath(image_path, unlabeled_dir)
+            rel = _relative_image_path(image_path, unlabeled_dir)
             rel_noext = os.path.splitext(rel)[0]
             class_name = ""
             sample_relative_path = rel
@@ -66,13 +78,14 @@ def build_dataset_image_context(dataset_root, split, image_path):
         else:
             if not is_within_path(image_path, split_dir):
                 raise ValueError("image_path 非法")
-            rel = os.path.relpath(image_path, split_dir)
+            rel = _relative_image_path(image_path, split_dir)
             rel_noext = os.path.splitext(rel)[0]
             class_name = extract_classification_class_name(rel)
             sample_relative_path = rel.split(os.sep, 1)[1] if class_name and os.sep in rel else os.path.basename(image_path)
             auto_label_path = ""
         return {
             "dataset_root": dataset_root,
+            "project_path": project_path,
             "split": split,
             "vision_task_type": vision_task_type,
             "image_path": image_path,
@@ -84,6 +97,7 @@ def build_dataset_image_context(dataset_root, split, image_path):
             "auto_dir": auto_dir,
             "manual_label_path": "",
             "auto_label_path": auto_label_path,
+            "auto_meta_path": get_dataset_auto_meta_path(auto_label_path, auto_dir),
             "class_names": class_names,
             "class_name": class_name,
             "is_unlabeled": is_unlabeled,
@@ -96,10 +110,11 @@ def build_dataset_image_context(dataset_root, split, image_path):
     if not os.path.isfile(image_path):
         raise ValueError("图片不存在")
 
-    rel = os.path.relpath(image_path, img_dir)
+    rel = _relative_image_path(image_path, img_dir)
     rel_noext = os.path.splitext(rel)[0]
     return {
         "dataset_root": dataset_root,
+        "project_path": project_path,
         "split": split,
         "vision_task_type": vision_task_type,
         "image_path": image_path,
@@ -110,6 +125,9 @@ def build_dataset_image_context(dataset_root, split, image_path):
         "auto_dir": auto_dir,
         "manual_label_path": os.path.join(manual_dir, build_label_relpath(rel_noext)),
         "auto_label_path": os.path.join(auto_dir, build_label_relpath(rel_noext)),
+        "auto_meta_path": get_dataset_auto_meta_path(
+            os.path.join(auto_dir, build_label_relpath(rel_noext)), auto_dir
+        ),
         "class_names": class_names,
         "class_name": extract_classification_class_name(rel),
         "is_unlabeled": False,

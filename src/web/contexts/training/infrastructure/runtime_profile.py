@@ -5,18 +5,13 @@ import platform
 import re
 import subprocess
 
-def get_device():
-    """返回 Ultralytics 可接受的 device 表达。优先用首个 CUDA GPU，否则回退 CPU。"""
-    try:
-        import torch
+from shared.utils.device_utils import pick_torch_device
 
-        if torch.cuda.is_available():
-            return "0"
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass
-    return os.environ.get("VT_DEVICE", "cpu")
+
+def get_device():
+    """返回 Ultralytics 可接受的 device 表达；怎么选设备在 shared 里，跟相似探测同一出处。"""
+    device = pick_torch_device()
+    return "0" if device == "cuda" else device
 
 
 def get_export_hardware_formats():

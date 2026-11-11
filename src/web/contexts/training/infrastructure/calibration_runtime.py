@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 
+from shared.infra.worker_process import module_command
 from shared.utils.json_utils import load_json_file, save_json_file
 
 
@@ -54,7 +55,6 @@ def run_batch_probe(
     fraction,
     time_hours,
     workers,
-    probe_script_path,
 ):
     """Run one tiny training probe and return a normalized result payload."""
     probe_input_path = os.path.join(probe_dir, f'probe-b{batch}.json')
@@ -77,8 +77,7 @@ def run_batch_probe(
     started = time.perf_counter()
     with open(probe_log_path, 'ab') as log_file:
         proc = subprocess.Popen(
-            [os.sys.executable, probe_script_path, probe_input_path, probe_output_path],
-            cwd=os.path.dirname(probe_script_path),
+            module_command('batch_probe', probe_input_path, probe_output_path),
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,

@@ -96,17 +96,22 @@ def _lookup_request_value(source, spec, field_name):
     return source.get(keys[0])
 
 
+def _apply_transform(loader, value):
+    """按声明的 transform 归一化取值，保证默认值与请求值同一种类型。"""
+    return loader.transform(value) if callable(loader.transform) else value
+
+
 def _resolve_field_value(source, field_name, loader):
     """把字段 loader 或参数规格解析为最终绑定值。"""
     if isinstance(loader, ParamSpec):
         raw_value = _lookup_request_value(source, loader, field_name)
         if _is_missing_param_value(raw_value, empty_as_missing=loader.empty_as_missing):
             if loader.default is not _MISSING:
-                return _resolve_param_default(loader.default)
+                return _apply_transform(loader, _resolve_param_default(loader.default))
             if loader.required:
                 raise ValueError(loader.required_message or f"缺少 {loader.source_key or field_name}")
             return None
-        return loader.transform(raw_value) if callable(loader.transform) else raw_value
+        return _apply_transform(loader, raw_value)
     return loader(source)
 
 

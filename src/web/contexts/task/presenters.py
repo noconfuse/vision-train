@@ -8,7 +8,7 @@ def _build_task_capabilities_snapshot(task):
     vision_task_type = (task or {}).get("vision_task_type")
     if not vision_task_type:
         return None
-    from contexts.training.domain.capability_snapshot import build_training_capabilities_snapshot
+    from protocols.capabilities.snapshot import build_training_capabilities_snapshot
 
     return build_training_capabilities_snapshot(vision_task_type)
 

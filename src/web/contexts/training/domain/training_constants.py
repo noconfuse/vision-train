@@ -1,9 +1,8 @@
 """定义训练上下文使用的目录、文件和工作流常量。"""
 
-WORKFLOW_TYPE_TRAINING = "training"
+from protocols.storage_layout import TRAINING_DATA_DIRNAME, TRAINING_OUTPUTS_DIRNAME
 
-TRAINING_DATA_DIRNAME = "training"
-TRAINING_OUTPUTS_DIRNAME = "training_outputs"
+WORKFLOW_TYPE_TRAINING = "training"
 TRAINING_CALIBRATIONS_DIRNAME = "training_calibrations"
 TRAINING_TASK_RUNS_DIRNAME = "task_runs"
 TRAINING_WEIGHTS_DIRNAME = "weights"

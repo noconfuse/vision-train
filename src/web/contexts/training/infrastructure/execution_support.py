@@ -2,13 +2,14 @@
 
 import os
 
-from contexts.task.domain.task_types import TASK_TYPE_BATCH_CALIBRATION
-from contexts.task.domain.task_artifact_keys import ARTIFACT_LOG_PATH
-from contexts.task.infrastructure.task_repository import (
+from protocols.task_type import TASK_TYPE_BATCH_CALIBRATION
+from protocols.task_artifact_keys import ARTIFACT_LOG_PATH
+from contexts.task.application.task_service import (
     update_task as update_task_status,
+    list_project_tasks,
+    load_task,
+    mark_worker_started,
 )
-from contexts.task.infrastructure.task_runtime import list_project_tasks, load_task
-from contexts.task.infrastructure.worker_task_ops import mark_worker_started
 from contexts.training.domain.training_constants import WORKFLOW_TYPE_TRAINING
 from contexts.training.infrastructure.runtime_profile import get_device
 from shared.infra.worker_process import spawn_worker_process
@@ -47,15 +48,19 @@ def normalize_training_config(training_config):
     return cfg
 
 
-def build_training_args(training_config, training_context, save_dir):
-    """将前端训练配置转换为 Ultralytics 训练参数。"""
+def build_training_args(training_config, training_context, save_dir, device=None):
+    """将前端训练配置转换为 Ultralytics 训练参数。
+
+    `device` 只在远端训练时显式传入（本机探测出来的设备对服务器没有意义）；
+    不传就是本机探测，保持原有用法不变。
+    """
     vision_task_type = training_context.get("vision_task_type")
     if vision_task_type not in VISION_TASK_TYPE_SET:
         raise ValueError("vision_task_type 不合法")
     profile = training_context.get("training_profile") or {}
     args = {
         "data": training_context.get("data_ref"),
-        "device": get_device(),
+        "device": device or get_device(),
         "project": os.path.dirname(save_dir),
         "name": os.path.basename(save_dir),
         "exist_ok": True,

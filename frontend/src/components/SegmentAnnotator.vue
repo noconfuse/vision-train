@@ -23,24 +23,22 @@
             @pointermove="onPointerMoveBg"
             @pointerdown="onPointerDownBg"
           >
-            <g v-for="(poly, pIdx) in displayPolygons" :key="pIdx">
-              <polygon
-                v-if="poly.is_auto"
-                :points="buildPointsString(poly.points)"
-                stroke="rgba(255, 255, 255, 0.95)"
-                :stroke-width="(selectedPolyIdx === pIdx ? 4.5 : 3.5) / scale"
-                stroke-linejoin="round"
-                fill="transparent"
-                pointer-events="none"
-              />
+            <g
+              v-for="(poly, pIdx) in displayPolygons"
+              :key="pIdx"
+              :opacity="selectedPolyIdx >= 0 && selectedPolyIdx !== pIdx ? 0.5 : 1"
+              style="transition: opacity 120ms ease;"
+            >
+              <!-- 模型候选也在这一组里：虚线是它「待复核」的唯一标记，颜色跟着类别走 -->
               <polygon
                 :points="buildPointsString(poly.points)"
-                :stroke="poly.is_auto ? '#22d3ee' : getColor(poly.class)"
-                :stroke-width="poly.is_auto ? ((selectedPolyIdx === pIdx ? 3.25 : 2.5) / scale) : ((selectedPolyIdx === pIdx ? 3 : 2) / scale)"
-                :stroke-opacity="poly.is_auto ? 1 : 0.9"
-                :stroke-dasharray="poly.is_auto ? '10 6' : '0'"
+                :stroke="getClassColor(poly.class)"
+                :stroke-width="(selectedPolyIdx === pIdx ? 3 : 2) / scale"
+                stroke-opacity="0.9"
+                :stroke-dasharray="isCandidate(poly) ? `${10 / scale} ${6 / scale}` : '0'"
                 stroke-linejoin="round"
-                :fill="poly.is_auto ? 'rgba(34, 211, 238, 0.08)' : (selectedPolyIdx === pIdx ? 'rgba(59, 130, 246, 0.12)' : 'rgba(0, 0, 0, 0)')"
+                :fill="isCandidate(poly) ? getClassColor(poly.class) : (selectedPolyIdx === pIdx ? 'rgba(59, 130, 246, 0.12)' : 'rgba(0, 0, 0, 0)')"
+                :fill-opacity="isCandidate(poly) ? 0.12 : 1"
                 style="cursor: pointer; touch-action: none;"
                 @pointerdown="onPolygonPointerDown(pIdx, $event)"
               />
@@ -48,13 +46,13 @@
                 v-if="poly.points.length"
                 :x="poly.points[0].x * imgWidth"
                 :y="Math.max(14 / scale, poly.points[0].y * imgHeight - 6 / scale)"
-                :fill="poly.is_auto ? '#67e8f9' : getColor(poly.class)"
+                :fill="getClassColor(poly.class)"
                 :font-size="12 / scale"
                 font-weight="bold"
                 style="text-shadow: 0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9); cursor: pointer; touch-action: none;"
                 @pointerdown="onPolygonPointerDown(pIdx, $event)"
               >
-                {{ getClassName(poly.class) }} {{ poly.is_auto ? '(Auto)' : '' }}
+                {{ getClassName(poly.class) }}<template v-if="isCandidate(poly)"> {{ formatConf(poly.conf) }}</template>
               </text>
             </g>
 
@@ -77,7 +75,7 @@
               <template v-if="draftMode === 'manual'">
                 <polyline
                   :points="buildPointsString(freehandPolygon.points, { includeCursor: !freehandActive })"
-                  :stroke="getColor(currentClass)"
+                  :stroke="getClassColor(currentClass)"
                   :stroke-width="2 / scale"
                   stroke-dasharray="4"
                   fill="transparent"
@@ -89,7 +87,7 @@
                   :cx="pt.x * imgWidth"
                   :cy="pt.y * imgHeight"
                   :r="idx === 0 ? 5 / scale : 4 / scale"
-                  :fill="idx === 0 ? getColor(currentClass) : 'white'"
+                  :fill="idx === 0 ? getClassColor(currentClass) : 'white'"
                   stroke="black"
                   :stroke-width="1 / scale"
                   pointer-events="none"
@@ -102,7 +100,7 @@
                   :y="smartRect.y"
                   :width="smartRect.w"
                   :height="smartRect.h"
-                  :stroke="getColor(currentClass)"
+                  :stroke="getClassColor(currentClass)"
                   :stroke-width="2 / scale"
                   stroke-dasharray="6"
                   fill="transparent"
@@ -123,8 +121,7 @@
             </g>
 
           </svg>
-        </div>
-      </div>
+        </div>      </div>
 
       <div class="w-80 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-200">
@@ -140,7 +137,8 @@
             </div>
             <button
               type="button"
-              class="shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+              class="vt-modal-close -mt-1 -mr-1 shrink-0"
+              title="关闭标注器（Esc）"
               @click="$emit('close')"
             >
               <AppIcon name="close" class="h-4 w-4" />
@@ -213,7 +211,7 @@
               :class="currentClass === idx ? 'vt-selectable--selected' : 'border-transparent'"
               @click="updateSelectedPolygonClass(idx)"
             >
-              <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getColor(idx) }"></div>
+              <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getClassColor(idx) }"></div>
               <span class="text-sm font-medium">{{ name }}</span>
               <span class="text-xs text-gray-400 ml-auto">id: {{ idx }}</span>
             </div>
@@ -221,9 +219,8 @@
         </div>
 
         <div class="p-4 border-t border-gray-200 bg-gray-50 space-y-3">
-          <div class="flex justify-between items-center text-sm text-gray-600">
-            <span>标注数量: {{ polygons.length }}</span>
-            <span v-if="hasChanges" class="vt-tag vt-tag-warn">未保存</span>
+          <div v-if="hasChanges" class="flex justify-end">
+            <span class="vt-tag vt-tag-warn">未保存</span>
           </div>
 
           <button
@@ -238,8 +235,8 @@
           <AsyncButton
             @click="save"
             class="vt-btn-solid-primary vt-btn-size-lg w-full justify-center"
-            :disabled="loading"
-            :pending="isActionPending(SAVE_ACTION_KEY)"
+            :disabled="loading || busy"
+            :pending="busy"
             loading-text="保存标注 (Ctrl+S)"
           >
             <AppIcon name="check" class="h-4 w-4" />
@@ -247,11 +244,11 @@
           </AsyncButton>
 
           <div class="flex gap-2">
-            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <AppIcon name="previous" class="h-4 w-4" />
               <span>上一张</span>
             </button>
-            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <span>下一张</span>
               <AppIcon name="next" class="h-4 w-4" />
             </button>
@@ -260,24 +257,16 @@
       </div>
     </div>
 
-    <div v-if="showGuideModal" class="vt-modal-backdrop" @click.self="closeGuideModal">
-      <div class="w-[48rem] max-w-[calc(100vw-2rem)] bg-white shadow-xl border border-gray-200 overflow-hidden">
-        <div class="p-4 border-b border-gray-200 flex items-center justify-between gap-4">
-          <div>
-            <h3 class="font-bold text-gray-800">如何标注分割目标</h3>
-            <p class="mt-1 text-sm text-gray-500">先用手工链路保底，智能工具只负责提速。</p>
-          </div>
-          <button
-            type="button"
-            class="text-gray-400 hover:text-gray-600 transition-colors"
-            @click="closeGuideModal"
-          >
-            <AppIcon name="close" class="h-4 w-4" />
-          </button>
-        </div>
-
-        <div class="p-4 overflow-x-auto">
-          <div class="flex gap-3 justify-center min-w-max">
+    <ModalShell
+      v-if="showGuideModal"
+      size="lg"
+      title="如何标注分割目标"
+      panel-class="shadow-xl overflow-hidden"
+      body-class="overflow-x-auto"
+      @close="closeGuideModal"
+    >
+        <p class="mb-3 text-sm text-gray-500">先用手工链路保底，智能工具只负责提速。</p>
+        <div class="flex gap-3 justify-center min-w-max">
           <div
             v-for="item in guideCards"
             :key="item.title"
@@ -298,35 +287,27 @@
               <p class="text-xs text-gray-600 leading-5">{{ item.description }}</p>
             </div>
           </div>
-          </div>
         </div>
-
-        <div class="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+      <template #footer>
+        <div class="flex w-full items-center justify-between gap-3">
           <p class="text-xs text-gray-500">需要时可通过标注弹窗右上角帮助按钮再次查看。</p>
           <button type="button" class="vt-btn-secondary vt-btn-size-md" @click="closeGuideModal">
             我知道了
           </button>
         </div>
-      </div>
-    </div>
+      </template>
+    </ModalShell>
 
-    <div v-if="guideImagePreview" class="vt-modal-backdrop" @click.self="closeGuideImagePreview">
-      <div class="w-[min(92vw,64rem)] bg-white shadow-xl border border-gray-200 overflow-hidden">
-        <div class="p-3 border-b border-gray-200 flex items-center justify-between gap-4">
-          <div class="text-sm font-medium text-gray-800">{{ guideImagePreview.title }}</div>
-          <button
-            type="button"
-            class="text-gray-400 hover:text-gray-600 transition-colors"
-            @click="closeGuideImagePreview"
-          >
-            <AppIcon name="close" class="h-4 w-4" />
-          </button>
-        </div>
-        <div class="bg-black/95 flex items-center justify-center p-4">
-          <img :src="guideImagePreview.image" :alt="guideImagePreview.title" class="max-h-[80vh] w-auto max-w-full object-contain" />
-        </div>
-      </div>
-    </div>
+    <ModalShell
+      v-if="guideImagePreview"
+      size="xl"
+      :title="guideImagePreview.title"
+      panel-class="shadow-xl overflow-hidden"
+      body-class="bg-black/95 flex items-center justify-center"
+      @close="closeGuideImagePreview"
+    >
+      <img :src="guideImagePreview.image" :alt="guideImagePreview.title" class="max-h-[80vh] w-auto max-w-full object-contain" />
+    </ModalShell>
   </div>
 </template>
 
@@ -336,11 +317,13 @@ import api from '../api';
 import { useMainStore } from '../stores/main';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
-import { getPathDisplayName } from '../utils';
+import { getPathDisplayName, formatConf } from '../utils';
+import { getClassColor } from '../utils/classColors';
 import helpOp1 from '../assets/images/help/op1.png';
 import helpOp2 from '../assets/images/help/op2.png';
 import helpOp3 from '../assets/images/help/op3.png';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
 
@@ -373,6 +356,8 @@ const REFINE_ACTION_KEY = 'segment-annotator:refine';
 const ERASE_ACTION_KEY = 'segment-annotator:erase';
 const isActionPending = (key) => asyncAction.isPending(key);
 let activeLoadToken = 0;
+
+const busy = computed(() => isActionPending(SAVE_ACTION_KEY));
 const TARGET_POINT_SPACING_PX = 10;
 const SMART_POINT_SPACING_PX = 16;
 const MAX_HANDLE_POINTS = 80;
@@ -410,12 +395,10 @@ const containerWidth = ref(0);
 const containerHeight = ref(0);
 let resizeObserver = null;
 
-const colors = [
-  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e',
-  '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'
-];
-const getColor = (idx) => colors[idx % colors.length];
 const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
+
+const isCandidate = (poly) => poly?.candidate === true;
+
 const toolHintText = computed(() => {
   if (eraserMode.value) return '拖一笔擦掉多余区域，松手后只裁减当前选中轮廓。';
   if (smartSelectMode.value) return '拖一个水平矩形框，系统会在框内自动生成分割初稿。';
@@ -753,7 +736,7 @@ const buildFallbackPolygon = (strokePoints) => {
   const pxSnapped = snapPolygonToEdges(pxResampled);
   const normPoints = pxSnapped.map((p) => ({ x: p.x / imgWidth.value, y: p.y / imgHeight.value }));
   if (normPoints.length < 3) return null;
-  return { class: currentClass.value, points: normPoints, is_auto: false, source: 'freehand' };
+  return { class: currentClass.value, points: normPoints, source: 'freehand' };
 };
 
 const responseToNormPoints = (res) => {
@@ -777,7 +760,6 @@ const responseToNormPolygons = (res) => {
       points: (p.points || [])
         .map((pt) => ({ x: Number(pt.x) / w, y: Number(pt.y) / h }))
         .filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y)),
-      is_auto: false,
       source: 'erased',
     }))
     .filter((p) => (p.points || []).length >= 3);
@@ -789,7 +771,7 @@ const commitManualPolygon = () => {
     .map((pt) => ({ x: Number(pt.x), y: Number(pt.y) }))
     .filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
   if (normPoints.length < 3) return;
-  const next = [...polygons.value, { class: currentClass.value, points: normPoints, is_auto: false, source: 'manual' }];
+  const next = [...polygons.value, { class: currentClass.value, points: normPoints, source: 'manual' }];
   polygons.value = next;
   selectedPolyIdx.value = next.length - 1;
   hasChanges.value = true;
@@ -826,7 +808,7 @@ const commitSmartSelection = async () => {
     ));
     const normPoints = responseToNormPoints(res);
     if (normPoints.length >= 3) {
-      const next = [...polygons.value, { class: currentClass.value, points: normPoints, is_auto: false, source: 'refined' }];
+      const next = [...polygons.value, { class: currentClass.value, points: normPoints, source: 'refined' }];
       polygons.value = next;
       selectedPolyIdx.value = next.length - 1;
       hasChanges.value = true;
@@ -898,7 +880,7 @@ const commitPointDrag = async (drag) => {
   const normPoints = previewDraggedPoint(originalPolygon.points || [], drag.pointIdx, currentPoint);
   polygons.value = polygons.value.map((p, idx) => (
     idx === drag.polyIdx
-      ? { ...p, class: originalPolygon.class, points: normPoints, is_auto: false, source: 'manual-edited' }
+      ? { ...p, class: originalPolygon.class, points: normPoints, source: 'manual-edited' }
       : p
   ));
   selectedPolyIdx.value = drag.polyIdx;
@@ -1143,12 +1125,20 @@ const fetchAnnotations = async () => {
     const toNormPolygon = (p) => ({
       class: Number(p.class) || 0,
       points: (p.points || []).map(toNormPoint).filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y)),
-      is_auto: !!p.is_auto,
       source: 'loaded',
     });
-    const manual = (res.manual_annotation?.polygons || []).map((p) => ({ ...toNormPolygon(p), is_auto: false }));
-    const auto = (res.auto_annotation?.polygons || []).map((p) => ({ ...toNormPolygon(p), is_auto: true }));
-    polygons.value = [...manual, ...auto].filter((p) => (p.points || []).length >= 3);
+    polygons.value = (res.manual_annotation?.polygons || [])
+      .map(toNormPolygon)
+      .filter((p) => (p.points || []).length >= 3);
+    // 候选带 candidate 标记：虚线是它「待复核」的记号，保存时它和人工轮廓一样落进标签
+    const candidates = (res.auto_annotation?.polygons || [])
+      .map((p) => ({
+        ...toNormPolygon(p),
+        conf: Number.isFinite(Number(p.conf)) ? Number(p.conf) : null,
+        candidate: true,
+      }))
+      .filter((p) => (p.points || []).length >= 3);
+    polygons.value = [...polygons.value, ...candidates];
   } catch (err) {
     console.error(err);
   } finally {
@@ -1166,9 +1156,9 @@ const closeGuideImagePreview = () => {
 };
 
 const save = async () => {
+  if (busy.value) return;
   await asyncAction.run(SAVE_ACTION_KEY, async () => {
     const payloadPolygons = polygons.value
-      .filter((p) => !p.is_auto)
       .map((p) => ({ class: p.class, points: normalizeForSave(p) }))
       .filter((p) => (p.points || []).length >= 3)
       .map((p) => ({
@@ -1188,7 +1178,8 @@ const save = async () => {
       onSuccess: () => {
         hasChanges.value = false;
         fetchAnnotations();
-        emit('update', props.image);
+        // 保存把这张图的候选一次判完，列表上的「待复核」标记就此消失
+        emit('update', { ...props.image, annotated: true, pending: false, has_auto_label: false });
       },
     });
   });

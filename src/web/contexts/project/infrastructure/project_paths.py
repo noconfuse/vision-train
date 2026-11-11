@@ -7,7 +7,7 @@ from contexts.project.domain.policies import (
     PROJECT_TEMP_TASKS_DIRNAME,
     PROJECT_VIDEO_DIRNAME,
 )
-from contexts.training.domain.training_constants import TRAINING_DATA_DIRNAME
+from protocols.storage_layout import TRAINING_DATA_DIRNAME
 
 
 def get_project_training_dir(project_path):

@@ -2,7 +2,7 @@
 
 import os
 
-from contexts.training.domain.export_profile import get_export_format_support
+from protocols.capabilities.export_profile import get_export_format_support
 from contexts.training.infrastructure.runtime_profile import get_device
 
 

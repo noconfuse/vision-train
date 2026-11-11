@@ -24,60 +24,50 @@
             preserveAspectRatio="none"
             @pointerdown="onPointerDownBg"
           >
-            <!-- Existing Boxes -->
-            <g v-for="(box, idx) in displayBoxes" :key="idx">
-              <rect
-                v-if="box.is_auto"
-                :x="box.x1 * imgWidth"
-                :y="box.y1 * imgHeight"
-                :width="(box.x2 - box.x1) * imgWidth"
-                :height="(box.y2 - box.y1) * imgHeight"
-                stroke="rgba(255, 255, 255, 0.95)"
-                :stroke-width="(selectedBoxIdx === idx ? 4.5 : 3.5) / scale"
-                fill="transparent"
-                pointer-events="none"
-              />
+            <!-- Existing Boxes：大框先画、小框后画，嵌套时内层小框优先命中 -->
+            <!-- 模型候选也在这一组里：颜色跟着类别走，虚线是它「待复核」的唯一标记，能选、能拖、能删 -->
+            <g
+              v-for="box in renderBoxes"
+              :key="box._idx"
+              :opacity="selectedBoxIdx >= 0 && selectedBoxIdx !== box._idx ? 0.5 : 1"
+              style="transition: opacity 120ms ease;"
+            >
               <!-- Box Rect -->
               <rect
                 :x="box.x1 * imgWidth"
                 :y="box.y1 * imgHeight"
                 :width="(box.x2 - box.x1) * imgWidth"
                 :height="(box.y2 - box.y1) * imgHeight"
-                :stroke="box.is_auto ? '#22d3ee' : getColor(box.class)"
-                :stroke-width="box.is_auto ? ((selectedBoxIdx === idx ? 3.25 : 2.5) / scale) : ((selectedBoxIdx === idx ? 3 : 2) / scale)"
-                :stroke-opacity="box.is_auto ? 1 : 0.9"
-                :stroke-dasharray="box.is_auto ? '10 6' : '0'"
-                :fill="box.is_auto ? 'rgba(34, 211, 238, 0.06)' : 'transparent'"
-                :class="selectedBoxIdx === idx ? 'opacity-100' : 'opacity-80 hover:opacity-100'"
-                style="cursor: move; touch-action: none;"
-                @pointerdown="onBoxPointerDown(idx, $event)"
+                :stroke="getClassColor(box.class)"
+                :stroke-width="((selectedBoxIdx === box._idx ? 3 : 2) / scale)"
+                stroke-opacity="0.9"
+                :stroke-dasharray="isCandidate(box) ? `${10 / scale} ${6 / scale}` : '0'"
+                :fill="getClassColor(box.class)"
+                :fill-opacity="isCandidate(box) ? 0.12 : 0"
+                :style="{ cursor: selectedBoxIdx === box._idx ? 'move' : 'crosshair', touchAction: 'none' }"
+                @pointerdown="onBoxPointerDown(box._idx, $event)"
               />
-
-              <!-- Resize Handles (only if selected) -->
-              <g v-if="selectedBoxIdx === idx">
-                <!-- TL -->
-                <rect :x="box.x1 * imgWidth - 4 / scale" :y="box.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: nw-resize; touch-action: none;" @pointerdown="onHandlePointerDown(idx, 'tl', $event)" />
-                <!-- TR -->
-                <rect :x="box.x2 * imgWidth - 4 / scale" :y="box.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: ne-resize; touch-action: none;" @pointerdown="onHandlePointerDown(idx, 'tr', $event)" />
-                <!-- BL -->
-                <rect :x="box.x1 * imgWidth - 4 / scale" :y="box.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: sw-resize; touch-action: none;" @pointerdown="onHandlePointerDown(idx, 'bl', $event)" />
-                <!-- BR -->
-                <rect :x="box.x2 * imgWidth - 4 / scale" :y="box.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: se-resize; touch-action: none;" @pointerdown="onHandlePointerDown(idx, 'br', $event)" />
-              </g>
 
               <!-- Label -->
               <text
                 :x="box.x1 * imgWidth"
                 :y="Math.max(12 / scale, box.y1 * imgHeight - 5 / scale)"
-                :fill="box.is_auto ? '#67e8f9' : getColor(box.class)"
+                :fill="getClassColor(box.class)"
                 :font-size="12 / scale"
                 font-weight="bold"
-                :opacity="1"
-                style="text-shadow: 0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9); cursor: move; touch-action: none;"
-                @pointerdown="onBoxPointerDown(idx, $event)"
+                :style="{ textShadow: '0 0 2px rgba(8, 47, 73, 0.95), 1px 1px 1px rgba(0, 0, 0, 0.9)', cursor: selectedBoxIdx === box._idx ? 'move' : 'crosshair', touchAction: 'none' }"
+                @pointerdown="onBoxPointerDown(box._idx, $event)"
               >
-                {{ getClassName(box.class) }} {{ box.is_auto ? '(Auto)' : '' }}
+                {{ getClassName(box.class) }}<template v-if="isCandidate(box) && hasConf(box)"> {{ formatConf(box.conf) }}</template>
               </text>
+            </g>
+
+            <!-- Resize Handles：独立置顶渲染，避免被内层小框遮挡 -->
+            <g v-if="selectedDisplayBox">
+              <rect :x="selectedDisplayBox.x1 * imgWidth - 4 / scale" :y="selectedDisplayBox.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: nw-resize; touch-action: none;" @pointerdown="onHandlePointerDown(selectedBoxIdx, 'tl', $event)" />
+              <rect :x="selectedDisplayBox.x2 * imgWidth - 4 / scale" :y="selectedDisplayBox.y1 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: ne-resize; touch-action: none;" @pointerdown="onHandlePointerDown(selectedBoxIdx, 'tr', $event)" />
+              <rect :x="selectedDisplayBox.x1 * imgWidth - 4 / scale" :y="selectedDisplayBox.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: sw-resize; touch-action: none;" @pointerdown="onHandlePointerDown(selectedBoxIdx, 'bl', $event)" />
+              <rect :x="selectedDisplayBox.x2 * imgWidth - 4 / scale" :y="selectedDisplayBox.y2 * imgHeight - 4 / scale" :width="8 / scale" :height="8 / scale" fill="white" stroke="black" :stroke-width="1 / scale" style="cursor: se-resize; touch-action: none;" @pointerdown="onHandlePointerDown(selectedBoxIdx, 'br', $event)" />
             </g>
 
             <g v-for="(box, idx) in suspectBoxes" :key="`suspect-${idx}`">
@@ -111,7 +101,7 @@
               :y="drawingBox.y1 * imgHeight"
               :width="(drawingBox.x2 - drawingBox.x1) * imgWidth"
               :height="(drawingBox.y2 - drawingBox.y1) * imgHeight"
-              :stroke="getColor(currentClass)"
+              :stroke="getClassColor(currentClass)"
               :stroke-width="2 / scale"
               stroke-dasharray="4"
               fill="transparent"
@@ -124,10 +114,15 @@
       <!-- Sidebar -->
       <div class="w-80 bg-white border-l border-gray-200 flex flex-col">
         <div class="p-4 border-b border-gray-200">
-          <h3 class="font-bold text-gray-800 mb-1">图片标注</h3>
+          <div class="flex items-start justify-between gap-2">
+            <h3 class="font-bold text-gray-800">图片标注</h3>
+            <button type="button" class="vt-modal-close -mt-1 -mr-1 shrink-0" title="关闭标注器（Esc）" @click="$emit('close')">
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
+          </div>
           <UiTooltip side="bottom" align="start" content-class="max-w-[24rem] break-all text-left">
             <template #trigger>
-              <p class="text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
+              <p class="mt-1 text-xs text-gray-500 truncate">{{ getPathDisplayName(image.path) }}</p>
             </template>
             {{ image.path }}
           </UiTooltip>
@@ -147,7 +142,7 @@
               :class="currentClass === idx ? 'vt-selectable--selected' : 'border-transparent'"
               @click="updateSelectedBoxClass(idx)"
             >
-              <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getColor(idx) }"></div>
+              <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: getClassColor(idx) }"></div>
               <span class="text-sm font-medium">{{ name }}</span>
               <span class="text-xs text-gray-400 ml-auto">id: {{ idx }}</span>
             </div>
@@ -156,12 +151,21 @@
 
         <!-- Actions -->
         <div class="p-4 border-t border-gray-200 bg-gray-50 space-y-3">
-          <div class="flex justify-between items-center text-sm text-gray-600">
-             <span>标注数量: {{ boxes.length }}</span>
-             <span v-if="hasChanges" class="vt-tag vt-tag-warn">未保存</span>
+          <div v-if="hasChanges" class="flex justify-end">
+            <span class="vt-tag vt-tag-warn">未保存</span>
           </div>
           
-          <button 
+          <!-- 找同类扫的是整个 split，进度和结果都在自己的弹窗里看，所以这里只把选中的框交出去，弹窗让给它 -->
+          <button
+            v-if="selectedBoxIdx >= 0"
+            class="vt-btn-secondary vt-btn-size-lg w-full justify-center mb-2"
+            :disabled="hasChanges"
+            @click="askProbe"
+          >
+            {{ hasChanges ? '先保存标注，再找同类' : '用这个框找同类' }}
+          </button>
+
+          <button
             v-if="selectedBoxIdx >= 0"
             @click="removeBox(selectedBoxIdx)"
             class="vt-btn-danger vt-btn-size-lg w-full justify-center mb-2"
@@ -173,8 +177,8 @@
           <AsyncButton
             @click="save"
             class="vt-btn-solid-primary vt-btn-size-lg w-full justify-center"
-            :disabled="loading"
-            :pending="isActionPending(SAVE_ACTION_KEY)"
+            :disabled="loading || busy"
+            :pending="busy"
             loading-text="保存标注 (Ctrl+S)"
           >
             <AppIcon name="check" class="h-4 w-4" />
@@ -182,11 +186,11 @@
           </AsyncButton>
           
           <div class="flex gap-2">
-            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('prev')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <AppIcon name="previous" class="h-4 w-4" />
               <span>上一张</span>
             </button>
-            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || isActionPending(SAVE_ACTION_KEY)">
+            <button @click="$emit('next')" class="vt-btn-secondary vt-btn-size-lg flex-1" :disabled="loading || busy">
               <span>下一张</span>
               <AppIcon name="next" class="h-4 w-4" />
             </button>
@@ -203,7 +207,8 @@ import api from '../api';
 import { useMainStore } from '../stores/main';
 import { useApiCall } from '../composables/useApiCall';
 import { useAsyncAction } from '../composables/useAsyncAction';
-import { getPathDisplayName } from '../utils';
+import { getPathDisplayName, formatConf } from '../utils';
+import { getClassColor } from '../utils/classColors';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import UiTooltip from './ui/Tooltip.vue';
@@ -215,7 +220,7 @@ const props = defineProps({
   split: { type: String, default: 'train' }
 });
 
-const emit = defineEmits(['close', 'prev', 'next', 'update']);
+const emit = defineEmits(['close', 'prev', 'next', 'update', 'probe']);
 
 const store = useMainStore();
 const apiCall = useApiCall();
@@ -230,6 +235,8 @@ const SAVE_ACTION_KEY = 'image-annotator:save';
 const isActionPending = (key) => asyncAction.isPending(key);
 let activeLoadToken = 0;
 
+const busy = computed(() => isActionPending(SAVE_ACTION_KEY));
+
 // 用 shallowRef 存"拖动中的临时数据"——避免深度响应式追踪
 // 拖动中频繁更新 4 个数字会触发 SVG 整树重新计算，
 // shallowRef 只追踪引用变化（每次整个对象替换），性能更好
@@ -242,6 +249,34 @@ const resizeHandle = ref(null); // tl, tr, bl, br
 const startPosNorm = shallowRef({ x: 0, y: 0 }); // normalized 0-1
 const dragStartBox = shallowRef(null); // Snapshot of box before drag
 
+// 撤销/重做：每次改动前存一份整框快照，组件卸载即清空（不跨弹窗保留）
+const undoStack = ref([]);
+const redoStack = ref([]);
+const cloneBoxes = () => boxes.value.map((b) => ({ ...b }));
+const recordHistory = () => {
+  undoStack.value.push(cloneBoxes());
+  redoStack.value = [];
+};
+const resetHistory = () => {
+  undoStack.value = [];
+  redoStack.value = [];
+};
+const applySnapshot = (snap) => {
+  boxes.value = snap;
+  if (selectedBoxIdx.value >= snap.length) selectedBoxIdx.value = -1;
+  hasChanges.value = true;
+};
+const undo = () => {
+  if (!undoStack.value.length) return;
+  redoStack.value.push(cloneBoxes());
+  applySnapshot(undoStack.value.pop());
+};
+const redo = () => {
+  if (!redoStack.value.length) return;
+  undoStack.value.push(cloneBoxes());
+  applySnapshot(redoStack.value.pop());
+};
+
 const imgWidth = ref(1);
 const imgHeight = ref(1);
 const scale = ref(1);
@@ -249,13 +284,6 @@ const containerWidth = ref(0);
 const containerHeight = ref(0);
 let resizeObserver = null;
 
-// Colors for classes
-const colors = [
-  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e',
-  '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'
-];
-
-const getColor = (idx) => colors[idx % colors.length];
 const getClassName = (idx) => props.classList[idx] || `Class ${idx}`;
 const suspectBoxes = computed(() => {
   const arr = props.image?.review?.suspect_boxes;
@@ -280,6 +308,30 @@ const displayBoxes = computed(() => {
   }
   return base;
 });
+
+// SVG 后绘制的元素优先接收 pointer 事件：
+// 按面积从大到小绘制，嵌套的小框后画从而可被点中
+const renderBoxes = computed(() =>
+  displayBoxes.value
+    .map((box, idx) => ({
+      ...box,
+      _idx: idx,
+      _area: Math.abs((box.x2 - box.x1) * (box.y2 - box.y1)),
+    }))
+    .sort((a, b) => b._area - a._area)
+    .map(({ _area, ...box }) => box)
+);
+
+const selectedDisplayBox = computed(() =>
+  selectedBoxIdx.value >= 0 ? displayBoxes.value[selectedBoxIdx.value] || null : null
+);
+
+const isCandidate = (box) => box?.candidate === true;
+// 没有元信息的老批次、以及人自己新画的框都没有置信度：宁可不写，也不能报成 0%
+const readConf = (box) => (
+  box?.conf === null || box?.conf === undefined || !Number.isFinite(Number(box.conf)) ? null : Number(box.conf)
+);
+const hasConf = (box) => readConf(box) !== null;
 
 // Image layout logic
 const imageStyle = computed(() => {
@@ -347,6 +399,7 @@ const clientToNorm = (clientX, clientY) => {
 let pendingPointer = null;   // 最新一次 pointer 坐标
 let rafScheduled = false;    // 是否已预约下一帧
 let activePointerId = null;  // 当前抓取此 SVG 的 pointer
+let pendingSelectOnRelease = -1; // 在未选中框上按下，拖动过小则点选该框
 
 const scheduleDrag = () => {
   if (rafScheduled) return;
@@ -397,6 +450,7 @@ const onPointerDownBg = (e) => {
   activePointerId = e.pointerId;
 
   selectedBoxIdx.value = -1;
+  pendingSelectOnRelease = -1;
   interactionMode.value = 'draw';
   const norm = clientToNorm(e.clientX, e.clientY);
   startPosNorm.value = norm;
@@ -410,14 +464,23 @@ const onBoxPointerDown = (idx, e) => {
   if (e.button !== undefined && e.button !== 0) return;
   e.currentTarget.setPointerCapture(e.pointerId);
   activePointerId = e.pointerId;
-  selectedBoxIdx.value = idx;
   const norm = clientToNorm(e.clientX, e.clientY);
   startPosNorm.value = norm;
-  dragStartBox.value = { ...boxes.value[idx] };
-  ghostBox.value = { ...boxes.value[idx] };
-  interactionMode.value = 'move';
-  currentClass.value = boxes.value[idx].class;
   pendingPointer = { ...norm, startX: norm.x, startY: norm.y };
+
+  if (idx === selectedBoxIdx.value) {
+    // 已选中：框内拖动 = 移动
+    dragStartBox.value = { ...boxes.value[idx] };
+    ghostBox.value = { ...boxes.value[idx] };
+    interactionMode.value = 'move';
+    currentClass.value = boxes.value[idx].class;
+  } else {
+    // 未选中：按下即画新框；若拖动距离过小，松手时视为「点选」该框
+    selectedBoxIdx.value = -1;
+    pendingSelectOnRelease = idx;
+    interactionMode.value = 'draw';
+    drawingBox.value = { x1: norm.x, y1: norm.y, x2: norm.x, y2: norm.y };
+  }
   e.preventDefault();
   e.stopPropagation();
 };
@@ -427,6 +490,7 @@ const onHandlePointerDown = (idx, handle, e) => {
   e.currentTarget.setPointerCapture(e.pointerId);
   activePointerId = e.pointerId;
   selectedBoxIdx.value = idx;
+  pendingSelectOnRelease = -1;
   resizeHandle.value = handle;
   const norm = clientToNorm(e.clientX, e.clientY);
   startPosNorm.value = norm;
@@ -467,28 +531,36 @@ const finalizeDrag = () => {
     const h = (b.y2 - b.y1) * imgHeight.value;
     if (w > 5 && h > 5) {
       const idx = boxes.value.length;
+      recordHistory();
       boxes.value.push({
         class: currentClass.value,
         x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2,
-        is_auto: false,
       });
       hasChanges.value = true;
       selectedBoxIdx.value = idx;
+    } else if (pendingSelectOnRelease >= 0 && boxes.value[pendingSelectOnRelease]) {
+      // 在未选中的框上按下但没拖动：视为点选
+      selectedBoxIdx.value = pendingSelectOnRelease;
+      currentClass.value = boxes.value[pendingSelectOnRelease].class;
     }
     drawingBox.value = null;
   } else if ((interactionMode.value === 'move' || interactionMode.value === 'resize') && ghostBox.value) {
-    // 把 ghost 应用到真正的 box
+    // 把 ghost 应用到真正的 box（仅在几何确实变化时记一次历史，避免单击选中被当成改动）
     if (selectedBoxIdx.value >= 0 && boxes.value[selectedBoxIdx.value]) {
-      boxes.value[selectedBoxIdx.value] = {
-        ...boxes.value[selectedBoxIdx.value],
-        ...ghostBox.value,
-      };
-      hasChanges.value = true;
+      const cur = boxes.value[selectedBoxIdx.value];
+      const g = ghostBox.value;
+      const changed = g.x1 !== cur.x1 || g.y1 !== cur.y1 || g.x2 !== cur.x2 || g.y2 !== cur.y2;
+      if (changed) {
+        recordHistory();
+        boxes.value[selectedBoxIdx.value] = { ...cur, ...g };
+        hasChanges.value = true;
+      }
     }
     ghostBox.value = null;
     dragStartBox.value = null;
     resizeHandle.value = null;
   }
+  pendingSelectOnRelease = -1;
   interactionMode.value = 'none';
   pendingPointer = null;
 };
@@ -501,6 +573,7 @@ const fetchAnnotations = async () => {
   selectedBoxIdx.value = -1;
   drawingBox.value = null;
   ghostBox.value = null;
+  resetHistory();
   try {
     const res = await api.getAnnotation({
       project_path: store.currentProject.path,
@@ -524,11 +597,13 @@ const fetchAnnotations = async () => {
         }
         return { class: Number(b.class) || 0, x1, y1, x2, y2 };
       };
-      const manual = (res.manual_annotation?.boxes || []).map((b) => ({ ...toNorm(b), is_auto: false }));
-      const auto = (res.auto_annotation?.boxes || []).map((b) => ({ ...toNorm(b), is_auto: true }));
-      boxes.value = [...manual, ...auto].filter((b) =>
-        Number.isFinite(b.x1) && Number.isFinite(b.y1) && Number.isFinite(b.x2) && Number.isFinite(b.y2)
-      );
+      const isUsable = (b) => Number.isFinite(b.x1) && Number.isFinite(b.y1) && Number.isFinite(b.x2) && Number.isFinite(b.y2);
+      const manual = (res.manual_annotation?.boxes || []).map((b) => toNorm(b)).filter(isUsable);
+      // 虚线框就是「模型提的、还没被这次保存写进标签」：保存时它跟人工框一起落进标签文件，删掉它就不落。
+      const candidates = (res.auto_annotation?.boxes || [])
+        .map((b) => ({ ...toNorm(b), conf: readConf(b), candidate: true }))
+        .filter(isUsable);
+      boxes.value = [...manual, ...candidates];
     }
   } catch (err) {
     console.error(err);
@@ -539,10 +614,11 @@ const fetchAnnotations = async () => {
 };
 
 const save = async () => {
+  if (busy.value) return;
   const w = imgWidth.value || (imgRef.value ? imgRef.value.naturalWidth : 0);
   const h = imgHeight.value || (imgRef.value ? imgRef.value.naturalHeight : 0);
   await asyncAction.run(SAVE_ACTION_KEY, async () => {
-    await apiCall(api.saveAnnotation({
+    const body = {
       project_path: store.currentProject.path,
       dataset_name: props.datasetName,
       split: props.split,
@@ -556,18 +632,21 @@ const save = async () => {
           y2: b.y2 * h,
         })),
       },
-    }), {
+    };
+    await apiCall(api.saveAnnotation(body), {
       errorMsg: '保存失败',
       onSuccess: () => {
         hasChanges.value = false;
         fetchAnnotations();
-        emit('update', props.image);
+        // 保存把这张图的候选一次判完，列表上的「待复核」标记就此消失
+        emit('update', { ...props.image, annotated: true, pending: false, has_auto_label: false });
       },
     });
   });
 };
 
 const removeBox = (idx) => {
+  recordHistory();
   boxes.value.splice(idx, 1);
   selectedBoxIdx.value = -1;
   hasChanges.value = true;
@@ -575,10 +654,26 @@ const removeBox = (idx) => {
 
 const updateSelectedBoxClass = (idx) => {
   currentClass.value = idx;
-  if (selectedBoxIdx.value >= 0) {
+  if (selectedBoxIdx.value >= 0 && boxes.value[selectedBoxIdx.value].class !== idx) {
+    recordHistory();
     boxes.value[selectedBoxIdx.value].class = idx;
     hasChanges.value = true;
   }
+};
+
+// 找同类扫的是整个 split，进度和结果都在列表页的探测弹窗里：这里只把选中的框交出去
+const askProbe = () => {
+  const box = boxes.value[selectedBoxIdx.value];
+  if (!box) return;
+  const w = imgWidth.value || (imgRef.value ? imgRef.value.naturalWidth : 0);
+  const h = imgHeight.value || (imgRef.value ? imgRef.value.naturalHeight : 0);
+  emit('probe', {
+    image_path: props.image.path,
+    class_id: box.class,
+    class_name: getClassName(box.class),
+    // 后端按像素收样本框，跟保存标注用的是同一套换算
+    sample_box: [box.x1 * w, box.y1 * h, box.x2 * w, box.y2 * h],
+  });
 };
 
 const handleKeydown = (e) => {
@@ -587,6 +682,19 @@ const handleKeydown = (e) => {
     e.preventDefault();
     save();
     return;
+  }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if ((k === 'z' && e.shiftKey) || k === 'y') {
+      e.preventDefault();
+      redo();
+      return;
+    }
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
 

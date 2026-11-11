@@ -106,7 +106,7 @@ export const resolveEvaluateStartGuard = ({
     return buildCapabilityGuard({
       visible: true,
       enabled: false,
-      reason: '当前数据集没有 test 划分，无法执行测试集评估',
+      reason: '数据集没有 test 划分',
     });
   }
   return buildCapabilityGuard({

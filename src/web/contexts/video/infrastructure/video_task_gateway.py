@@ -5,30 +5,36 @@ import os
 import shutil
 from datetime import datetime
 
-from contexts.dataset.infrastructure.dataset_layout import (
-    STANDARD_DATASET_SPLITS,
+from contexts.dataset.application.dataset_service import (
     get_dataset_images_dir,
     get_dataset_labels_dir,
+    find_dataset_config,
+    load_dataset_identity_meta,
+    load_dataset_vision_task_type,
 )
-from contexts.dataset.infrastructure.dataset_schema import find_dataset_config, save_standard_dataset_yaml
-from contexts.project.infrastructure.project_paths import (
+from contexts.dataset.application.use_cases import (
+    create_empty_dataset,
+    enqueue_initial_dataset_snapshot,
+)
+from contexts.project.application.project_service import (
     get_project_dataset_dir,
     get_project_task_dir,
     get_project_task_images_dir,
     get_project_videos_dir,
 )
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_IMAGES_DIR,
     ARTIFACT_LOG_PATH,
 )
-from contexts.task.domain.task_types import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.infrastructure.task_repository import (
+from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION
+from contexts.task.application.task_service import (
     create_task as start_task,
     delete_task as remove_task,
     update_task as update_task_status,
+    load_task,
+    build_worker_artifacts,
+    mark_worker_started,
 )
-from contexts.task.infrastructure.task_runtime import load_task
-from contexts.task.infrastructure.worker_task_ops import build_worker_artifacts, mark_worker_started
 from contexts.video.infrastructure.video_runtime import generate_video_thumbnail
 from shared.infra.worker_process import spawn_worker_process
 from shared.utils.fs_utils import remove_file_silent, remove_tree
@@ -41,14 +47,17 @@ from protocols.task_status import is_active_task_status
 logger = logging.getLogger(__name__)
 
 
-def _ensure_standard_dataset_root(dataset_root):
-    """确保抽帧导入目标符合标准数据集协议。"""
-    os.makedirs(dataset_root, exist_ok=True)
-    for split in STANDARD_DATASET_SPLITS:
-        os.makedirs(get_dataset_images_dir(dataset_root, split), exist_ok=True)
-        os.makedirs(get_dataset_labels_dir(dataset_root, split), exist_ok=True)
+def _prepare_import_target_dataset(project_path, dataset_root, dataset_name, vision_task_type=None):
+    """确定抽帧导入的目标数据集：带任务类型则走统一注册流程新建，否则要求已注册。"""
+    if str(vision_task_type or "").strip():
+        create_empty_dataset(project_path, dataset_name, vision_task_type)
+        return
     if not find_dataset_config(dataset_root):
-        save_standard_dataset_yaml(dataset_root, [], include_val=True, include_test=True)
+        raise ValueError(f"数据集 {dataset_name} 不存在，请先创建数据集")
+    try:
+        load_dataset_vision_task_type(dataset_root)
+    except ValueError:
+        raise ValueError(f"数据集 {dataset_name} 未完成注册，缺少任务类型与稳定身份，无法导入")
 
 
 def list_videos(project_path):
@@ -126,12 +135,13 @@ def list_task_images(project_path, task_id):
     return sorted(file_name for file_name in os.listdir(images_dir) if file_name.lower().endswith(IMAGE_FILE_EXTENSIONS))
 
 
-def import_task_images(project_path, task_id, dataset_name, selected_images=None):
-    """把抽帧图片复制到数据集训练分片。"""
+def import_task_images(project_path, task_id, dataset_name, selected_images=None, vision_task_type=None):
+    """把抽帧图片复制到数据集训练分片；新建数据集时补齐注册与首个版本快照。"""
     require_present(project_path=project_path, task_id=task_id, dataset_name=dataset_name)
     source_dir = get_project_task_images_dir(project_path, task_id)
     dataset_root = get_project_dataset_dir(project_path, dataset_name)
-    _ensure_standard_dataset_root(dataset_root)
+    creates_dataset = bool(str(vision_task_type or "").strip())
+    _prepare_import_target_dataset(project_path, dataset_root, dataset_name, vision_task_type)
     target_dir = get_dataset_images_dir(dataset_root, "train")
     labels_dir = get_dataset_labels_dir(dataset_root, "train")
     os.makedirs(target_dir, exist_ok=True)
@@ -150,7 +160,14 @@ def import_task_images(project_path, task_id, dataset_name, selected_images=None
         artifacts = dict((task or {}).get("artifacts") or {})
         artifacts["imported_count"] = success_count
         update_task_status(task_id, artifacts=artifacts)
-    return {"dataset_name": dataset_name, "imported_count": success_count}
+    result = {"dataset_name": dataset_name, "imported_count": success_count}
+    if creates_dataset:
+        result.update(
+            enqueue_initial_dataset_snapshot(project_path, dataset_root, dataset_name, "frame_import")
+        )
+    else:
+        result["dataset_id"] = load_dataset_identity_meta(dataset_root)["dataset_id"]
+    return result
 
 
 def delete_task_images(project_path, task_id, selected_images):

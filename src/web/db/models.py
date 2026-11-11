@@ -17,6 +17,38 @@ def _new_id():
     return uuid.uuid4().hex[:12]
 
 
+class ComputeTarget(Base):
+    """一台可用来训练的远端 GPU 服务器（通过 SSH 免密登录）。
+
+    这里存的是用户在界面上填写的运行时数据，就是唯一事实源：没有环境变量默认值，
+    也没有加载期回填，字段留空时该填什么由计算域的 domain/target_rules 决定。
+    认证复用本机 `~/.ssh/config` 与已有密钥，因此本表不存任何凭据。
+    """
+    __tablename__ = 'compute_targets'
+
+    id = Column(String(12), primary_key=True, default=_new_id)
+    name = Column(String(64), nullable=False, unique=True, index=True)
+    ssh_host = Column(String(255), nullable=False)            # ~/.ssh/config 别名或 user@host
+    remote_workspace = Column(String(512), nullable=False)     # 远端放数据集和产物的目录
+    device = Column(String(16), nullable=False)                # 远端 GPU 序号，Ultralytics device 写法
+    keep_remote_copy = Column(Boolean, nullable=False, default=False)  # 跑完是否保留远端数据副本
+    created_at = Column(String(32), nullable=False, default=now_iso)
+    updated_at = Column(String(32), nullable=False, default=now_iso, index=True)
+
+    def to_dict(self):
+        """把 GPU 服务器记录转换为接口输出字典。"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'ssh_host': self.ssh_host,
+            'remote_workspace': self.remote_workspace,
+            'device': self.device,
+            'keep_remote_copy': bool(self.keep_remote_copy),
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+
+
 class Task(Base):
     """后台任务（训练 / 抽帧 / 自动标注…）。"""
     __tablename__ = 'tasks'

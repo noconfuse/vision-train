@@ -3,14 +3,16 @@
 from db import session_scope
 from db.models import Task
 
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_TEMPLATE_DIR,
     ARTIFACT_TEMPLATE_MANIFEST_PATH,
     ARTIFACT_TEMPLATE_TYPE,
 )
-from contexts.task.domain.task_types import TASK_TYPE_TEMPLATE
-from contexts.task.infrastructure.task_repository import get_task_history as list_task_history
-from contexts.task.infrastructure.task_runtime import load_task
+from protocols.task_type import TASK_TYPE_TEMPLATE
+from contexts.task.application.task_service import (
+    get_task_history as list_task_history,
+    load_task,
+)
 from contexts.training.infrastructure.execution_support import get_batch_calibration as load_batch_calibration
 from contexts.training.infrastructure.inference_template_gateway import list_inference_template_specs
 from contexts.training.infrastructure.query_gateway import (

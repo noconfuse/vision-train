@@ -208,12 +208,6 @@
     </div>
 
     <div class="mt-4">
-      <div
-        v-if="showEvaluateTestHint"
-        class="mb-2 text-right text-xs leading-5 text-slate-500"
-      >
-        当前数据集没有 `test` 划分。训练过程已持续产出验证指标；如需独立测试集评估，请补充 `test` 集。
-      </div>
       <div class="flex flex-wrap items-center justify-end gap-2">
         <AsyncButton
           v-if="canResume"
@@ -414,11 +408,11 @@ import {
   getTaskStatusLabel,
   getTaskStatusTagClass,
   isTaskActive,
-  isTaskCompleted,
   isTaskResumable,
   isTaskRetryable,
 } from '../domain/task/taskStatus';
 import { formatDateTime } from '../utils';
+import { hasUsableTrainingWeight } from '../utils/trainingWorkflow';
 import { getResumeFromTaskId } from '../utils/trainingTask';
 import { resolveTrainingResultProfile } from '../utils/trainingResultProfile';
 
@@ -428,7 +422,6 @@ const props = defineProps({
   datasetName: { type: String, required: true },
   task: { type: Object, default: null },
   canOpenEvaluate: { type: Boolean, default: false },
-  hasTestSplit: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['evaluate', 'export', 'training-started']);
@@ -474,13 +467,8 @@ const retryHintText = computed(() => {
   }
   return '当前任务没有可恢复权重（last.pt / best.pt），因此无法继续训练，只能重新训练。';
 });
-const canGoEvaluate = computed(() => isTaskCompleted(localTask.value) && props.canOpenEvaluate);
-const canGoExport = computed(() => isTaskCompleted(localTask.value));
-const showEvaluateTestHint = computed(() => (
-  isTaskCompleted(localTask.value)
-  && !props.hasTestSplit
-  && !props.canOpenEvaluate
-));
+const canGoEvaluate = computed(() => hasUsableTrainingWeight(localTask.value) && props.canOpenEvaluate);
+const canGoExport = computed(() => hasUsableTrainingWeight(localTask.value));
 const modelName = computed(() => localTask.value?.payload?.model_name || '-');
 const boundDatasetVersion = computed(() => (
   localTask.value?.dataset_version_id

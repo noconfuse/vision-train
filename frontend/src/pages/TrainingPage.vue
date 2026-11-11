@@ -30,23 +30,34 @@
           <div v-if="hasWorkflowContext && !isArchivedWorkflowSelected" class="mb-3 shrink-0 bg-white px-1 py-2">
             <div class="flex items-center gap-2 overflow-x-auto pb-1">
               <template v-for="(step, index) in workflowSteps" :key="step.key">
-                <button
-                  class="vt-step-button"
-                  :class="stepButtonClass(step)"
-                  :disabled="!step.enabled"
-                  @click="goToWorkflowStep(step.key)"
+                <UiTooltip
+                  :disabled="!step.reason"
+                  side="top"
+                  content-class="max-w-[16rem] text-left"
                 >
-                  <div class="flex items-center gap-2 whitespace-nowrap">
-                    <span
-                      class="vt-step-dot"
-                      :class="stepDotClass(step)"
-                    >
-                      {{ stepDotLabel(step) }}
+                  <template #trigger>
+                    <span class="inline-flex shrink-0" :class="step.reason ? 'cursor-not-allowed' : ''">
+                      <button
+                        class="vt-step-button"
+                        :class="[stepButtonClass(step), step.reason ? 'pointer-events-none' : '']"
+                        :disabled="!step.enabled"
+                        @click="goToWorkflowStep(step.key)"
+                      >
+                        <div class="flex items-center gap-2 whitespace-nowrap">
+                          <span
+                            class="vt-step-dot"
+                            :class="stepDotClass(step)"
+                          >
+                            {{ stepDotLabel(step) }}
+                          </span>
+                          <span class="text-sm font-medium">{{ step.title }}</span>
+                          <span v-if="step.optional" class="text-[10px] text-amber-700">可跳过</span>
+                        </div>
+                      </button>
                     </span>
-                    <span class="text-sm font-medium">{{ step.title }}</span>
-                    <span v-if="step.optional" class="text-[10px] text-amber-700">可跳过</span>
-                  </div>
-                </button>
+                  </template>
+                  {{ step.reason }}
+                </UiTooltip>
                 <div
                   v-if="index < workflowSteps.length - 1"
                   class="vt-step-connector"
@@ -56,11 +67,15 @@
             </div>
           </div>
 
+          <div v-if="partialRunNotice" class="mb-3 shrink-0 vt-note vt-note--warn">
+            {{ partialRunNotice }}
+          </div>
+
           <div v-if="isArchivedWorkflowSelected" class="flex-1 min-h-0 bg-white border border-dashed border-gray-300 px-8 py-10 flex items-center justify-center">
             <div class="max-w-md text-center">
               <div class="text-3xl leading-none text-slate-300">#</div>
               <div class="mt-4 text-base font-semibold text-slate-800">该工作流已归档</div>
-              <div class="mt-2 text-sm leading-6 text-gray-500">归档后的工作流不再参与训练流程。如需彻底清理，请切到“已归档”列表后执行永久删除。</div>
+              <div class="mt-2 text-sm leading-6 text-gray-500">归档后的工作流不再参与训练流程。切到“已归档”列表可以恢复它，或永久删除其任务与产物。</div>
             </div>
           </div>
 
@@ -79,7 +94,6 @@
             :dataset-name="datasetName"
             :task="workflowTrainingTask"
             :can-open-evaluate="hasEvaluateStep"
-            :has-test-split="hasDatasetTest"
             @training-started="onTrainingStarted"
             @evaluate="goToWorkflowStep(WORKFLOW_STEP.EVALUATE)"
             @export="goToWorkflowStep(WORKFLOW_STEP.EXPORT_CONFIG)"
@@ -114,7 +128,7 @@
             <div class="max-w-md text-center">
               <div class="text-3xl leading-none text-slate-300">...</div>
               <div class="mt-4 text-sm font-medium text-slate-700">当前工作流还没有训练记录</div>
-              <div class="mt-2 text-sm text-gray-500">先在“训练配置”步骤启动训练，这里会持续展示任务进度、测试集评估（需数据集提供 test 划分）和导出结果。</div>
+              <div class="mt-2 text-sm text-gray-500">先在“训练配置”步骤启动训练，这里会持续展示任务进度、测试集评估和导出结果。</div>
             </div>
           </div>
           <div v-else class="flex-1 min-h-0 bg-white border border-dashed border-gray-300 px-8 py-10 flex items-center justify-center">
@@ -145,14 +159,14 @@
                   <button
                     class="vt-segmented-tab vt-segmented-tab--compact"
                     :class="{ 'vt-segmented-tab--active': !showArchivedWorkflows }"
-                    @click="setWorkflowArchivedView(false)"
+                    @click="showWorkflowList(false)"
                   >
                     当前
                   </button>
                   <button
                     class="vt-segmented-tab vt-segmented-tab--compact"
                     :class="{ 'vt-segmented-tab--active': showArchivedWorkflows }"
-                    @click="setWorkflowArchivedView(true)"
+                    @click="showWorkflowList(true)"
                   >
                     已归档
                   </button>
@@ -245,23 +259,40 @@
                     </template>
                     归档工作流
                   </UiTooltip>
-                  <UiTooltip
-                    v-else
-                    side="top"
-                    content-class="max-w-[16rem] text-left"
-                  >
-                    <template #trigger>
-                      <AsyncButton
-                        class="vt-icon-btn vt-icon-btn--sm vt-icon-btn--danger"
-                        :disabled="isWorkflowActive(workflow)"
-                        :pending="isActionPending(deleteWorkflowActionKey(workflow.id))"
-                        @click.stop="deleteWorkflow(workflow)"
-                      >
-                        <AppIcon name="delete" class="h-3.5 w-3.5" />
-                      </AsyncButton>
-                    </template>
-                    永久删除工作流
-                  </UiTooltip>
+                  <template v-else>
+                    <UiTooltip
+                      side="top"
+                      content-class="max-w-[16rem] text-left"
+                    >
+                      <template #trigger>
+                        <AsyncButton
+                          class="vt-icon-btn vt-icon-btn--sm text-slate-500 hover:text-slate-800"
+                          :disabled="isWorkflowActive(workflow)"
+                          :pending="isActionPending(restoreWorkflowActionKey(workflow.id))"
+                          @click.stop="restoreWorkflow(workflow)"
+                        >
+                          <AppIcon name="restore" class="h-3.5 w-3.5" />
+                        </AsyncButton>
+                      </template>
+                      恢复到当前工作流
+                    </UiTooltip>
+                    <UiTooltip
+                      side="top"
+                      content-class="max-w-[16rem] text-left"
+                    >
+                      <template #trigger>
+                        <AsyncButton
+                          class="vt-icon-btn vt-icon-btn--sm vt-icon-btn--danger"
+                          :disabled="isWorkflowActive(workflow)"
+                          :pending="isActionPending(deleteWorkflowActionKey(workflow.id))"
+                          @click.stop="deleteWorkflow(workflow)"
+                        >
+                          <AppIcon name="delete" class="h-3.5 w-3.5" />
+                        </AsyncButton>
+                      </template>
+                      永久删除工作流
+                    </UiTooltip>
+                  </template>
                 </div>
               </div>
             </div>
@@ -360,10 +391,10 @@ import AppIcon from '../components/ui/AppIcon.vue';
 import AsyncButton from '../components/ui/AsyncButton.vue';
 import UiTooltip from '../components/ui/Tooltip.vue';
 import { getDatasetTypeLabel, getDatasetTypeTagClass } from '../domain/dataset/datasetType';
-import { TASK_STATUS, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted, isTaskTerminal } from '../domain/task/taskStatus';
+import { TASK_STATUS, getTaskStatusLabel, getTaskStatusTagClass, isTaskActive, isTaskCompleted } from '../domain/task/taskStatus';
 import { isTrainingTask } from '../domain/task/taskType';
 import { formatDateTime } from '../utils';
-import { WORKFLOW_STEP, normalizeWorkflowStep } from '../utils/trainingWorkflow';
+import { WORKFLOW_STEP, WEIGHT_BASED_WORKFLOW_STEPS, hasUsableTrainingWeight, normalizeWorkflowStep } from '../utils/trainingWorkflow';
 import { useAsyncAction } from '../composables/useAsyncAction';
 import { resolveTrainingDatasetGuard } from '../utils/trainingActionGuards';
 
@@ -396,10 +427,10 @@ const currentVersionDisplay = computed(() => {
 
 const loadError = ref('');
 const loading = ref(true);
+// 选中项是面板里唯一的本地状态，它始终由 URL 的 workflow_id 解析出来。
 const selectedWorkflow = ref(null);
-const isCreatingWorkflow = ref(false);
-const showArchivedWorkflows = ref(false);
 const archiveWorkflowActionKey = (workflowId) => `training-page:archive-workflow:${String(workflowId || '')}`;
+const restoreWorkflowActionKey = (workflowId) => `training-page:restore-workflow:${String(workflowId || '')}`;
 const deleteWorkflowActionKey = (workflowId) => `training-page:delete-workflow:${String(workflowId || '')}`;
 const isActionPending = (key) => asyncAction.isPending(key);
 
@@ -429,8 +460,12 @@ const backHref = computed(() => {
     },
   };
 });
+// 工作流面板的三个视图状态全部来自 URL：workflow_id=选中谁，draft=正在新建，archived=看归档列表。
 const routeWorkflowId = computed(() => String(route.query.workflow_id || ''));
 const routeDraft = computed(() => String(route.query.draft || '') === '1');
+const routeArchived = computed(() => String(route.query.archived || '') === '1');
+const isCreatingWorkflow = computed(() => routeDraft.value);
+const showArchivedWorkflows = computed(() => routeArchived.value);
 const workflowListKey = computed(() => workflowStore.getDatasetCacheKey({
   project_path: project.value?.path || '',
   dataset_id: dataset.value?.dataset_id || '',
@@ -453,7 +488,7 @@ const hasWorkflowContext = computed(() => isCreatingWorkflow.value || Boolean(se
 const isArchivedWorkflowSelected = computed(() => !!selectedWorkflow.value?.is_archived);
 
 const routeWorkflowStep = computed(() => normalizeWorkflowStep(String(route.query.step || WORKFLOW_STEP.CONFIG)));
-const workflowTaskCompleted = computed(() => isTaskCompleted(selectedWorkflow.value?.latest_training_task));
+const workflowStepUnlocked = computed(() => hasUsableTrainingWeight(workflowTrainingTask.value));
 const workflowStepOrder = [
   WORKFLOW_STEP.CONFIG,
   WORKFLOW_STEP.DETAIL,
@@ -466,7 +501,7 @@ const resolveWorkflowStep = (step, task = workflowTrainingTask.value) => {
   if (!hasWorkflowContext.value) return WORKFLOW_STEP.CONFIG;
   if (normalized !== WORKFLOW_STEP.CONFIG && !task?.id) return WORKFLOW_STEP.CONFIG;
   if (normalized === WORKFLOW_STEP.EVALUATE && !hasEvaluateStep.value) return workflowBaseStep(task);
-  if ([WORKFLOW_STEP.EVALUATE, WORKFLOW_STEP.EXPORT_CONFIG].includes(normalized) && !isTaskCompleted(task)) {
+  if (WEIGHT_BASED_WORKFLOW_STEPS.includes(normalized) && !hasUsableTrainingWeight(task)) {
     return workflowBaseStep(task);
   }
   return normalized;
@@ -474,36 +509,42 @@ const resolveWorkflowStep = (step, task = workflowTrainingTask.value) => {
 const workflowStep = computed(() => resolveWorkflowStep(routeWorkflowStep.value));
 const workflowCurrentIndex = computed(() => workflowStepOrder.indexOf(workflowStep.value));
 const workflowSteps = computed(() => {
+  const weightLockReason = '训练还没有产出可用权重';
   const definitions = [
     {
       key: WORKFLOW_STEP.CONFIG,
       title: '训练配置',
       optional: false,
       enabled: hasWorkflowContext.value,
+      reason: '',
     },
     {
       key: WORKFLOW_STEP.DETAIL,
       title: '任务详情',
       optional: false,
       enabled: Boolean(workflowTrainingTask.value),
+      reason: '还没有训练任务',
     },
     {
       key: WORKFLOW_STEP.EVALUATE,
       title: '测试集评估',
       optional: true,
-      enabled: workflowTaskCompleted.value && hasEvaluateStep.value,
+      enabled: workflowStepUnlocked.value && hasEvaluateStep.value,
+      reason: hasEvaluateStep.value ? weightLockReason : '数据集没有 test 划分',
     },
     {
       key: WORKFLOW_STEP.EXPORT_CONFIG,
       title: '模型导出',
       optional: false,
-      enabled: workflowTaskCompleted.value,
+      enabled: workflowStepUnlocked.value,
+      reason: weightLockReason,
     },
     {
       key: WORKFLOW_STEP.DEPLOYMENT_TEMPLATE,
       title: '部署模板',
       optional: false,
-      enabled: workflowTaskCompleted.value,
+      enabled: workflowStepUnlocked.value,
+      reason: weightLockReason,
     },
   ];
   return definitions.map((step, index) => {
@@ -516,6 +557,7 @@ const workflowSteps = computed(() => {
       isCurrent,
       isCompleted,
       isLocked,
+      reason: isLocked ? step.reason : '',
     };
   });
 });
@@ -536,6 +578,12 @@ const stepDotLabel = (step) => {
   return String(step.index + 1);
 };
 const stepConnectorClass = (step) => (step.isCompleted ? 'vt-step-connector--completed' : step.isCurrent ? 'vt-step-connector--current' : '');
+// 训练没跑完但已经写出 best.pt 时，后续三步照样放行，同时把「用的不是跑满的模型」说清楚。
+const partialRunNotice = computed(() => {
+  if (!WEIGHT_BASED_WORKFLOW_STEPS.includes(workflowStep.value)) return '';
+  if (!workflowStepUnlocked.value || isTaskCompleted(workflowTrainingTask.value)) return '';
+  return `训练${getTaskStatusLabel(workflowTrainingTask.value)}，没有跑完全部轮数；这里使用的是已经产出的 best.pt。要拿到完整结果，可以回到任务详情继续训练。`;
+});
 const formatRunTime = (iso) => formatDateTime(iso, { dateStyle: 'compact' });
 const getWorkflowTitle = (workflow) => {
   const payload = workflow?.latest_training_task?.payload || {};
@@ -547,38 +595,52 @@ const getWorkflowTitle = (workflow) => {
 };
 const isWorkflowActive = (workflow) => isTaskActive(workflow?.active_task?.status || workflow?.status);
 const workflowBaseStep = (task) => (task?.id ? WORKFLOW_STEP.DETAIL : WORKFLOW_STEP.CONFIG);
-const setWorkflowContext = (workflow = null, { creating = false, archived = showArchivedWorkflows.value } = {}) => {
-  selectedWorkflow.value = workflow;
-  isCreatingWorkflow.value = creating;
-  showArchivedWorkflows.value = archived;
-  return workflow;
-};
-const selectWorkflowById = (workflowId) => {
-  if (!workflowId) return selectedWorkflow.value;
-  const workflow = trainingWorkflows.value.find((item) => item.id === workflowId)
-    || workflowStore.getWorkflowFromState({
-      project_path: project.value?.path || '',
-      dataset_id: dataset.value?.dataset_id || '',
-      workflow_id: workflowId,
-      include_archived: true,
-    })
-    || selectedWorkflow.value;
-  if (workflow) {
-    setWorkflowContext(workflow, { archived: !!workflow.is_archived });
+
+// 视图状态的唯一写入口：只改传入的那几项，其余沿用当前 URL，然后整体替换一次。
+const goWorkflow = async ({
+  step = routeWorkflowStep.value,
+  workflowId = routeWorkflowId.value,
+  draft = routeDraft.value,
+  archived = routeArchived.value,
+} = {}) => {
+  const nextQuery = { ...route.query };
+  const normalized = normalizeWorkflowStep(step);
+  if (normalized === WORKFLOW_STEP.CONFIG) {
+    delete nextQuery.step;
+  } else {
+    nextQuery.step = normalized;
   }
-  return workflow;
-};
-const refreshWorkflowList = async (workflowId = '') => {
-  await loadTrainingWorkflows().catch(() => {});
-  return selectWorkflowById(workflowId);
+  if (workflowId) {
+    nextQuery.workflow_id = workflowId;
+    delete nextQuery.draft;
+  } else {
+    delete nextQuery.workflow_id;
+    if (draft) {
+      nextQuery.draft = '1';
+    } else {
+      delete nextQuery.draft;
+    }
+  }
+  if (archived) {
+    nextQuery.archived = '1';
+  } else {
+    delete nextQuery.archived;
+  }
+  delete nextQuery.export_task_id;
+  await router.replace({
+    name: route.name,
+    params: route.params,
+    query: nextQuery,
+  });
 };
 
 // === Page sync ===
+// 页面打开的数据集以 URL 里的 dataset_id 为准；store 只负责跟上它。
 const syncStore = () => {
   if (project.value && store.currentProject?.path !== project.value.path) {
     store.selectProject(project.value);
   }
-  if (dataset.value && store.selectedDataset?.path !== dataset.value.path) {
+  if (dataset.value && store.selectedDatasetId !== dataset.value.dataset_id) {
     store.selectDataset(dataset.value);
   }
 };
@@ -603,8 +665,6 @@ const syncPageState = async () => {
     syncStore();
     if (!trainingGuard.value.enabled) {
       loadError.value = trainingGuard.value.reason;
-    } else {
-      await loadTrainingWorkflows().catch(() => {});
     }
   } else if (project.value) {
     const target = datasetName.value || routeDatasetId.value || '未知数据集';
@@ -615,124 +675,79 @@ const syncPageState = async () => {
   loading.value = false;
 };
 
-const loadTrainingWorkflows = async () => {
-  if (!project.value?.path || !dataset.value?.dataset_id) {
-    workflowStore.invalidateDataset({
-      project_path: project.value?.path || '',
-      dataset_id: dataset.value?.dataset_id || '',
-    });
-    return;
-  }
-  await workflowStore.fetchWorkflows({
+// 同一个列表视图的并发拉取共用一次请求：切 tab、改数据、开始训练都可能同时触发重拉。
+let workflowsRequest = null;
+const loadWorkflows = async () => {
+  if (!project.value?.path || !dataset.value?.dataset_id || !trainingGuard.value.enabled) return;
+  const key = workflowListKey.value;
+  if (workflowsRequest?.key === key) return workflowsRequest.promise;
+  const promise = workflowStore.fetchWorkflows({
     project_path: project.value.path,
     dataset_id: dataset.value.dataset_id,
     archived_only: showArchivedWorkflows.value,
   });
+  workflowsRequest = { key, promise };
+  try {
+    await promise;
+  } finally {
+    if (workflowsRequest?.promise === promise) workflowsRequest = null;
+  }
 };
 
-const replaceWorkflowQuery = async (step = WORKFLOW_STEP.CONFIG, workflowId = '') => {
-  const nextQuery = { ...route.query };
-  const normalized = normalizeWorkflowStep(step);
-  if (normalized === WORKFLOW_STEP.CONFIG) {
-    delete nextQuery.step;
-  } else {
-    nextQuery.step = normalized;
-  }
-  if (workflowId) {
-    nextQuery.workflow_id = workflowId;
-    delete nextQuery.draft;
-  } else {
-    delete nextQuery.workflow_id;
-    if (isCreatingWorkflow.value) {
-      nextQuery.draft = '1';
-    } else {
-      delete nextQuery.draft;
-    }
-  }
-  delete nextQuery.export_task_id;
-  await router.replace({
-    name: route.name,
-    params: route.params,
-    query: nextQuery,
-  });
-};
-
-const loadSelectedWorkflow = async () => {
-  if (!routeWorkflowId.value) {
-    setWorkflowContext(null, {
-      creating: routeDraft.value,
-      archived: routeDraft.value ? false : showArchivedWorkflows.value,
-    });
+// 选中态只由 URL 的 workflow_id 决定：当前列表 → 缓存 → 详情接口，都找不到就回到空态。
+const resolveSelectedWorkflow = async () => {
+  const workflowId = routeWorkflowId.value;
+  if (!workflowId) {
+    selectedWorkflow.value = null;
     return;
   }
-  const existingWorkflow = routeWorkflowId.value
-    ? trainingWorkflows.value.find((item) => item.id === routeWorkflowId.value)
-    : null;
-  if (existingWorkflow) {
-    setWorkflowContext(existingWorkflow, { archived: !!existingWorkflow.is_archived });
-    return;
-  }
-  const storedWorkflow = workflowStore.getWorkflowFromState({
-    project_path: project.value?.path || '',
-    dataset_id: dataset.value?.dataset_id || '',
-    workflow_id: routeWorkflowId.value,
-    include_archived: true,
-  });
-  if (storedWorkflow?.id) {
-    setWorkflowContext(storedWorkflow, { archived: !!storedWorkflow.is_archived });
-    return;
-  }
-  if (workflowsLoading.value) return;
-  if (routeWorkflowId.value && project.value?.path) {
-    const workflow = await workflowStore.fetchWorkflowDetail({
-      project_path: project.value.path,
+  const cachedWorkflow = trainingWorkflows.value.find((item) => item.id === workflowId)
+    || workflowStore.getWorkflowFromState({
+      project_path: project.value?.path || '',
       dataset_id: dataset.value?.dataset_id || '',
-      workflow_id: routeWorkflowId.value,
+      workflow_id: workflowId,
       include_archived: true,
     });
-    if (workflow?.id) {
-      setWorkflowContext(workflow, { archived: !!workflow.is_archived });
-      return;
-    }
-  }
-  setWorkflowContext(null, {
-    creating: routeDraft.value,
-    archived: routeDraft.value ? false : showArchivedWorkflows.value,
+  const workflow = cachedWorkflow?.id ? cachedWorkflow : await workflowStore.fetchWorkflowDetail({
+    project_path: project.value?.path || '',
+    dataset_id: dataset.value?.dataset_id || '',
+    workflow_id: workflowId,
+    include_archived: true,
   });
+  selectedWorkflow.value = workflow?.id ? workflow : null;
+  // 从任务中心等其他入口打开时，列表视图跟到这条工作流真正所在的那个列表
+  if (workflow?.id && !!workflow.is_archived !== showArchivedWorkflows.value) {
+    await goWorkflow({ archived: !!workflow.is_archived });
+  }
+};
+
+const syncWorkflowView = async () => {
+  await loadWorkflows();
+  await resolveSelectedWorkflow();
 };
 
 const openCreateWorkflow = async () => {
-  setWorkflowContext(null, { creating: true, archived: false });
-  await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, '');
+  await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId: '', draft: true, archived: false });
 };
 
 const selectTrainingWorkflow = async (workflow) => {
   if (!workflow?.id) return;
-  setWorkflowContext(workflow, { archived: !!workflow.is_archived });
   const nextStep = workflow.latest_training_task ? (workflow.current_step || WORKFLOW_STEP.DETAIL) : WORKFLOW_STEP.CONFIG;
-  await replaceWorkflowQuery(nextStep, workflow.id);
+  await goWorkflow({ step: nextStep, workflowId: workflow.id, archived: !!workflow.is_archived });
 };
 
 const goToWorkflowStep = async (step) => {
-  const normalized = resolveWorkflowStep(step);
-  const workflowId = selectedWorkflow.value?.id || '';
-  await replaceWorkflowQuery(normalized, workflowId);
+  await goWorkflow({ step: resolveWorkflowStep(step), workflowId: selectedWorkflow.value?.id || '' });
 };
 
 const goToDeploymentTemplate = async () => {
   await goToWorkflowStep(WORKFLOW_STEP.DEPLOYMENT_TEMPLATE);
 };
 
-const setWorkflowArchivedView = async (value) => {
-  if (showArchivedWorkflows.value === value) return;
-  showArchivedWorkflows.value = value;
-  isCreatingWorkflow.value = false;
-  const shouldClearSelection = !selectedWorkflow.value?.id || (!!selectedWorkflow.value?.is_archived !== value);
-  if (shouldClearSelection) {
-    setWorkflowContext(null, { archived: value });
-    await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, '');
-  }
-  await refreshWorkflowList();
+// 切 tab 只做一件事：把视图写进 URL，同时取消选中（不带着别列表的选中项过来）。
+const showWorkflowList = async (archived) => {
+  if (archived === showArchivedWorkflows.value) return;
+  await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId: '', draft: false, archived });
 };
 
 const archiveWorkflow = async (workflow) => {
@@ -755,12 +770,30 @@ const archiveWorkflow = async (workflow) => {
       }, {
         dataset_id: dataset.value?.dataset_id || '',
       });
-      setWorkflowContext(archivedWorkflow, { archived: true });
-      await refreshWorkflowList(archivedWorkflow.id);
-      await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, archivedWorkflow.id);
+      await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId: archivedWorkflow.id, draft: false, archived: true });
+      await syncWorkflowView();
       toast.success('工作流已归档');
     } catch (err) {
       toast.error(err?.message || '归档工作流失败');
+    }
+  });
+};
+
+const restoreWorkflow = async (workflow) => {
+  if (!workflow?.id) return;
+  await asyncAction.run(restoreWorkflowActionKey(workflow.id), async () => {
+    try {
+      const restoredWorkflow = await workflowStore.restoreWorkflow({
+        project_path: project.value?.path || '',
+        workflow_id: workflow.id,
+      }, {
+        dataset_id: dataset.value?.dataset_id || '',
+      });
+      await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId: restoredWorkflow.id, draft: false, archived: false });
+      await syncWorkflowView();
+      toast.success('工作流已恢复到当前列表');
+    } catch (err) {
+      toast.error(err?.message || '恢复工作流失败');
     }
   });
 };
@@ -786,11 +819,8 @@ const deleteWorkflow = async (workflow) => {
       }, {
         dataset_id: dataset.value?.dataset_id || '',
       });
-      if (selectedWorkflow.value?.id === workflow.id) {
-        setWorkflowContext(null, { archived: true });
-      }
-      await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, '');
-      await refreshWorkflowList();
+      await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId: '', draft: false });
+      await syncWorkflowView();
       toast.success('工作流已永久删除');
     } catch (err) {
       toast.error(err?.message || '删除工作流失败');
@@ -800,46 +830,83 @@ const deleteWorkflow = async (workflow) => {
 
 watch([projectName, routeDatasetId], syncPageState, { immediate: true });
 
-watch([routeWorkflowId, routeDraft, routeDatasetId, workflowsLoading, trainingWorkflows], () => {
-  loadSelectedWorkflow().catch(() => {});
+// 后台刷新换了 dataset 对象（不是身份）时，让 store 重新跟上页面正在看的这个数据集。
+watch([project, dataset], syncStore);
+
+// 换视图（数据集 / 当前·已归档列表）→ 重拉列表并重新定位选中项；换 workflow_id → 只重新定位。
+watch(workflowListKey, () => {
+  syncWorkflowView().catch(() => {});
 }, { immediate: true });
+
+watch([routeWorkflowId, routeDraft], () => {
+  resolveSelectedWorkflow().catch(() => {});
+});
 
 const onTrainingStarted = async (data) => {
   const taskId = data?.task_id || data;
   const workflowId = data?.workflow_id || '';
   if (taskId) {
-    showArchivedWorkflows.value = false;
     trainingStore.currentTaskId = taskId;
     await trainingStore.fetchCurrentTask().catch(() => {});
     await trainingStore.pollCurrentTask().catch(() => {});
-    await refreshWorkflowList();
-    const resolvedWorkflowId = workflowId || trainingStore.currentTask?.workflow_id || '';
-    if (resolvedWorkflowId) {
-      selectWorkflowById(resolvedWorkflowId);
-    }
-    await replaceWorkflowQuery(WORKFLOW_STEP.DETAIL, resolvedWorkflowId);
+    await goWorkflow({
+      step: WORKFLOW_STEP.DETAIL,
+      workflowId: workflowId || trainingStore.currentTask?.workflow_id || '',
+      archived: false,
+    });
+    await syncWorkflowView();
   }
 };
 
 const onWorkflowBound = async (workflowId) => {
   if (!workflowId) return;
-  showArchivedWorkflows.value = false;
-  await refreshWorkflowList(workflowId);
-  await replaceWorkflowQuery(WORKFLOW_STEP.CONFIG, workflowId);
+  await goWorkflow({ step: WORKFLOW_STEP.CONFIG, workflowId, archived: false });
+  await syncWorkflowView();
 };
 
 watch(() => trainingStore.currentTask?.status, async (status) => {
   if (isTaskActive(status) && hasCurrentTaskForPage.value && !routeWorkflowId.value && isCreatingWorkflow.value) {
-    await refreshWorkflowList();
-    const workflowId = trainingStore.currentTask?.workflow_id || '';
-    selectWorkflowById(workflowId);
-    await replaceWorkflowQuery(WORKFLOW_STEP.DETAIL, workflowId);
-  }
-  if (isTaskTerminal(status) && routeWorkflowId.value === trainingStore.currentTask?.workflow_id) {
-    await refreshWorkflowList(trainingStore.currentTask?.workflow_id || '');
-    await loadSelectedWorkflow();
+    await goWorkflow({ step: WORKFLOW_STEP.DETAIL, workflowId: trainingStore.currentTask?.workflow_id || '' });
+    await syncWorkflowView();
   }
 });
+
+// 步骤条解锁看的是工作流快照里的 latest_training_task，快照里有任务在跑就定时重取这条工作流，
+// 跑完即停。不能只靠 trainingStore.currentTask 的轮询——那只在本会话从本页启动训练时才有，
+// 训练中刷新/重开页面后 currentTaskId 是空的，训练跑完了快照也不会自己更新。
+let workflowPollTimer = null;
+let workflowPollDisposed = false;
+const stopWorkflowPolling = () => {
+  if (workflowPollTimer) {
+    clearTimeout(workflowPollTimer);
+    workflowPollTimer = null;
+  }
+};
+const workflowPollActive = computed(() => (
+  Boolean(selectedWorkflow.value?.id) && !isArchivedWorkflowSelected.value && isWorkflowActive(selectedWorkflow.value)
+));
+const pollSelectedWorkflow = async () => {
+  workflowPollTimer = null;
+  const workflowId = routeWorkflowId.value;
+  if (!workflowId || !project.value?.path || !dataset.value?.dataset_id) return;
+  const fresh = await workflowStore.refreshWorkflow({
+    project_path: project.value.path,
+    dataset_id: dataset.value.dataset_id,
+    workflow_id: workflowId,
+  }).catch(() => null);
+  if (fresh?.id && routeWorkflowId.value === fresh.id) {
+    selectedWorkflow.value = fresh;
+  }
+  if (!workflowPollDisposed && workflowPollActive.value) {
+    workflowPollTimer = setTimeout(pollSelectedWorkflow, 2000);
+  }
+};
+watch(workflowPollActive, (active) => {
+  stopWorkflowPolling();
+  if (active && !workflowPollDisposed) {
+    workflowPollTimer = setTimeout(pollSelectedWorkflow, 2000);
+  }
+}, { immediate: true });
 // 页面进入时主动拉一次训练状态（解决刷新后 / 直开 URL 时本地状态丢失）
 trainingStore.fetchCurrentTask().then(() => {
   if (isTaskActive(trainingStore.currentTask)) {
@@ -848,10 +915,12 @@ trainingStore.fetchCurrentTask().then(() => {
 });
 
 // 立即刷新项目 + 绑定版本状态轮询，确保 versioning_status 等快照状态是最新的
-store.refreshKeepSelection();
+store.fetchProjects({ silent: true });
 store.ensureVersioningPoll();
 
 onBeforeUnmount(() => {
+  workflowPollDisposed = true;
+  stopWorkflowPolling();
   trainingStore.stopCurrentTaskPolling();
   store.stopVersioningPoll();
 });

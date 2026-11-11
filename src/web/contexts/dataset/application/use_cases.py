@@ -3,10 +3,9 @@
 import os
 import random
 
-from contexts.dataset.domain.capabilities import (
+from protocols.capabilities.dataset_capabilities import (
     DATASET_OPERATION_ADD_LABEL,
     DATASET_OPERATION_AUGMENT_DATASET,
-    DATASET_OPERATION_AUTO_ANNOTATE,
     DATASET_OPERATION_CREATE_SUBSET,
     DATASET_OPERATION_DELETE_LABEL,
     DATASET_OPERATION_DEDUPLICATE_IMAGES,
@@ -19,11 +18,12 @@ from contexts.dataset.domain.capabilities import (
 from contexts.dataset.infrastructure.dataset_layout import (
     DATASET_SPLIT_TRAIN,
     STANDARD_DATASET_SPLITS,
-    get_dataset_auto_labels_dir,
     get_dataset_images_dir,
+    get_dataset_labels_dir,
     get_dataset_split_content_dir,
+    normalize_standard_dataset_split,
 )
-from contexts.project.infrastructure.project_paths import (
+from contexts.project.application.project_service import (
     get_project_dataset_dir,
     get_project_training_dir,
 )
@@ -35,6 +35,7 @@ from contexts.dataset.infrastructure.dataset_import_runtime import (
 )
 from contexts.dataset.infrastructure.dataset_labels import (
     add_dataset_label as add_label,
+    append_dataset_labels,
     delete_label_dirs,
     delete_dataset_label as delete_label,
     ensure_initial_class_dirs,
@@ -47,18 +48,24 @@ from contexts.dataset.infrastructure.dataset_mutations import (
 )
 from contexts.dataset.infrastructure.dataset_repository import analyze_dataset as analyze_dataset_record
 from contexts.dataset.infrastructure.dataset_repository import resolve_project_dataset_root
-from contexts.dataset.infrastructure.dataset_repository import scan_project_datasets as scan_project_dataset_records
+from contexts.dataset.infrastructure.dataset_repository import scan_project_dataset_inventory
+from contexts.dataset.infrastructure.dataset_cursor import (
+    get_dataset_browse_cursor as _get_cursor_store,
+    set_dataset_browse_cursor as _set_cursor_store,
+)
+from contexts.dataset.infrastructure.image_fingerprint import fingerprints_for_items
 from contexts.dataset.infrastructure.dataset_task_strategy import resolve_dataset_task_strategy
 from contexts.dataset.infrastructure.dataset_task_type import load_dataset_identity_meta, load_dataset_vision_task_type, require_dataset_vision_task_type
 from contexts.dataset.infrastructure.dataset_versioning import (
     create_dataset_version_snapshot,
     delete_dataset_version_store,
     get_current_dataset_version_record,
+    get_dataset_store_dir,
     list_dataset_version_records,
     restore_dataset_version_snapshot,
     start_snapshot_job,
 )
-from contexts.training.infrastructure.workflow_repository import delete_dataset_related_state
+from contexts.training.application.workflow_service import delete_dataset_related_state
 from contexts.dataset.infrastructure.dataset_schema import (
     find_dataset_config,
     load_dataset_names,
@@ -86,6 +93,7 @@ from shared.utils.path_utils import (
     storage_path_ref,
 )
 from shared.utils.name_utils import validate_token_name
+from shared.utils.image_hash import group_by_distance
 from shared.utils.value_utils import parse_bool, require_present
 from shared.utils.zip_utils import split_archive_filename
 
@@ -124,7 +132,7 @@ def _publish_dataset_version(project_path, dataset_root, dataset_name, reason, *
     )
 
 
-def _enqueue_initial_dataset_snapshot(project_path, dataset_root, dataset_name, reason):
+def enqueue_initial_dataset_snapshot(project_path, dataset_root, dataset_name, reason):
     """为新建数据集异步建立首个版本快照。"""
     task_id = start_snapshot_job(
         project_path,
@@ -158,9 +166,14 @@ def _load_dataset_capability_metadata(dataset_root):
     return load_dataset_identity_meta(dataset_root)
 
 
+def list_project_dataset_inventory(project_path):
+    """返回项目训练目录下全部合法数据集摘要。"""
+    return scan_project_dataset_inventory(project_path)
+
+
 def list_project_datasets(project_path):
     """返回项目内全部受协议管理的数据集摘要，作为 dataset 上下文公开查询入口。"""
-    return scan_project_dataset_records(project_path)
+    return scan_project_dataset_inventory(project_path)
 
 
 def has_dataset_import_job(job_id):
@@ -296,7 +309,7 @@ def create_subset(project_path, source_dataset, new_dataset_name, image_paths):
         "image_count": count,
         "dataset_root": storage_path_ref(target_root),
         "message": f"已创建子集 {new_dataset_name}，正在建立初始快照",
-        **_enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "create_subset"),
+        **enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "create_subset"),
     }
 
 
@@ -408,7 +421,7 @@ def augment_subset(project_path, source_dataset, new_dataset_name, payload):
             f"目标类占比 {result['output_target_ratio']}%，正在建立初始快照"
         )
         result.update(
-            _enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "augment_subset")
+            enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "augment_subset")
         )
     return result
 
@@ -423,16 +436,8 @@ def download_dataset_info(project_path, dataset_name):
     return {"dataset_root": dataset_real, "bundle_name": sanitize_bundle_name(dataset_name, default="dataset")}
 
 
-def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, offset=0, limit=50, classes_raw=None, mode="include", unannotated_raw=None, has_auto_label_raw=None):
-    """按类别和标注状态筛选数据集图片。"""
-    require_present(project_path=project_path, dataset_name=dataset_name)
-    dataset_root = get_project_dataset_dir(project_path, dataset_name)
-    vision_task_type = load_dataset_vision_task_type(dataset_root)
-    names = load_dataset_names(dataset_root)
-    strategy = resolve_dataset_task_strategy(vision_task_type)
-
-    unannotated = parse_bool(unannotated_raw)
-    has_auto_label = parse_bool(has_auto_label_raw)
+def _parse_class_ids(classes_raw):
+    """把逗号分隔的类别字符串解析为 id 集合。"""
     class_ids = []
     if classes_raw is not None and str(classes_raw).strip() != "":
         for part in str(classes_raw).split(","):
@@ -443,30 +448,227 @@ def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, o
                 class_ids.append(int(float(s)))
             except Exception:
                 continue
-    class_id_set = set(class_ids)
+    return set(class_ids)
+
+
+def resolve_dataset_list_splits(split):
+    """把列表请求的 split 参数解析为要遍历的 split 列表；``all`` 表示跨全部 split。"""
+    normalized = str(split or DATASET_SPLIT_TRAIN).strip().lower()
+    if normalized == "all":
+        return list(STANDARD_DATASET_SPLITS)
+    return [normalize_standard_dataset_split(normalized)]
+
+
+def collect_dataset_image_items(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, classes_raw=None, mode="include", unannotated_raw=None, has_auto_label_raw=None, keyword=None, overlap_dup_raw=None):
+    """按筛选条件收集并排序数据集图片展示项（不分页），供列表与定位复用。
+
+    ``split="all"`` 时跨 train/val/test 收集，每条记录带上自己的 split；
+    ``keyword`` 按文件名做小写包含匹配，可与其余筛选条件叠加；
+    ``overlap_dup`` 只留下含「同类重复框」的图，并在记录里给出该图的框数。
+    """
+    require_present(project_path=project_path, dataset_name=dataset_name)
+    dataset_root = get_project_dataset_dir(project_path, dataset_name)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    names = load_dataset_names(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+
+    unannotated = parse_bool(unannotated_raw)
+    has_auto_label = parse_bool(has_auto_label_raw)
+    overlap_dup = parse_bool(overlap_dup_raw)
+    class_id_set = _parse_class_ids(classes_raw)
+    normalized_keyword = str(keyword or "").strip().lower()
 
     images = []
-    for image_path in strategy.iter_list_image_paths(
-        dataset_root,
-        split,
-        unannotated=unannotated,
-        has_auto_label=has_auto_label,
-    ):
-        item = strategy.build_image_record(
+    for item_split in resolve_dataset_list_splits(split):
+        for image_path in strategy.iter_list_image_paths(
             dataset_root,
-            split,
-            image_path,
-            names,
-            class_id_set,
-            mode,
-            unannotated,
-            has_auto_label,
-        )
-        if item:
+            item_split,
+            unannotated=unannotated,
+            has_auto_label=has_auto_label,
+        ):
+            if normalized_keyword and normalized_keyword not in os.path.basename(image_path).lower():
+                continue
+            item = strategy.build_image_record(
+                dataset_root,
+                item_split,
+                image_path,
+                names,
+                class_id_set,
+                mode,
+                unannotated,
+                has_auto_label,
+            )
+            if not item:
+                continue
+            if overlap_dup:
+                overlap_boxes = strategy.count_overlapping_boxes(dataset_root, item_split, image_path)
+                if not overlap_boxes:
+                    continue
+                item["overlap_boxes"] = overlap_boxes
+            item["split"] = item_split
             images.append(item)
-    images.sort(key=lambda item: item["path"] if isinstance(item, dict) else str(item))
-    items = build_file_items(images)
-    return slice_items(items, offset=offset, limit=limit)
+    split_order = {name: index for index, name in enumerate(STANDARD_DATASET_SPLITS)}
+    images.sort(key=lambda item: (split_order.get(item.get("split"), len(split_order)), item["path"] if isinstance(item, dict) else str(item)))
+    return build_file_items(images)
+
+
+DUP_MEMBER_FIELDS = ("path", "name", "url", "split", "has_auto_label")
+
+
+def fold_similar_items(project_path, dataset_name, items):
+    """把近似重复帧折成一组，每组只留第一张作代表，其余挂在 ``dup_members`` 上。
+
+    折叠只改显示：代表和组员各开各的标注弹窗，判定不跨帧复制——这一条是 2026-11-01
+    定下的（跨帧传播已作废），所以这里省的是眼睛和翻页，不是复核。
+    """
+    if not items:
+        return []
+    groups = group_by_distance(fingerprints_for_items(project_path, dataset_name, items))
+    folded = []
+    first_of_group = {}
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        group_id = groups[position]
+        slot = first_of_group.get(group_id)
+        if slot is None:
+            first_of_group[group_id] = len(folded)
+            record = dict(item)
+            record["dup_group_size"] = 1
+            record["dup_members"] = []
+            folded.append(record)
+            continue
+        member = {field: item.get(field) for field in DUP_MEMBER_FIELDS}
+        folded[slot]["dup_members"].append(member)
+        folded[slot]["dup_group_size"] += 1
+    return folded
+
+
+def _display_items(project_path, dataset_name, *, split, classes_raw, mode, unannotated_raw, has_auto_label_raw, keyword, overlap_dup_raw, fold_dup_raw):
+    """筛选（必要时再折叠）后的列表项，以及折叠前的张数。
+
+    列表和定位共用这一条，否则两边数出来的行号不一样，「跳到上次那张」会跳错页。
+    """
+    items = collect_dataset_image_items(
+        project_path,
+        dataset_name,
+        split=split,
+        classes_raw=classes_raw,
+        mode=mode,
+        unannotated_raw=unannotated_raw,
+        has_auto_label_raw=has_auto_label_raw,
+        keyword=keyword,
+        overlap_dup_raw=overlap_dup_raw,
+    )
+    raw_total = len(items)
+    if parse_bool(fold_dup_raw):
+        return fold_similar_items(project_path, dataset_name, items), raw_total
+    return items, raw_total
+
+
+def _attach_review_boxes(project_path, dataset_name, records):
+    """给页面上的记录（含折叠出来的组员）附上候选框和已标注框的几何。"""
+    dataset_root = get_project_dataset_dir(project_path, dataset_name)
+    strategy = resolve_dataset_task_strategy(load_dataset_vision_task_type(dataset_root))
+
+    def fill(record):
+        if not isinstance(record, dict):
+            return
+        record["pending_boxes"] = strategy.list_pending_boxes(
+            dataset_root, record.get("split"), record.get("path")
+        )
+        record["label_boxes"] = strategy.list_label_boxes(
+            dataset_root, record.get("split"), record.get("path")
+        )
+        for member in record.get("dup_members") or []:
+            fill(member)
+
+    for record in records or []:
+        fill(record)
+
+
+def list_dataset_images(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, offset=0, limit=50, classes_raw=None, mode="include", unannotated_raw=None, has_auto_label_raw=None, keyword=None, overlap_dup_raw=None, review_boxes_raw=None, fold_dup_raw=None):
+    """按类别、标注状态和同类重复框筛选数据集图片。
+
+    ``review_boxes`` 是走查列表的开关：只给当前这一页的每条记录附上候选框和已标注框几何，
+    不这样收口就会把整个数据集的标签文件挨个读一遍。
+    ``fold_dup`` 把近似重复帧折成一组，见 ``fold_similar_items``。
+    """
+    items, raw_total = _display_items(
+        project_path,
+        dataset_name,
+        split=split,
+        classes_raw=classes_raw,
+        mode=mode,
+        unannotated_raw=unannotated_raw,
+        has_auto_label_raw=has_auto_label_raw,
+        keyword=keyword,
+        overlap_dup_raw=overlap_dup_raw,
+        fold_dup_raw=fold_dup_raw,
+    )
+    page = slice_items(items, offset=offset, limit=limit)
+    if parse_bool(fold_dup_raw):
+        page["raw_total"] = raw_total
+    # 批量写入/清空作用的是「筛选里还有候选的图」，不是筛选出来的全部图：
+    # 每条记录的 has_auto_label 在收集时就已经算过（候选文件存在且非空），这里只加总，
+    # 折叠组员也算进去，否则折起来的待复核图会被按钮漏数。
+    page["pending_total"] = sum(
+        1
+        for item in items
+        for record in [item, *(item.get("dup_members") or [])]
+        if record.get("has_auto_label")
+    )
+    if parse_bool(review_boxes_raw):
+        _attach_review_boxes(project_path, dataset_name, page["items"])
+    return page
+
+
+def locate_dataset_image(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, image_path=None, classes_raw=None, mode="include", unannotated_raw=None, has_auto_label_raw=None, keyword=None, overlap_dup_raw=None, fold_dup_raw=None):
+    """返回目标图片在当前筛选排序列表中的位置（index）与总数，找不到返回 index=-1。
+
+    折叠开着时定位的是折叠后的列表，否则页码对不上「上次标到」那张所在的页。
+    """
+    items, _ = _display_items(
+        project_path,
+        dataset_name,
+        split=split,
+        classes_raw=classes_raw,
+        mode=mode,
+        unannotated_raw=unannotated_raw,
+        has_auto_label_raw=has_auto_label_raw,
+        keyword=keyword,
+        overlap_dup_raw=overlap_dup_raw,
+        fold_dup_raw=fold_dup_raw,
+    )
+    index = -1
+    # 按解析后的真实路径认图：引用（projects/...）和绝对路径、带链接和真实的写法，
+    # 都指同一张图时就必须对上，否则「定位上次那张」会静静返回 -1，页面上跳不回去。
+    if image_path:
+        try:
+            target = resolve_storage_path(image_path)
+        except ValueError:
+            target = ""
+        if target:
+            for position, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
+                if resolve_storage_path(item.get("path")) == target:
+                    index = position
+                    break
+                if any(resolve_storage_path(member.get("path")) == target for member in item.get("dup_members") or []):
+                    index = position
+                    break
+    return {"index": index, "total": len(items), "path": storage_path_ref(image_path)}
+
+
+def get_dataset_browse_cursor(project_path, dataset_name, split=DATASET_SPLIT_TRAIN):
+    """读取该数据集 / split 上次打开的图片游标。"""
+    return _get_cursor_store(project_path, dataset_name, split)
+
+
+def set_dataset_browse_cursor(project_path, dataset_name, split=DATASET_SPLIT_TRAIN, image_path=None, image_name=None):
+    """记录该数据集 / split 上次打开的图片游标。"""
+    return _set_cursor_store(project_path, dataset_name, split, image_path, image_name)
 
 
 def upload_dataset_images(project_path, dataset_name, split, files):
@@ -493,15 +695,37 @@ def delete_dataset_image(project_path, dataset_name, split, image_rel=None, imag
     dataset_root = get_project_dataset_dir(project_path, dataset_name)
     vision_task_type = load_dataset_vision_task_type(dataset_root)
     strategy = resolve_dataset_task_strategy(vision_task_type)
+    normalized_split = normalize_standard_dataset_split(split)
     if not image_rel and image_path:
         try:
-            image_rel = strategy.resolve_image_relative_path(dataset_root, split, image_path)
+            image_rel = strategy.resolve_image_relative_path(dataset_root, normalized_split, image_path)
         except Exception:
             image_rel = None
     if not image_rel:
         raise ValueError("缺少 image_rel 或 image_path")
     resolved_image_path = resolve_storage_path(image_path) if image_path else None
-    return {"deleted": strategy.delete_image(dataset_root, split, image_rel, image_path=resolved_image_path)}
+    return {"deleted": strategy.delete_image(dataset_root, normalized_split, image_rel, image_path=resolved_image_path)}
+
+
+def move_dataset_image(project_path, dataset_name, split, target_split, image_rel=None, image_path=None):
+    """把图片连同其标注产物从一个 split 搬到目标 split。
+
+    目标 split 已有同名图片时由策略层直接报错，此处不吞异常、不改名，调用方看到的是
+    「什么都没动」的真实结果。
+    """
+    require_present(project_path=project_path, dataset_name=dataset_name)
+    dataset_root = get_project_dataset_dir(project_path, dataset_name)
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    normalized_split = normalize_standard_dataset_split(split)
+    normalized_target = normalize_standard_dataset_split(target_split)
+    if not image_rel:
+        resolved_image_path = resolve_storage_path(image_path) if image_path else None
+        if not resolved_image_path:
+            raise ValueError("缺少 image_rel 或 image_path")
+        image_rel = strategy.resolve_image_relative_path(dataset_root, normalized_split, resolved_image_path)
+    moved = strategy.move_image(dataset_root, normalized_split, image_rel, normalized_target)
+    return {"moved": moved, "split": normalized_target, "image_rel": image_rel}
 
 
 def batch_delete_dataset_images(project_path, dataset_name, split, image_paths):
@@ -590,6 +814,62 @@ def add_dataset_label_use_case(project_path, dataset_name, label_name):
     return add_label(dataset_root, yaml_path, label_name, strategy=strategy)
 
 
+def copy_dataset_labels_use_case(project_path, dataset_name, source_dataset_name):
+    """把同项目另一个数据集的类别表追加进当前数据集，同名类别跳过。"""
+    require_present(
+        project_path=project_path,
+        dataset_name=dataset_name,
+        source_dataset_name=source_dataset_name,
+    )
+    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
+    if not dataset_root:
+        raise ValueError("数据集不存在")
+    source_root = resolve_project_dataset_root(project_path, dataset_name=source_dataset_name)
+    if not source_root:
+        raise ValueError("来源数据集不存在")
+    if os.path.abspath(source_root) == os.path.abspath(dataset_root):
+        raise ValueError("来源和目标数据集不能是同一个")
+
+    vision_task_type = load_dataset_vision_task_type(dataset_root)
+    require_dataset_operation(
+        vision_task_type,
+        DATASET_OPERATION_ADD_LABEL,
+        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
+    )
+
+    source_names = load_dataset_names(source_root)
+    if not source_names:
+        raise ValueError(f"来源数据集「{source_dataset_name}」还没有类别")
+    # 类别名规则与手工添加一致；外部导入的数据集常带空格（如 "traffic light"），
+    # 这类名字写不进目标数据集，跳过并原样告诉调用方，而不是让整批复用失败。
+    reusable_names = []
+    invalid_names = []
+    for name in source_names:
+        err = validate_token_name(
+            name,
+            empty_message="类别名不能为空",
+            invalid_message="类别名不合法",
+        )
+        if err:
+            invalid_names.append(str(name))
+        else:
+            reusable_names.append(str(name))
+    if not reusable_names:
+        raise ValueError(
+            "来源数据集的类别名都不符合规则（只能包含字母 / 数字 / _ / -），无法复用"
+        )
+
+    yaml_path = require_dataset_config_path(dataset_root)
+    strategy = resolve_dataset_task_strategy(vision_task_type)
+    result = append_dataset_labels(dataset_root, yaml_path, reusable_names, strategy=strategy)
+    return {
+        "dataset_root": storage_path_ref(dataset_root),
+        "source_dataset_name": source_dataset_name,
+        "invalid_labels": invalid_names,
+        **result,
+    }
+
+
 def update_dataset_tags(project_path, dataset_name, tags):
     """更新 dataset.yaml 中的 tags 字段。"""
     require_present(project_path=project_path, dataset_name=dataset_name)
@@ -598,41 +878,6 @@ def update_dataset_tags(project_path, dataset_name, tags):
         raise ValueError("数据集不存在")
     save_dataset_tags(dataset_root, tags)
     return {}
-
-
-def clear_dataset_auto_labels(project_path, dataset_name):
-    """清空数据集下所有 split 的自动标注文件。"""
-    require_present(project_path=project_path, dataset_name=dataset_name)
-    dataset_root = resolve_project_dataset_root(project_path, dataset_name=dataset_name)
-    if not dataset_root:
-        raise ValueError("数据集不存在")
-    require_dataset_operation(
-        load_dataset_vision_task_type(dataset_root),
-        DATASET_OPERATION_AUTO_ANNOTATE,
-        dataset_metadata=_load_dataset_capability_metadata(dataset_root),
-    )
-
-    deleted_files = 0
-    cleared_splits = []
-    for split in STANDARD_DATASET_SPLITS:
-        auto_dir = get_dataset_auto_labels_dir(dataset_root, split)
-        if not os.path.isdir(auto_dir):
-            continue
-        split_deleted = 0
-        for root, _, files in os.walk(auto_dir):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                remove_file_silent(file_path)
-                split_deleted += 1
-        remove_tree(auto_dir)
-        cleared_splits.append(split)
-        deleted_files += split_deleted
-
-    return {
-        "dataset_name": dataset_name,
-        "cleared_splits": cleared_splits,
-        "deleted_auto_label_files": deleted_files,
-    }
 
 
 def delete_dataset_folder(project_path, dataset_name, dataset_path=None):
@@ -728,7 +973,7 @@ def merge_dataset_pair(project_path, dataset_a, dataset_b, new_dataset_name):
         "names": names_a,
         "stats": stats,
         "message": f"已创建合并数据集 {new_dataset_name}，正在建立初始快照",
-        **_enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "merge_dataset_pair"),
+        **enqueue_initial_dataset_snapshot(project_path, target_root, new_dataset_name, "merge_dataset_pair"),
     }
 
 

@@ -13,6 +13,7 @@ STANDARD_DATASET_SPLITS = DATASET_SPLITS
 DATASET_IMAGES_DIRNAME = "images"
 DATASET_LABELS_DIRNAME = "labels"
 DATASET_AUTO_LABELS_DIRNAME = "auto_labels"
+DATASET_AUTO_META_DIRNAME = "meta"
 DATASET_UNLABELED_DIRNAME = "unlabeled"
 
 
@@ -29,6 +30,17 @@ def normalize_standard_dataset_splits(splits):
         normalized = [str(split).strip() for split in splits if str(split).strip()]
         return normalized or list(STANDARD_DATASET_SPLITS)
     raise ValueError("splits 参数无效")
+
+
+def normalize_standard_dataset_split(split, default=DATASET_SPLIT_TRAIN):
+    """把单个 split 参数规范为标准 split 名。
+
+    split 会被拼进数据集目录，所以这里只认白名单，避免 ``../`` 这类值把读写带到目录外。
+    """
+    normalized = str(split or "").strip().lower() or str(default or DATASET_SPLIT_TRAIN)
+    if normalized not in STANDARD_DATASET_SPLITS:
+        raise ValueError(f"不支持的 split: {split}")
+    return normalized
 
 
 def get_dataset_images_dir(dataset_root, split):
@@ -51,6 +63,20 @@ def get_dataset_split_content_dir(dataset_root, split, vision_task_type):
 def get_dataset_auto_labels_dir(dataset_root, split):
     """返回某个 split 的自动标注目录。"""
     return os.path.join(dataset_root, DATASET_AUTO_LABELS_DIRNAME, str(split))
+
+
+def get_dataset_auto_meta_path(auto_label_path, auto_dir):
+    """返回待确认自动标注的元信息文件路径（置信度、出处）。
+
+    标签文件是 YOLO 文本，只有类别与几何；置信度和「这批框是哪次跑出来的」属于审核信息，
+    放在 auto_labels/<split>/meta/ 下与标签文件同名的 json 里，行序与标签文件一一对应。
+    """
+    label_path = str(auto_label_path or "")
+    auto_dir = str(auto_dir or "")
+    if not label_path or not auto_dir:
+        return ""
+    relative = os.path.relpath(label_path, auto_dir)
+    return os.path.join(auto_dir, DATASET_AUTO_META_DIRNAME, os.path.splitext(relative)[0] + ".json")
 
 
 def get_dataset_unlabeled_dir(dataset_root, split):

@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 
 from sqlalchemy import or_
 
@@ -11,6 +12,9 @@ from shared.utils.time_utils import now_iso
 from protocols.task_status import ACTIVE_TASK_STATUSES, TASK_STATUS_ACTIVE, TASK_STATUS_INTERRUPTED, TASK_STATUS_PENDING, TASK_STATUS_RUNNING, TASK_STATUS_STOPPING
 
 logger = logging.getLogger(__name__)
+
+# 刚更新过的活动任务先不动：worker 还没来得及写 pid，或者另一个实例正在推它
+ORPHAN_QUIET_SECONDS = 300
 
 
 def new_workflow_id():
@@ -80,11 +84,29 @@ def get_task_record(task_id):
         return task.to_dict() if task else None
 
 
+_TASK_FILTERS = (
+    "project_path",
+    "project_name",
+    "type_",
+    "dataset_id",
+    "dataset_name",
+    "dataset_version_id",
+    "status",
+    "limit",
+    "include_archived",
+    "archived_only",
+)
+
+
 def list_task_records(**filters):
-    """按过滤条件查询任务记录列表。"""
+    """按过滤条件查询任务记录；认不出的条件直接报错，不能让它在静默失效后放大结果集。"""
+    unknown = sorted(key for key in filters if key not in _TASK_FILTERS)
+    if unknown:
+        raise ValueError(f"list_task_records 不支持这些过滤条件：{unknown}")
     project_path = filters.get("project_path")
     type_ = filters.get("type_")
     dataset_id = filters.get("dataset_id")
+    dataset_name = filters.get("dataset_name")
     dataset_version_id = filters.get("dataset_version_id")
     status = filters.get("status")
     project_name = filters.get("project_name")
@@ -101,6 +123,8 @@ def list_task_records(**filters):
             query = query.filter(Task.type == type_)
         if dataset_id:
             query = query.filter(Task.dataset_id == dataset_id)
+        if dataset_name:
+            query = query.filter(Task.dataset_name == dataset_name)
         if dataset_version_id:
             query = query.filter(Task.dataset_version_id == dataset_version_id)
         if status:
@@ -161,8 +185,18 @@ def delete_task(task_id):
 
 
 def mark_orphan_tasks_interrupted():
-    """把重启后遗留的活动任务标记为中断。"""
+    """启动时回收重启遗留的活动任务：有活 worker 认领的、刚刚还在动的都不碰。
+
+    多个后端实例共用一个库时，别的实例正在跑的任务在本地看也只是一条活动任务，
+    无条件判死会把别人跑得正欢的训练扫成 interrupted。worker 的 pid 加上命令行里的
+    task_id 是唯一能证明「确实有人在跑」的证据；安静期留给刚创建、还没写出 pid 的任务，
+    它们归创建它们的实例自己管，下一次启动再判。
+    """
+    from contexts.task.infrastructure.task_runtime import is_worker_alive
+
     now = now_iso()
+    reclaimed = 0
+    spared = 0
     with session_scope() as session:
         orphans = session.query(Task).filter(
             or_(
@@ -171,10 +205,24 @@ def mark_orphan_tasks_interrupted():
                 Task.status == TASK_STATUS_STOPPING,
             )
         ).all()
-        count = len(orphans)
         for task in orphans:
+            if is_worker_alive(task.to_dict()) is True or _recently_active(task.updated_at):
+                spared += 1
+                continue
             task.status = TASK_STATUS_INTERRUPTED
             task.message = (task.message or "") + " [后端重启中断]"
             task.updated_at = now
             task.finished_at = now
-        return count, count
+            reclaimed += 1
+    if spared:
+        logger.info("启动回收跳过 %s 个活动任务：活 worker 认领或还在安静期内", spared)
+    return reclaimed, reclaimed
+
+
+def _recently_active(updated_at):
+    """距上次更新不足安静期的任务算「还有人在管」，时间解析不出来就算旧。"""
+    try:
+        updated = datetime.fromisoformat(str(updated_at))
+    except (TypeError, ValueError):
+        return False
+    return updated > datetime.now() - timedelta(seconds=ORPHAN_QUIET_SECONDS)

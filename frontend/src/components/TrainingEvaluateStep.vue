@@ -91,6 +91,38 @@
         </div>
       </div>
 
+      <div class="space-y-2">
+        <div class="vt-step-section-title mb-0">逐类别</div>
+        <p v-if="perClassError" class="vt-note vt-note--warn">本轮没有逐类别明细：{{ perClassError }}</p>
+        <p v-else-if="!perClassRows.length" class="text-xs text-slate-500">这一轮的评估没有留下逐类别明细。</p>
+        <div v-else class="vt-table-shell">
+          <table class="vt-table">
+            <thead class="vt-table-head">
+              <tr>
+                <th class="vt-table-head-cell">类别</th>
+                <th class="vt-table-head-cell">框数</th>
+                <th class="vt-table-head-cell">图片数</th>
+                <th class="vt-table-head-cell">精确率</th>
+                <th class="vt-table-head-cell">召回率</th>
+                <th class="vt-table-head-cell">mAP50</th>
+                <th class="vt-table-head-cell">mAP50-95</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in perClassRows" :key="`${row.class_id}-${row.class_name}`" class="vt-table-row">
+                <td class="vt-table-cell text-xs">{{ row.class_name }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ row.instances }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ row.images }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ formatCell(row.precision) }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ formatCell(row.recall) }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ formatCell(row.map50) }}</td>
+                <td class="vt-table-cell font-mono text-xs">{{ formatCell(row.map50_95) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div v-if="recommendations.length" class="space-y-2">
         <div class="vt-step-section-title mb-0">结果建议</div>
         <div
@@ -171,6 +203,8 @@ const recommendations = computed(() => {
   const items = metrics.value?.recommendations;
   return Array.isArray(items) ? items : [];
 });
+const perClassRows = computed(() => (Array.isArray(metrics.value?.per_class) ? metrics.value.per_class : []));
+const perClassError = computed(() => String(metrics.value?.per_class_error || ''));
 const evaluateProgress = computed(() => evaluateTask.value?.progress || 0);
 const isEvaluateRunning = computed(() => isTaskActive(evaluateTask.value));
 const evaluateGuard = computed(() => resolveEvaluateStartGuard({
@@ -319,6 +353,8 @@ const formatMetric = (value) => {
   if (typeof value !== 'number') return '-';
   return value.toFixed(4);
 };
+
+const formatCell = (value) => (typeof value === 'number' ? value.toFixed(3) : '-');
 
 const recommendationClass = (tone) => {
   if (tone === 'success') return 'border-emerald-200 bg-emerald-50 text-emerald-800';

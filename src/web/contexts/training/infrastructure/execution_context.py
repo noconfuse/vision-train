@@ -2,23 +2,28 @@
 
 import os
 
-from contexts.dataset.domain.capabilities import (
+from protocols.capabilities.dataset_capabilities import (
     DATASET_OPERATION_TRAIN,
     build_dataset_capabilities,
 )
-from contexts.dataset.infrastructure.dataset_import_yolo import ensure_dataset_yaml
-from contexts.dataset.infrastructure.dataset_repository import find_dataset_config, resolve_project_dataset_root
-from contexts.dataset.infrastructure.dataset_schema import normalize_dataset_yaml_for_training
-from contexts.dataset.infrastructure.dataset_task_type import load_dataset_vision_task_type
-from contexts.dataset.infrastructure.dataset_versioning import require_current_dataset_snapshot
-from contexts.model.domain.capabilities import (
+from contexts.dataset.application.dataset_service import (
+    ensure_dataset_yaml,
+    find_dataset_config,
+    resolve_project_dataset_root,
+    normalize_dataset_yaml_for_training,
+    load_dataset_vision_task_type,
+    require_current_dataset_snapshot,
+)
+from protocols.capabilities.model_capabilities import (
     MODEL_TRAINING_MODE_UNSUPPORTED,
     build_model_capabilities,
     model_training_mode_for_task,
 )
-from contexts.model.infrastructure.model_catalog import resolve_model_vision_task_type
-from contexts.model.infrastructure.model_gateway import get_pretrained_status
-from contexts.training.domain.training_profile import get_training_profile
+from contexts.model.application.model_service import (
+    resolve_model_vision_task_type,
+    get_pretrained_status,
+)
+from protocols.capabilities.training_profile import get_training_profile
 from protocols.vision_task_type import VISION_TASK_TYPE_CLASSIFY, VISION_TASK_TYPE_SET
 from shared.utils.path_utils import project_name_from_path, resolve_storage_path
 

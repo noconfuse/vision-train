@@ -5,7 +5,7 @@ import os
 from db import session_scope
 from db.models import Task
 
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_artifact_keys import (
     ARTIFACT_BEST_WEIGHT_PATH,
     ARTIFACT_DATASET_YAML,
     ARTIFACT_EXPORT_PATH,
@@ -19,16 +19,12 @@ from contexts.task.domain.task_artifact_keys import (
     ARTIFACT_TEMPLATE_SOURCE_MODEL_PATH,
     ARTIFACT_TEMPLATE_TYPE,
 )
-from contexts.task.domain.task_types import TASK_TYPE_EXPORT, TASK_TYPE_TEMPLATE
-from contexts.task.infrastructure.task_repository import (
+from protocols.task_type import TASK_TYPE_EXPORT, TASK_TYPE_TEMPLATE
+from contexts.task.application.task_service import (
     create_task as start_task,
     update_task as update_task_status,
-)
-from contexts.task.infrastructure.task_runtime import (
     list_project_tasks,
     load_task,
-)
-from contexts.task.infrastructure.worker_task_ops import (
     build_worker_artifacts,
     finish_worker_task,
     is_stop_requested,

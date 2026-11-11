@@ -7,12 +7,20 @@ import sys
 import time
 
 
+def module_command(module_name, *args):
+    """用 `-m 模块名` 启动 src/web 根下的入口脚本；调用方不需要知道文件在哪。
+
+    要求 src/web 在 PYTHONPATH 上（start_backend.sh 已导出），与 task_worker 同一前提。
+    """
+    return [sys.executable, "-m", module_name, *[str(arg) for arg in args]]
+
+
 def spawn_worker_process(task_id, log_path, module_name):
     """按模块名启动独立 worker 进程并把输出重定向到日志文件。"""
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "ab") as log_file:
         proc = subprocess.Popen(
-            [sys.executable, "-m", module_name, task_id],
+            module_command(module_name, task_id),
             cwd=os.getcwd(),
             stdout=log_file,
             stderr=subprocess.STDOUT,

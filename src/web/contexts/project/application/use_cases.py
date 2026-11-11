@@ -3,7 +3,7 @@
 import os
 
 from app.config import PROJECTS_DIR
-from contexts.dataset.application.use_cases import list_project_datasets
+from contexts.dataset.application.use_cases import list_project_dataset_inventory
 from contexts.project.domain.policies import validate_project_name
 from contexts.project.infrastructure.project_repository import (
     create_project as repo_create_project,
@@ -18,8 +18,11 @@ def list_projects():
     """聚合项目基础信息与数据集列表。"""
     projects = []
     for project_path in list_project_paths():
-        datasets = list_project_datasets(project_path)
-        info = load_project_info(project_path, datasets=datasets)
+        datasets = list_project_dataset_inventory(project_path)
+        info = load_project_info(
+            project_path,
+            datasets=datasets,
+        )
         if info:
             projects.append(info)
     return projects
@@ -44,8 +47,11 @@ def update_project(name, description=None, new_name=None):
         if err:
             raise ValueError(f"新项目名不合法: {err}")
     project_path = repo_update_project(name, description=description, new_name=new_name)
-    datasets = list_project_datasets(project_path)
-    return load_project_info(project_path, datasets=datasets)
+    datasets = list_project_dataset_inventory(project_path)
+    return load_project_info(
+        project_path,
+        datasets=datasets,
+    )
 
 
 def delete_project(name, confirm=False):

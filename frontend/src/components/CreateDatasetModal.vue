@@ -1,17 +1,9 @@
 <template>
-  <div class="vt-modal-backdrop" @click.self="onCancel">
-    <div class="vt-modal-panel vt-modal-panel--md flex flex-col">
-      <div class="vt-modal-header">
-        <h3 class="text-base font-semibold text-slate-800 inline-flex items-center gap-2">
-          <AppIcon name="plus" class="h-4 w-4 text-slate-600" />
-          <span>新建数据集</span>
-        </h3>
-        <button class="vt-modal-close" :disabled="busy && !success && !error" @click="onCancel">
-          <AppIcon name="close" class="h-4 w-4" />
-        </button>
-      </div>
-
-      <div class="vt-modal-body space-y-3">
+  <ModalShell title="新建数据集" size="md" body-class="space-y-3"
+              :dismissible="!(busy && !success && !error)" @close="onCancel">
+    <template #icon>
+      <AppIcon name="plus" class="h-4 w-4 text-slate-600" />
+    </template>
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
             数据集名称 <span class="text-rose-500">*</span>
@@ -144,9 +136,9 @@
         <div v-if="error" class="border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
           {{ error }}
         </div>
-      </div>
 
-      <div class="vt-modal-footer flex justify-end gap-2">
+    <template #footer>
+      <div class="flex justify-end gap-2">
         <button type="button"
                 class="vt-btn-secondary vt-btn-size-md"
                 :disabled="busy && !success && !error"
@@ -162,8 +154,8 @@
           创建数据集
         </button>
       </div>
-    </div>
-  </div>
+    </template>
+  </ModalShell>
 </template>
 
 <script setup>
@@ -179,6 +171,7 @@ import {
 import { isSupportedArchiveFile, isSupportedUploadFile, UPLOAD_FILE_ACCEPT } from '../utils/media';
 import { VISION_TASK_TYPE } from '../domain/dataset/visionTaskType';
 import AppIcon from './ui/AppIcon.vue';
+import ModalShell from './ui/ModalShell.vue';
 
 const props = defineProps({
   project: { type: Object, default: null },

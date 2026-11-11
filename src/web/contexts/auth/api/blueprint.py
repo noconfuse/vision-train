@@ -29,15 +29,13 @@ bp.add_url_rule(
 )
 bp.add_url_rule(
     "/register",
-    view_func=require_admin(
-        json_body_endpoint(
-            register_user,
-            silent=True,
-            username=param("username", required=True),
-            password=param("password", required=True),
-            email=param("email"),
-            role=param("role", default="user"),
-        )
+    view_func=json_body_endpoint(
+        register_user,
+        silent=True,
+        username=param("username", required=True),
+        password=param("password", required=True),
+        email=param("email"),
+        role=param("role", default="user"),
     ),
     methods=["POST"],
 )

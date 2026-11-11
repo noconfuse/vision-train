@@ -8,7 +8,7 @@ from urllib import request
 from urllib.error import HTTPError
 
 from app.config import PRETRAINED_MODELS_DIR
-from contexts.model.domain.capabilities import build_model_capabilities
+from protocols.capabilities.model_capabilities import build_model_capabilities
 from contexts.model.infrastructure.model_catalog import (
     describe_model_path,
     is_model_allowed_for_task,
@@ -17,9 +17,9 @@ from contexts.model.infrastructure.model_catalog import (
     local_path_for_name,
     resolve_model_vision_task_type,
 )
-from contexts.project.infrastructure.project_paths import get_project_models_dir
-from contexts.task.domain.task_artifact_keys import ARTIFACT_BEST_WEIGHT_PATH, ARTIFACT_LAST_WEIGHT_PATH
-from contexts.task.infrastructure.task_repository import get_task_history as load_task_history
+from contexts.project.application.project_service import get_project_models_dir
+from protocols.task_artifact_keys import ARTIFACT_BEST_WEIGHT_PATH, ARTIFACT_LAST_WEIGHT_PATH
+from contexts.task.application.task_service import get_task_history as load_task_history
 from contexts.training.application.queries import list_training_workflow_records
 from shared.utils.fs_utils import safe_size
 from shared.utils.json_utils import encode_json

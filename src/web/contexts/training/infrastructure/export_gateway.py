@@ -2,8 +2,8 @@
 
 import os
 
-from contexts.task.domain.task_types import TASK_TYPE_EXPORT
-from contexts.task.domain.task_artifact_keys import (
+from protocols.task_type import TASK_TYPE_EXPORT
+from protocols.task_artifact_keys import (
     ARTIFACT_BEST_WEIGHT_PATH,
     ARTIFACT_EXPORT_PATH,
     ARTIFACT_LOG_PATH,
@@ -11,12 +11,10 @@ from contexts.task.domain.task_artifact_keys import (
     ARTIFACT_STOP_SIGNAL_PATH,
     ARTIFACT_TASK_DIR,
 )
-from contexts.task.infrastructure.task_repository import (
+from contexts.task.application.task_service import (
     create_task as start_task,
     update_task as update_task_status,
-)
-from contexts.task.infrastructure.task_runtime import load_task
-from contexts.task.infrastructure.worker_task_ops import (
+    load_task,
     build_worker_artifacts,
     finish_worker_task,
     is_stop_requested,

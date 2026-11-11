@@ -16,7 +16,7 @@ from contexts.training.infrastructure.template_task_gateway import (
     resolve_template_source_selection,
     start_template_task,
 )
-from contexts.task.domain.task_types import TASK_TYPE_TEMPLATE
+from protocols.task_type import TASK_TYPE_TEMPLATE
 from contexts.task.infrastructure.task_repository import create_task
 from contexts.task.infrastructure.task_runtime import load_task
 
@@ -24,7 +24,8 @@ from contexts.task.infrastructure.task_runtime import load_task
 class TemplateTaskGatewayTests(unittest.TestCase):
     def setUp(self):
         init_db()
-        self.project_path = tempfile.mkdtemp(prefix="vt_template_task_")
+        # macOS 的临时目录带符号链接：按真实路径建夹具，和线上解析出来的形态一致
+        self.project_path = os.path.realpath(tempfile.mkdtemp(prefix="vt_template_task_"))
         self.output_dir = os.path.join(self.project_path, "training_outputs", "demo", "run_1")
         self.weights_dir = os.path.join(self.output_dir, "weights")
         os.makedirs(self.weights_dir, exist_ok=True)
@@ -83,7 +84,7 @@ class TemplateTaskGatewayTests(unittest.TestCase):
         self.assertIn("last", keys)
 
     def test_list_template_source_choices_for_task_includes_export(self):
-        from contexts.task.domain.task_artifact_keys import ARTIFACT_EXPORT_PATH
+        from protocols.task_artifact_keys import ARTIFACT_EXPORT_PATH
         from contexts.task.infrastructure.task_repository import create_task
         export_dir = os.path.join(self.project_path, "training_outputs", "demo", "run_1", "export", "exp_1")
         os.makedirs(export_dir, exist_ok=True)

@@ -56,13 +56,16 @@ def ensure_bootstrap_admin():
     """在系统首次启动时按配置创建管理员。"""
     if not AUTH.get("enabled", False):
         return
-    password = (AUTH.get("bootstrap_admin_password") or "").strip()
-    if not password:
-        return
     db = SessionLocal()
     try:
         has_admin = db.query(User).filter_by(role="admin").first() is not None
         if has_admin:
+            return
+        password = (AUTH.get("bootstrap_admin_password") or "").strip()
+        if not password:
+            logger.warning(
+                "认证已开启，但未配置 VISION_TRAIN_ADMIN_PASSWORD，且系统中没有管理员账号"
+            )
             return
         username = (AUTH.get("bootstrap_admin_user") or "admin").strip()
         email = (AUTH.get("bootstrap_admin_email") or "").strip() or None

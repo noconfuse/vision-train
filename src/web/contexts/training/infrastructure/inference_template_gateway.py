@@ -13,11 +13,11 @@ from __future__ import annotations
 import os
 import shutil
 
-from contexts.dataset.infrastructure.dataset_schema import (
+from contexts.dataset.application.dataset_service import (
     load_dataset_yaml_ref,
     resolve_dataset_names_list,
 )
-from contexts.task.domain.task_artifact_keys import ARTIFACT_DATASET_YAML
+from protocols.task_artifact_keys import ARTIFACT_DATASET_YAML
 
 TEMPLATE_SOURCE_FORMATS = ("pt", "onnx", "openvino", "engine")
 

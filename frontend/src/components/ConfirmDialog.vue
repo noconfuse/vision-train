@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="confirm-fade">
-      <div v-if="state.visible" class="vt-modal-backdrop z-[60]"
+      <div v-if="state.visible" class="vt-modal-backdrop vt-overlay--top"
            @click.self="onCancel">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
         <Transition name="confirm-scale" appear>
@@ -22,7 +22,7 @@
             </div>
 
             <!-- 内容：消息 + 详情 -->
-            <div class="px-6 pb-2 pl-[3.25rem]">
+            <div class="px-6 pb-2">
               <p v-if="state.message" class="text-sm text-slate-700 whitespace-pre-line">{{ state.message }}</p>
               <pre v-if="state.detail" class="mt-2 max-h-40 overflow-y-auto overflow-x-auto border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 whitespace-pre-wrap break-all">{{ state.detail }}</pre>
             </div>

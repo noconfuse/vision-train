@@ -107,6 +107,22 @@ def remove_tree(dir_path, *, ignore_errors=True):
     shutil.rmtree(dir_path, ignore_errors=ignore_errors)
 
 
+def remove_empty_dirs_up_to(file_path, stop_dir):
+    """自下而上清理空目录，直到到达给定根目录（根目录本身不动）。"""
+    current_dir = os.path.dirname(str(file_path or ""))
+    stop_dir = os.path.realpath(stop_dir)
+    while (
+        current_dir
+        and os.path.realpath(current_dir).startswith(stop_dir)
+        and os.path.realpath(current_dir) != stop_dir
+    ):
+        remove_dir_if_empty(current_dir)
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir == current_dir:
+            break
+        current_dir = parent_dir
+
+
 def move_dir_contents(src_dir, dst_dir):
     """把源目录下的所有直接子项移动到目标目录。"""
     if not src_dir or not os.path.isdir(src_dir):

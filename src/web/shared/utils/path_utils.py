@@ -45,21 +45,21 @@ def _strip_known_prefix(path):
 
 
 def resolve_project_path(project_ref):
-    """把项目引用解析为项目根目录下的绝对路径。"""
+    """把项目引用解析为项目根目录下的真实绝对路径。"""
     if not project_ref:
         return project_ref
     project_ref = str(project_ref)
     if os.path.isabs(project_ref):
-        return os.path.abspath(project_ref)
+        return os.path.realpath(project_ref)
     rel = _strip_known_prefix(project_ref)
-    return os.path.abspath(os.path.join(PROJECTS_DIR, rel))
+    return os.path.realpath(os.path.join(PROJECTS_DIR, rel))
 
 
 def project_path_ref(project_path):
     """把项目绝对路径转换为对外暴露的相对引用。"""
     if not project_path:
         return project_path
-    abs_path = os.path.abspath(project_path)
+    abs_path = os.path.realpath(project_path)
     try:
         rel = os.path.relpath(abs_path, PROJECTS_DIR)
         if rel == ".":
@@ -77,19 +77,27 @@ def resolve_storage_path(path):
         return path
     path = str(path)
     if os.path.isabs(path):
-        return os.path.abspath(path)
+        return os.path.realpath(path)
     prefix, rel = _split_storage_ref(path)
     for base, expected_prefix in SYSTEM_STORAGE_ROOTS:
         if prefix == expected_prefix:
-            return os.path.abspath(os.path.join(base, rel))
+            return os.path.realpath(os.path.join(base, rel))
     raise ValueError("非法路径引用")
 
 
 def storage_path_ref(path):
-    """把绝对路径转换为可回传给接口的存储引用。"""
+    """把路径转换为可回传给接口的存储引用。
+
+    先解析再转引用：引用（projects/...）和绝对路径、带链接和真实的写法，
+    都归一到同一种引用；否则同一张图有两个身份，前端按字符串比对会认不出。
+    """
     if not path:
         return path
-    abs_path = os.path.abspath(path)
+    try:
+        abs_path = resolve_storage_path(path)
+    except ValueError:
+        # 不在受控根目录里的路径（例如外部导出目录）没有引用形态，按真实路径回传
+        abs_path = os.path.realpath(path)
     for base, prefix in SYSTEM_STORAGE_ROOTS:
         try:
             rel = os.path.relpath(abs_path, base)
@@ -100,7 +108,7 @@ def storage_path_ref(path):
                 return f"{prefix}/{rel}" if prefix else rel
         except ValueError:
             continue
-    return str(path).replace("\\", "/")
+    return abs_path.replace("\\", "/")
 
 
 def file_api_url(path):

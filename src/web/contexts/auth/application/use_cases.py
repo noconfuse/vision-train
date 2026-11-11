@@ -83,9 +83,13 @@ def get_me():
 
 
 def register_user(username, password, email=None, role="user"):
-    """校验参数后创建用户账号。"""
-    if not AUTH.get("allow_register", False):
-        raise ValueError("注册功能已关闭")
+    """创建用户账号：管理员可指定角色，匿名自助注册固定为普通用户。"""
+    current = get_current_user()
+    is_admin = bool(current and current.role == "admin")
+    if not is_admin:
+        if not AUTH.get("allow_register", False):
+            raise ValueError("注册功能已关闭")
+        role = "user"
     username = (username or "").strip()
     password = password or ""
     email = (email or "").strip() or None

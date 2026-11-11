@@ -6,6 +6,7 @@
     <TooltipRoot
       :delay-duration="delayDuration"
       :disable-hoverable-content="disableHoverableContent"
+      :disabled="disabled"
     >
       <TooltipTrigger as-child>
         <slot name="trigger" />
@@ -43,6 +44,7 @@ defineProps({
   collisionPadding: { type: Number, default: 8 },
   delayDuration: { type: Number, default: 150 },
   disableHoverableContent: { type: Boolean, default: true },
+  disabled: { type: Boolean, default: false },
   contentClass: { type: [String, Array, Object], default: '' },
 });
 </script>
