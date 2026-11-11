@@ -24,3 +24,6 @@ backups
 *.db
 .netlify/
 docs-netlify-upload.zip
+
+# 本地独立工具（依赖当前环境，不属于项目本体）
+/local_tools/
