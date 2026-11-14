@@ -77,7 +77,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-后端在运行时还会调用宿主机的 `ffmpeg` 命令做视频抽帧；`ffprobe` 可选，不装也能跑，只是部分视频的总帧数探测会降级。
+视频抽帧与 H.264 预览/裁剪用到的静态 `ffmpeg` 由依赖 `imageio-ffmpeg` 随上面的 `pip install` 自动带入，跨 Windows / macOS / Linux，无需在宿主机单独安装；`imageio-ffmpeg` 缺失时才回退到系统 PATH 上的 `ffmpeg`。视频元信息探测改用 OpenCV，已不再依赖 `ffprobe`。
 
 ### 3. 启动后端
 

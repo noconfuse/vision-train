@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+
+### Features
+
+- 视频浏览器预览：浏览器不能解码的编码（如监控 H.265）生成 H.264 预览副本，落 `videos/.previews/`，原视频不改写；预览走后台任务，列表与播放器显示进度，可取消、失败可重跑、已生成副本复用
+
+- 视频区间裁剪：播放器进度条拖动起点/终点选定保留区间，生成 H.264 新片段落 `videos/`，原视频不改写；新片段可直接抽帧，长监控视频先裁掉空场景再抽帧
+
+
+### Bug Fixes
+
+- 修复裁剪对非零 start_time 且关键帧参考损坏的监控源产出空文件或错位片段：`-ss`/`-t` 改为输出端顺序解码裁剪
+
+- 修复抽帧因 video_runtime 缺少 `import os` 而失败
+
+
+### Chores
+
+- ffmpeg 收敛为 pip 依赖 `imageio-ffmpeg`（按操作系统/架构自带静态二进制，跨 Windows / macOS / Linux），不再要求宿主机单独安装；视频元信息探测改用 OpenCV，移除 ffprobe 依赖
+
+
 ## [0.2.0] - 2026-11-11
 
 
@@ -13,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 新增远端 GPU 训练：compute 上下文支持 GPU 服务器登记、SSH 预检、远端训练监督与产物回传，前端配套服务器管理弹窗与预检报告
 
-- 自动标注审核闭环：候选逐框附带置信度与出处 meta，新增模型/数据集类别对齐校验与以样本框检索同类的相似探测，保存即审核，支持批量接收/清空候选
+- 自动标注审核闭环：候选逐框附带置信度与出处 meta，新增模型/数据集类别对齐校验与以样本框检索同类的相似探测，保存即审核，支持批量写入/清空候选
 
 - 走查列表增强：dHash 相似帧折叠、同类重复框统计、浏览游标记忆、图片跨 split 移动与定位、跨数据集类别表复用
 
@@ -28,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 孤儿任务回收增加静默期防止多实例误判，HTTP 参数绑定归一化，任务过滤参数严格校验，PROJECTS_DIR 用 realpath 修复符号链接路径
 
+- 删除最后一个服务端渲染的独立工具页（推理工具），后端不再提供模板页面，推理与标注能力统一收口到前端 SPA
+
 
 ### Documentation
 
@@ -39,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 删除非法数据集目录提示整条链路（后端 invalid_datasets、前端警告条与相关测试），扫描只返回合法数据集
 
 - 新增 19 个 PPE 数据整理/金标/训练集重建脚本与 17 个回归测试
+
+- `.gitignore` 忽略 `/local_tools/`：依赖当前环境的本地独立工具不属于项目本体
 
 
 ## [0.1.0] - 2026-07-28

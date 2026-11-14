@@ -11,6 +11,7 @@ import { useDatasets } from '../composables/useDatasets';
 import { useAutoFillGrid } from '../composables/useAutoFillGrid';
 import { parseOptionalNumber } from '../utils';
 import VideoUploadModal from './VideoUploadModal.vue';
+import VideoPlayerModal from './VideoPlayerModal.vue';
 import AppIcon from './ui/AppIcon.vue';
 import AsyncButton from './ui/AsyncButton.vue';
 import ModalShell from './ui/ModalShell.vue';
@@ -668,6 +669,13 @@ onUnmounted(() => {
                 loading="lazy"
                 @error="$event.target.style.display='none'"
               />
+              <div
+                v-if="video.needs_preview && !video.preview_ready"
+                class="absolute top-1 left-1 vt-tag vt-tag--sm"
+                :class="video.preview_status === 'processing' ? 'vt-tag-info' : 'vt-tag-warn'"
+              >
+                {{ video.preview_status === 'processing' ? `预览生成中 ${video.preview_progress}%` : '需转码预览' }}
+              </div>
               <!-- Play Icon Overlay -->
               <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
                 <div class="vt-media-play-trigger">
@@ -844,25 +852,14 @@ onUnmounted(() => {
     </ModalShell>
 
     <!-- Video Player Modal -->
-    <div v-if="showPlayer" class="vt-media-backdrop" @click.self="closePlayer">
-      <div class="vt-media-panel">
-        <div class="flex justify-between items-center mb-2 text-white">
-          <h3 class="font-medium truncate">{{ playerVideo?.name }}</h3>
-          <button @click="closePlayer" class="vt-media-close" aria-label="关闭视频播放器">
-            <AppIcon name="close" class="h-4 w-4" />
-          </button>
-        </div>
-        <video
-          v-if="playerVideo"
-          :src="playerVideo.stream_url"
-          controls
-          autoplay
-          playsinline
-          preload="metadata"
-          class="w-full max-h-[80vh] bg-black"
-        ></video>
-      </div>
-    </div>
+    <VideoPlayerModal
+      v-if="showPlayer && playerVideo"
+      :key="playerVideo.name"
+      :video="playerVideo"
+      :project="store.currentProject"
+      @close="closePlayer"
+      @refresh="fetchVideos"
+    />
 
     <!-- Review Modal -->
     <div

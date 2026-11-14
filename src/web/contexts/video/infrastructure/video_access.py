@@ -8,12 +8,13 @@ from shared.utils.path_utils import build_file_items, project_path_ref
 
 
 def append_video_urls(project_path, videos):
-    """为视频列表补充缩略图和播放地址。"""
+    """为视频列表补充缩略图、播放与预览地址。"""
     project_ref = project_path_ref(project_path)
     for video in videos:
         query = urlencode({"project_path": project_ref, "video_name": video["name"]})
         video["thumbnail_url"] = f"/api/video/thumbnail?{query}"
         video["stream_url"] = f"/api/video/stream?{query}"
+        video["preview_url"] = f"/api/video/stream?{query}&preview=1" if video.get("preview_ready") else None
     return videos
 
 

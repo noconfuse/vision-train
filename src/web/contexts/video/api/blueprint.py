@@ -17,8 +17,9 @@ from contexts.video.application.use_cases import (
     resolve_video_stream_path,
     resolve_video_task_image_path,
     resolve_video_thumbnail_path,
-    save_uploaded_video,
     start_video_extraction,
+    start_video_transcode,
+    upload_video,
 )
 from shared.utils.path_utils import resolve_and_validate_project, resolve_project_path
 
@@ -40,7 +41,7 @@ bp.add_url_rule(
 bp.add_url_rule(
     "/api/video/upload",
     view_func=form_body_endpoint(
-        save_uploaded_video,
+        upload_video,
         project_path=param(
             "project_path",
             location="form",
@@ -89,7 +90,7 @@ def api_video_thumbnail():
 
 @bp.route("/api/video/stream")
 def api_video_stream():
-    """返回视频流文件。"""
+    """返回视频流文件；preview=1 时返回 H.264 预览副本。"""
     try:
         params = query_params(
             project_path=param(
@@ -98,8 +99,9 @@ def api_video_stream():
                 transform=lambda value: resolve_and_validate_project(value)[0],
             ),
             video_name=param("video_name", required=True),
+            preview=param("preview", default="0", transform=lambda value: str(value).lower() in {"1", "true", "yes", "on"}),
         )
-        video_path = resolve_video_stream_path(params["project_path"], params["video_name"])
+        video_path = resolve_video_stream_path(params["project_path"], params["video_name"], preview=params["preview"])
     except ValueError as exc:
         return str(exc), 400
     if not os.path.exists(video_path):
@@ -120,6 +122,23 @@ bp.add_url_rule(
         video_name=param("video_name", required=True),
         strategy=param("strategy", default="interval"),
         value=param("value", default=1.0),
+    ),
+    methods=["POST"],
+)
+bp.add_url_rule(
+    "/api/video/transcode",
+    view_func=json_body_endpoint(
+        start_video_transcode,
+        project_path=param(
+            "project_path",
+            required=True,
+            transform=lambda value: resolve_and_validate_project(value)[0],
+        ),
+        video_name=param("video_name", required=True),
+        mode=param("mode", required=True),
+        start=param("start"),
+        end=param("end"),
+        target_name=param("target_name"),
     ),
     methods=["POST"],
 )

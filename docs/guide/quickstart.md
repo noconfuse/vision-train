@@ -14,7 +14,8 @@ cd vision-train
 - Python 3.10+
 - Node.js 18+
 - npm 9+
-- 宿主机已安装 `ffmpeg` / `ffprobe`
+
+抽帧与 H.264 预览/裁剪所需的静态 `ffmpeg` 由依赖 `imageio-ffmpeg` 随 `pip install` 自动带入，跨 Windows / macOS / Linux，无需在宿主机单独安装。
 
 ## 2. 环境变量
 
@@ -101,7 +102,8 @@ npm run dev
 | 现象 | 排查方向 |
 | --- | --- |
 | 一直停在登录页 | 后端是否启动、`/api/auth/status` 是否可访问 |
-| 视频无法抽帧 | 宿主机是否安装 `ffmpeg` |
+| 视频无法抽帧 | 是否已 `pip install -r requirements.txt`（`ffmpeg` 由 `imageio-ffmpeg` 提供） |
+| 视频无法播放 | 该编码浏览器不能解码，在播放器里生成 H.264 预览副本 |
 | 页面没有项目 | 正常现象，先新建项目 |
 | 回看后台任务 | 顶部导航的任务中心入口（路由 `/tasks`） |
 

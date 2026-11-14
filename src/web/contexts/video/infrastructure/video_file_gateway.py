@@ -3,12 +3,14 @@
 import os
 
 from contexts.project.application.project_service import (
+    get_project_task_dir,
     get_project_videos_dir,
 )
-from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION
-from contexts.task.application.task_service import list_project_tasks
+from protocols.task_type import TASK_TYPE_FRAME_EXTRACTION, TASK_TYPE_VIDEO_TRANSCODE
+from contexts.task.application.task_service import delete_task as remove_task, list_project_tasks
 from protocols.task_status import is_active_task_status
-from shared.utils.fs_utils import remove_file_silent
+from contexts.video.infrastructure.video_runtime import get_video_preview_path
+from shared.utils.fs_utils import remove_file_silent, remove_tree
 from constants.media import VIDEO_FILE_EXTENSION_SET
 from shared.utils.path_utils import project_name_from_path, storage_path_ref, validate_filename, validate_leaf_name
 from shared.utils.value_utils import require_present
@@ -60,21 +62,21 @@ def save_uploaded_video(project_path, file_storage, target_name=None):
     }
 
 
-def _collect_frame_extraction_tasks_for_video(project_path, video_name):
-    """收集该视频关联的所有 frame_extraction 任务（已结束 + 运行中）。"""
-    tasks = list_project_tasks(project_path, type_=TASK_TYPE_FRAME_EXTRACTION, limit=500)
+def _collect_video_tasks_for_video(project_path, video_name):
+    """收集该视频关联的抽帧与转码任务（已结束 + 运行中）。"""
     matched = []
-    for item in tasks or []:
-        payload = item.get("payload") or {}
-        if payload.get("video_name") == video_name:
-            matched.append(item)
+    for type_ in (TASK_TYPE_FRAME_EXTRACTION, TASK_TYPE_VIDEO_TRANSCODE):
+        for item in list_project_tasks(project_path, type_=type_, limit=500) or []:
+            payload = item.get("payload") or {}
+            if payload.get("video_name") == video_name:
+                matched.append(item)
     return matched
 
 
 def remove_video_file(project_path, video_name):
-    """删除视频文件并清理对应缩略图、关联抽帧任务。
+    """删除视频文件并清理缩略图、预览副本与关联抽帧/转码任务。
 
-    关联抽帧任务策略：
+    关联任务策略：
     - 已结束的：直接删除任务目录 + 任务记录；
     - 运行中的：先写停止信号让 worker 安全退出，状态会被 worker 自己改回 stopped/failed，
       后续的删除会由下一次"删除任务"动作或 worker 退出后完成。
@@ -85,7 +87,7 @@ def remove_video_file(project_path, video_name):
     if not os.path.isfile(video_path):
         raise ValueError(f"视频 {validated_name} 不存在")
 
-    related_tasks = _collect_frame_extraction_tasks_for_video(project_path, validated_name)
+    related_tasks = _collect_video_tasks_for_video(project_path, validated_name)
 
     # 先发停止信号给运行中的 task；worker 退出后会把 status 标成 stopped/failed。
     stop_requested_ids = []
@@ -101,8 +103,9 @@ def remove_video_file(project_path, video_name):
 
     remove_file_silent(video_path)
     remove_file_silent(os.path.join(videos_dir, ".thumbnails", f"{validated_name}.jpg"))
+    remove_file_silent(get_video_preview_path(videos_dir, validated_name))
 
-    # 已结束的 task：直接复用 delete_extraction_task 清理目录 + 记录。
+    # 已结束的 task：清理目录 + 记录。抽帧复用专用删除，转码走通用删除。
     deleted_task_ids = []
     still_active_after_stop = []
     from contexts.video.infrastructure.video_task_gateway import delete_extraction_task
@@ -112,10 +115,14 @@ def remove_video_file(project_path, video_name):
             still_active_after_stop.append(task["id"])
             continue
         try:
-            delete_extraction_task(project_path, task["id"])
+            if task.get("type") == TASK_TYPE_FRAME_EXTRACTION:
+                delete_extraction_task(project_path, task["id"])
+            else:
+                remove_tree(get_project_task_dir(project_path, task["id"]))
+                remove_task(task["id"])
             deleted_task_ids.append(task["id"])
         except ValueError:
-            # delete_extraction_task 自己会校验 active，这里跳过即可。
+            # 删除函数自己会校验 active，这里跳过即可。
             continue
 
     return {

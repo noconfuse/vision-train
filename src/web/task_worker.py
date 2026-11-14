@@ -13,6 +13,7 @@ from protocols.task_type import (
     TASK_TYPE_INFERENCE,
     TASK_TYPE_TEMPLATE,
     TASK_TYPE_TRAINING,
+    TASK_TYPE_VIDEO_TRANSCODE,
 )
 from contexts.task.application.task_service import load_task
 from contexts.training.infrastructure.export_gateway import execute_export_task
@@ -23,7 +24,7 @@ from contexts.training.infrastructure.execution_runners import (
     execute_training_task,
 )
 from contexts.training.infrastructure.template_task_gateway import execute_template_task
-from contexts.video.infrastructure.video_execution_gateway import execute_extraction_task
+from contexts.video.infrastructure.video_execution_gateway import execute_extraction_task, execute_transcode_task
 from contexts.dataset.infrastructure.dataset_snapshot_worker import execute_dataset_snapshot_task
 
 
@@ -57,6 +58,7 @@ def main():
         TASK_TYPE_EXPORT: execute_export_task,
         TASK_TYPE_INFERENCE: execute_inference_task,
         TASK_TYPE_FRAME_EXTRACTION: execute_extraction_task,
+        TASK_TYPE_VIDEO_TRANSCODE: execute_transcode_task,
         TASK_TYPE_TEMPLATE: execute_template_task,
         TASK_TYPE_DATASET_SNAPSHOT: execute_dataset_snapshot_task,
     }

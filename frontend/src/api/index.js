@@ -436,6 +436,7 @@ const api = {
   },
   deleteVideo(data) { return post('/video/delete', data); },
   extractVideo(data) { return post('/video/extract', data); },
+  transcodeVideo(data) { return post('/video/transcode', data); },
   getVideoTasks(params) { return get('/video/tasks', { params }); },
   getTaskImages(params) { return get('/video/task/images', { params }); },
   importTaskImages(data) { return post('/video/task/import', data); },
